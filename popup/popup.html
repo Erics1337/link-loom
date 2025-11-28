@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinkLoom</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <div class="app-container">
+    <header>
+      <div class="logo">
+        <span class="logo-icon">🕸️</span>
+        <h1>LinkLoom</h1>
+      </div>
+      <div class="header-controls">
+        <div class="status-badge" id="status-badge">Free Plan</div>
+        <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="settings-view" class="view hidden">
+        <div class="view-header">
+          <h3>Settings</h3>
+          <button id="close-settings-btn" class="secondary-btn small">Done</button>
+        </div>
+        <div class="settings-form">
+          <div class="input-group">
+            <label for="firecrawl-key">Firecrawl API Key</label>
+            <input type="password" id="firecrawl-key" placeholder="fc_..." />
+          </div>
+          <div class="input-group">
+            <label for="llm-key">OpenAI API Key</label>
+            <input type="password" id="llm-key" placeholder="sk-..." />
+          </div>
+          <p class="help-text">Keys are stored locally on your device.</p>
+          <button id="save-keys-btn" class="primary-btn small">Save Keys</button>
+        </div>
+      </section>
+
+      <section id="dashboard-view" class="view active">
+        <div class="hero-section">
+          <h2>Weave your links into order.</h2>
+          <p>Organize your messy bookmarks with AI-powered categorization.</p>
+        </div>
+
+        <div class="controls">
+          <label class="setting-row">
+            <span>Granularity</span>
+            <select id="granularity-select">
+              <option value="low">Broad (Free)</option>
+              <option value="medium">Medium (Free)</option>
+              <option value="high">Specific (Premium)</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="progress-container" class="hidden">
+          <div class="progress-bar-container">
+            <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+          </div>
+          <p id="progress-text" class="progress-text">Initializing...</p>
+          <p id="progress-detail" class="progress-detail"></p>
+        </div>
+
+        <button id="scan-btn" class="primary-btn">
+          <span class="btn-text">Weave Bookmarks</span>
+        </button>
+      </section>
+
+      <section id="preview-view" class="view hidden">
+        <div class="preview-header">
+          <div class="header-top">
+            <h3>Proposed Structure</h3>
+            <button id="back-btn" class="secondary-btn small">Back</button>
+          </div>
+          <div class="header-actions">
+            <button id="apply-all-titles-btn" class="secondary-btn small" title="Apply all AI suggested titles">✨ Apply
+              All Titles</button>
+            <div id="broken-link-controls" class="broken-controls hidden">
+              <span id="broken-count" class="broken-count">💀 0</span>
+              <button id="remove-broken-btn" class="icon-btn small danger" title="Remove all broken links">🗑️</button>
+            </div>
+            <div class="regen-controls">
+              <button id="less-cats-btn" class="icon-btn small" title="Fewer Categories">-</button>
+              <span>Cats</span>
+              <button id="more-cats-btn" class="icon-btn small" title="More Categories">+</button>
+            </div>
+          </div>
+        </div>
+        <div id="tree-preview" class="tree-container">
+          <!-- Tree content injected here -->
+          <div class="placeholder-tree">
+            <div class="skeleton-line"></div>
+            <div class="skeleton-line short"></div>
+            <div class="skeleton-line"></div>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="apply-btn" class="primary-btn">Apply Changes</button>
+        </div>
+      </section>
+
+      <section id="premium-modal" class="modal hidden">
+        <div class="modal-content">
+          <span class="close-modal">&times;</span>
+          <div class="premium-icon">💎</div>
+          <h3>Unlock Deep Weaving</h3>
+          <p>Get unlimited categories, nested folders, and deep page analysis.</p>
+          <ul class="features-list">
+            <li>✅ Unlimited Categories</li>
+            <li>✅ Deep Content Analysis</li>
+            <li>✅ Nested Sub-folders</li>
+          </ul>
+          <button id="upgrade-btn" class="premium-btn">Upgrade for $4.99</button>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>LinkLoom v1.0</p>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+
+</html>
