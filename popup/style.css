@@ -10,13 +10,24 @@
   --danger: #ef4444;
 }
 
+html {
+  width: 100%;
+  height: 100%;
+}
+
 body {
-  width: 350px;
-  height: 500px;
+  width: 100%;
+  height: 90vh;
+  max-height: 90vh;
+  min-height: 600px;
+  min-width: 350px;
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  background-color: var(--bg);
-  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  /* Removed resize: both as we have a dedicated window button now */
+  overflow: hidden;
+  /* Prevent body scroll, let main/tree handle it */
 }
 
 .app-container {
@@ -59,8 +70,20 @@ header {
 main {
   flex: 1;
   padding: 16px;
-  overflow-y: auto;
+  overflow: hidden;
+  /* Changed from overflow-y: auto to let children scroll */
   position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-children {
+  margin-left: 22px;
+  /* Indent children */
+  border-left: 1px solid var(--border);
+  /* Visual guide */
+  /* Removed overflow: hidden to allow tooltips to pop out */
+  /* transition: height 0.3s ease; - Disabled as we use display:none currently */
 }
 
 .view {
@@ -127,11 +150,29 @@ select {
 }
 
 .primary-btn:hover {
-  background: var(--primary-hover);
+  background-color: var(--primary-hover);
+  transform: translateY(-1px);
+}
+
+.button-group {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+.button-group .primary-btn {
+  flex: 1;
+}
+
+.button-group .secondary-btn {
+  flex: 0 0 auto;
+  background-color: var(--danger);
+  color: white;
+  border: none;
 }
 
 .secondary-btn {
-  background: transparent;
+  background-color: var(--bg-secondary);
   border: 1px solid var(--border);
   color: var(--text);
   padding: 6px 12px;
@@ -178,32 +219,53 @@ select {
   padding: 12px;
   border-radius: 8px;
   border: 1px solid var(--border);
+  position: relative;
+  /* For absolute positioning of stop button */
 }
 
-.progress-bar-container {
-  height: 6px;
-  background: var(--bg);
-  border-radius: 3px;
+.progress-bar-bg {
+  width: 100%;
+  height: 8px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
   overflow: hidden;
-  margin-bottom: 8px;
 }
 
-.progress-fill {
+.progress-bar-fill {
   height: 100%;
   background: var(--primary);
   transition: width 0.3s ease;
 }
 
-.progress-bar {
-  width: 0%;
-  height: 100%;
-  background-color: var(--primary);
-  /* Changed from --primary-color to --primary */
-  transition: width 0.3s ease;
-  border-radius: 4px;
+#progress-text {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  text-align: center;
 }
 
-.progress-fill.indeterminate {
+/* Stop Button (Icon) */
+.stop-btn {
+  position: absolute;
+  top: -24px;
+  right: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stop-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--danger);
+}
+
+.progress-bar-fill.indeterminate {
   width: 100% !important;
   background-image: linear-gradient(45deg,
       rgba(255, 255, 255, 0.15) 25%,
@@ -229,8 +291,8 @@ select {
 
 /* Tree View Enhancements */
 .tree-node {
-  margin-left: 20px;
-  padding: 4px 0;
+  margin-left: 0;
+  padding: 2px 0;
 }
 
 .tree-folder-header {
@@ -261,10 +323,7 @@ select {
   transform: rotate(-90deg);
 }
 
-.tree-children {
-  transition: height 0.3s ease;
-  overflow: hidden;
-}
+/* Removed empty .tree-children ruleset - styles handled by .tree-children.hidden */
 
 .tree-children.hidden {
   display: none;
@@ -273,14 +332,22 @@ select {
 .tree-item {
   display: flex;
   align-items: center;
-  padding: 4px 8px;
-  margin-left: 24px;
+  padding: 4px 8px 4px 26px;
+  /* 26px to align with folder icon (4px pad + 22px toggle space) */
+  margin-left: 0;
   border-radius: 4px;
   position: relative;
 }
 
+/* Remove indentation for root-level items */
+.tree-container>.tree-item {
+  margin-left: 0;
+}
+
 .tree-item:hover {
   background-color: var(--bg-secondary);
+  z-index: 20;
+  /* Ensure hovered item and its tooltip are on top */
 }
 
 /* Tree Item Layout */
@@ -341,6 +408,16 @@ select {
   background-color: rgba(99, 102, 241, 0.1);
   /* Light primary bg */
   transform: scale(1.1);
+}
+
+.action-container {
+  width: 20px;
+  /* Fixed width for alignment */
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 /* Dead Link Indicator */
@@ -515,6 +592,40 @@ select {
   background: #fecaca;
 }
 
+.duplicate-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: #fef3c7;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid #fcd34d;
+}
+
+.duplicate-count {
+  font-size: 11px;
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+.icon-btn.warning {
+  color: #f59e0b;
+}
+
+.icon-btn.warning:hover {
+  background: #fde68a;
+}
+
+.tree-item.duplicate-link {
+  background-color: #fef3c7;
+  border-left: 3px solid #f59e0b;
+}
+
+.tree-item.duplicate-link .tree-item-title {
+  color: #92400e;
+  font-style: italic;
+}
+
 .premium-icon {
   font-size: 32px;
   margin-bottom: 12px;
@@ -569,4 +680,79 @@ footer {
   100% {
     transform: rotate(360deg);
   }
+}
+
+/* Backup List */
+.backup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.backup-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.backup-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.backup-date {
+  font-weight: 600;
+}
+
+.backup-count {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.restore-btn {
+  padding: 4px 8px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.restore-btn:hover {
+  background: var(--danger);
+  color: white;
+  border-color: var(--danger);
+}
+
+/* Drag and Drop Styles */
+.tree-item[draggable="true"],
+.tree-folder-header[draggable="true"] {
+  cursor: grab;
+}
+
+.tree-item.dragging,
+.tree-folder-header.dragging {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+.drag-over-top {
+  border-top: 2px solid var(--primary);
+}
+
+.drag-over-bottom {
+  border-bottom: 2px solid var(--primary);
+}
+
+.drag-over-inside {
+  background-color: rgba(99, 102, 241, 0.1);
+  /* Light primary */
+  border: 2px dashed var(--primary);
 }

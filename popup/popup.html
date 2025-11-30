@@ -17,6 +17,7 @@
       </div>
       <div class="header-controls">
         <div class="status-badge" id="status-badge">Free Plan</div>
+        <button id="open-window-btn" class="icon-btn" title="Open in New Window">↗️</button>
         <button id="settings-btn" class="icon-btn" title="Settings">⚙️</button>
       </div>
     </header>
@@ -36,8 +37,23 @@
             <label for="llm-key">OpenAI API Key</label>
             <input type="password" id="llm-key" placeholder="sk-..." />
           </div>
+          <div class="input-group">
+            <label for="analysis-mode">Analysis Mode</label>
+            <select id="analysis-mode">
+              <option value="hybrid">Hybrid (Deep Crawl + Fallback)</option>
+              <option value="metadata">Fast (Metadata Only)</option>
+            </select>
+          </div>
           <p class="help-text">Keys are stored locally on your device.</p>
-          <button id="save-keys-btn" class="primary-btn small">Save Keys</button>
+          <button id="save-keys-btn" class="primary-btn small">Save Settings</button>
+
+          <hr style="border: 0; border-top: 1px solid var(--border); margin: 16px 0;">
+
+          <h4>Backups</h4>
+          <div id="backup-list" class="backup-list">
+            <!-- Backups injected here -->
+            <p class="help-text">No backups found.</p>
+          </div>
         </div>
       </section>
 
@@ -50,44 +66,69 @@
         <div class="controls">
           <label class="setting-row">
             <span>Granularity</span>
-            <select id="granularity-select">
-              <option value="low">Broad (Free)</option>
-              <option value="medium">Medium (Free)</option>
-              <option value="high">Specific (Premium)</option>
-            </select>
+            <div class="granularity-controls">
+              <select id="granularity-select">
+                <option value="broad">Broad (~5)</option>
+                <option value="medium">Medium (~10)</option>
+                <option value="specific">Specific (Premium)</option>
+              </select>
+              <input type="number" id="granularity-count" class="hidden" min="1" max="50" value="15"
+                title="Target number of categories">
+            </div>
           </label>
         </div>
 
         <div id="progress-container" class="hidden">
-          <div class="progress-bar-container">
-            <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+          <button id="stop-btn" class="icon-btn stop-btn" title="Stop Analysis">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+          <div class="progress-bar-bg">
+            <div id="progress-bar" class="progress-bar-fill" style="width: 0%"></div>
           </div>
-          <p id="progress-text" class="progress-text">Initializing...</p>
+          <p id="progress-text">Initializing...</p>
           <p id="progress-detail" class="progress-detail"></p>
         </div>
 
-        <button id="scan-btn" class="primary-btn">
-          <span class="btn-text">Weave Bookmarks</span>
-        </button>
+        <div class="button-group">
+          <button id="scan-btn" class="primary-btn">
+            <span class="btn-text">Weave Bookmarks</span>
+            <div class="loader hidden"></div>
+          </button>
+        </div>
       </section>
 
       <section id="preview-view" class="view hidden">
         <div class="preview-header">
           <div class="header-top">
-            <h3>Proposed Structure</h3>
-            <button id="back-btn" class="secondary-btn small">Back</button>
-          </div>
-          <div class="header-actions">
-            <button id="apply-all-titles-btn" class="secondary-btn small" title="Apply all AI suggested titles">✨ Apply
-              All Titles</button>
             <div id="broken-link-controls" class="broken-controls hidden">
               <span id="broken-count" class="broken-count">💀 0</span>
               <button id="remove-broken-btn" class="icon-btn small danger" title="Remove all broken links">🗑️</button>
             </div>
-            <div class="regen-controls">
-              <button id="less-cats-btn" class="icon-btn small" title="Fewer Categories">-</button>
-              <span>Cats</span>
-              <button id="more-cats-btn" class="icon-btn small" title="More Categories">+</button>
+            <div id="duplicate-link-controls" class="duplicate-controls hidden">
+              <span id="duplicate-count" class="duplicate-count">🔗 0</span>
+              <button id="remove-duplicates-btn" class="icon-btn small warning"
+                title="Remove all duplicate links">🗑️</button>
+            </div>
+            <h3>Proposed Structure <span id="total-bookmark-count" style="font-size: 0.8em; opacity: 0.7;">(0)</span>
+            </h3>
+            <button id="back-btn" class="secondary-btn small">Back</button>
+          </div>
+          <div class="header-actions">
+            <div class="tree-controls" style="display: flex; gap: 4px; margin-right: 8px;">
+              <button id="expand-all-btn" class="icon-btn small" title="Expand All">⬇️</button>
+              <button id="collapse-all-btn" class="icon-btn small" title="Collapse All">⬆️</button>
+            </div>
+            <button id="apply-all-titles-btn" class="secondary-btn small" title="Apply all AI suggested titles">✨ Apply
+              All</button>
+            <button id="undo-all-titles-btn" class="secondary-btn small hidden" title="Undo all renames">↩️ Undo
+              All</button>
+            <div class="regen-controls" style="display: flex; align-items: center; gap: 4px;">
+              <input type="number" id="recalc-cats-input" style="width: 40px; padding: 2px;" min="1" max="50" value="10"
+                title="Target Categories">
+              <button id="recalc-btn" class="secondary-btn small" title="Recalculate Structure">Recalc</button>
             </div>
           </div>
         </div>
@@ -123,6 +164,10 @@
     <footer>
       <p>LinkLoom v1.0</p>
     </footer>
+
+    <div id="toast-container" class="toast-container hidden">
+      <div class="toast-message" id="toast-message"></div>
+    </div>
   </div>
   <script src="popup.js"></script>
 </body>

@@ -6,7 +6,9 @@
     "permissions": [
         "bookmarks",
         "storage",
-        "scripting"
+        "scripting",
+        "unlimitedStorage",
+        "power"
     ],
     "host_permissions": [
         "http://*/*",
