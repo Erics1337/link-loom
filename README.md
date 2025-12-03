@@ -1,54 +1,109 @@
-# LinkLoom - Smart Bookmark Organizer
+# LinkLoom 🕸️
 
-LinkLoom is a Chrome extension that helps you organize your bookmarks into smart, semantically relevant categories using AI.
+LinkLoom is an AI-powered Chrome extension that organizes your messy bookmarks into a clean, structured hierarchy. It uses vector embeddings and clustering to automatically categorize your links.
 
-### ✨ Features
-- **Smart Categorization**: Uses AI to understand the content of your bookmarks, not just the URL.
-- **Deep Scraping (Hybrid Mode)**: Actually visits the webpage to understand its context (requires Firecrawl API).
-- **Metadata Mode**: Fast analysis using only URL and domain info (saves API credits).
-- **Interactive Preview**: See the proposed structure, edit titles, and move items before applying changes.
-- **Smart Rename**: AI suggests better, more descriptive titles for your bookmarks.
-- **Dead Link Detection**: Identifies and groups broken links (404s, DNS errors) for easy cleanup.
-- **Privacy Focused**: Your bookmarks are processed securely. API keys are stored locally.
-- **🎛️ Adjustable Granularity**: Control how specific you want your folder structure to be (Low, Medium, High).
+## Features
+- **AI Categorization**: Automatically groups bookmarks using semantic similarity.
+- **Smart Structure**: Generates a proposed folder structure based on your content.
+- **Duplicate Detection**: Identifies and helps remove duplicate bookmarks.
+- **Broken Link Checker**: Finds dead links (404s, etc.).
+- **Free vs Premium**: Free plan limits sorting to 500 bookmarks; Premium unlocks unlimited sorting.
 
-## How it Works
+## Tech Stack
+- **Frontend**: Chrome Extension (Vanilla JS, HTML, CSS)
+- **Backend**: Node.js, Fastify, TypeScript
+- **Database**: PostgreSQL with `pgvector` extension
+- **Queue**: BullMQ with Redis
+- **AI**: OpenAI Embeddings (or compatible API)
+- **Infrastructure**: Kubernetes, Docker
 
-LinkLoom uses a sophisticated 3-pass algorithm to ensure high-quality organization:
+## Prerequisites
+- Node.js (v18+)
+- Docker & Kubernetes (OrbStack, Docker Desktop, or Minikube)
+- OpenAI API Key
 
-1.  **Content Extraction (Firecrawl)**:
-    - We use [Firecrawl](https://firecrawl.dev) to deep-scrape the content of your bookmarked pages, converting them into clean Markdown.
-    - This allows the AI to understand the *full context* of the page, rather than guessing from the title.
+---
 
-2.  **Dynamic Structure Generation**:
-    - An LLM (Large Language Model) analyzes the summaries of your bookmarks to design a custom folder structure.
-    - It creates semantically relevant categories tailored specifically to your collection.
+## 🚀 Development Workflows
 
-3.  **Smart Assignment & Enrichment**:
-    - The AI assigns each bookmark to the most appropriate folder.
-    - It simultaneously generates a better title and extracts keywords/tags for easier searching.
+### Option 1: Local Development (Recommended for Backend Logic)
+Use this method to iterate quickly on the backend code without rebuilding Docker images.
 
-## Installation
-
-1.  Clone this repository:
+1.  **Start Infrastructure (DB & Redis)**
+    Run the database and Redis using Docker Compose. This keeps your state isolated but accessible.
     ```bash
-    git clone https://github.com/Erics1337/LinkLoom.git
+    cd backend
+    docker-compose up -d
     ```
-2.  Open Google Chrome and navigate to `chrome://extensions/`.
-3.  Enable **Developer mode** in the top right corner.
-4.  Click **Load unpacked** and select the directory where you cloned the repository.
 
-## Usage
+2.  **Configure Environment**
+    Ensure your `backend/.env` file points to localhost:
+    ```env
+    DATABASE_URL=postgres://postgres:postgres@localhost:5432/linkloom
+    REDIS_HOST=localhost
+    REDIS_PORT=6379
+    OPENAI_API_KEY=your_key_here
+    PORT=3000
+    ```
 
-1.  Click the LinkLoom icon in your Chrome toolbar.
-2.  Follow the on-screen instructions to organize your bookmarks.
+3.  **Run Backend Locally**
+    Start the backend in watch mode. It will auto-reload when you save files.
+    ```bash
+    cd backend
+    npm install
+    npm run dev
+    ```
+    The server will start at `http://localhost:3000`.
 
-## Development
+4.  **Load Extension**
+    - Open Chrome and go to `chrome://extensions`.
+    - Enable "Developer mode".
+    - Click "Load unpacked" and select the `chrome-extension` folder.
 
-This project is built with:
-- JavaScript (ES6+)
-- Chrome Extensions Manifest V3
+### Option 2: Kubernetes Development (Recommended for Deployment Testing)
+Use this method to verify the full deployment stack.
 
-## License
+1.  **Build Backend Image**
+    If you change backend code, you must rebuild the image.
+    ```bash
+    # From project root
+    docker build -t linkloom-backend:latest ./backend
+    ```
 
-[MIT](LICENSE)
+2.  **Deploy/Restart**
+    Apply the K8s manifests or restart the deployment to pick up the new image.
+    ```bash
+    # Apply all configs
+    kubectl apply -f k8s/
+
+    # OR just restart if configs haven't changed
+    kubectl rollout restart deployment backend
+    ```
+
+3.  **Port Forwarding (if not using LoadBalancer)**
+    If your K8s service isn't exposed via localhost automatically (OrbStack usually does this for LoadBalancers), you might need to port-forward:
+    ```bash
+    kubectl port-forward svc/backend 3000:3000
+    ```
+
+## 📂 Project Structure
+
+- `chrome-extension/`: Frontend code (popup, background script, content scripts).
+- `backend/`: API server and worker logic.
+    - `src/services/`: Core business logic.
+    - `src/workers/`: Background job processors (clustering, enrichment).
+    - `src/db/`: Database schema and client.
+- `k8s/`: Kubernetes manifests.
+
+## Troubleshooting
+
+### "Sync failed: Internal Server Error"
+This usually means the backend encountered an error. Check the backend logs:
+- **Local**: Check your terminal running `npm run dev`.
+- **Kubernetes**: Run `kubectl logs -l app=backend`.
+
+### Database Schema Updates
+If you change `schema.sql`, you might need to reset the database:
+1.  Stop the backend.
+2.  Drop the tables or volume (for dev).
+3.  Restart.
