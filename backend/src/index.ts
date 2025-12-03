@@ -25,7 +25,7 @@ server.get('/health', async (request, reply) => {
 });
 
 server.get('/', async (request, reply) => {
-    return { message: 'LinkLoom API is running', endpoints: ['/sync', '/organize', '/status', '/health'] };
+    return { message: 'link-loom API is running', endpoints: ['/sync', '/organize', '/status', '/health'] };
 });
 
 const start = async () => {

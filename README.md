@@ -1,6 +1,6 @@
-# LinkLoom 🕸️
+# link-loom 🕸️
 
-LinkLoom is an AI-powered Chrome extension that organizes your messy bookmarks into a clean, structured hierarchy. It uses vector embeddings and clustering to automatically categorize your links.
+link-loom is an AI-powered Chrome extension that organizes your messy bookmarks into a clean, structured hierarchy. It uses vector embeddings and clustering to automatically categorize your links.
 
 ## Features
 - **AI Categorization**: Automatically groups bookmarks using semantic similarity.
@@ -39,7 +39,7 @@ Use this method to iterate quickly on the backend code without rebuilding Docker
 2.  **Configure Environment**
     Ensure your `backend/.env` file points to localhost:
     ```env
-    DATABASE_URL=postgres://postgres:postgres@localhost:5432/linkloom
+    DATABASE_URL=postgres://postgres:postgres@localhost:5432/link-loom
     REDIS_HOST=localhost
     REDIS_PORT=6379
     OPENAI_API_KEY=your_key_here
@@ -67,7 +67,7 @@ Use this method to verify the full deployment stack.
     If you change backend code, you must rebuild the image.
     ```bash
     # From project root
-    docker build -t linkloom-backend:latest ./backend
+    docker build -t link-loom-backend:latest ./backend
     ```
 
 2.  **Deploy/Restart**

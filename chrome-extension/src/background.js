@@ -1,5 +1,4 @@
-// LinkLoom Background Service
-// LinkLoom Background Service
+// link-loom Background Service
 import { BackendService } from './services/backend.js';
 import { generateUUID } from './utils/uuid.js';
 
@@ -432,8 +431,8 @@ async function applyStructure(structure) {
     // 0. Create Backup
     await createBackup();
 
-    // 1. Create 'LinkLoom Organized' folder
-    const root = await chrome.bookmarks.create({ title: 'LinkLoom Organized' });
+    // 1. Create 'link-loom Organized' folder
+    const root = await chrome.bookmarks.create({ title: 'link-loom Organized' });
 
     // 2. Create subfolders and move bookmarks
     // Recursive function to handle nested folders

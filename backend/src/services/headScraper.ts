@@ -21,7 +21,7 @@ export async function scrapeHead(url: string): Promise<ScrapedMetadata> {
         const response = await fetch(url, {
             signal: controller.signal,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; LinkLoom/1.0; +http://linkloom.app)'
+                'User-Agent': 'Mozilla/5.0 (compatible; link-loom/1.0; +http://link-loom.app)'
             }
         });
 

@@ -1,6 +1,6 @@
 {
     "manifest_version": 3,
-    "name": "LinkLoom - Smart Bookmark Organizer",
+    "name": "link-loom - Smart Bookmark Organizer",
     "version": "1.0.0",
     "description": "Organize your bookmarks into smart, semantically relevant categories using AI.",
     "permissions": [

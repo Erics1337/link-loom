@@ -1,6 +1,6 @@
-# LinkLoom Backend Service
+# link-loom Backend Service
 
-This is the backend service for the LinkLoom Chrome Extension. It handles data synchronization, bookmark enrichment, AI analysis, and clustering.
+This is the backend service for the link-loom Chrome Extension. It handles data synchronization, bookmark enrichment, AI analysis, and clustering.
 
 ## 🚀 How to Run
 

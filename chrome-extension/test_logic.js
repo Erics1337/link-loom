@@ -1,4 +1,4 @@
-// Test script for LinkLoom categorization logic
+// Test script for link-loom categorization logic
 
 // Mock data
 const mockBookmarks = [

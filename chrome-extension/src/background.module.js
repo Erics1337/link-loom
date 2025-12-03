@@ -1,4 +1,4 @@
-// LinkLoom Background Service
+// link-loom Background Service
 import { FirecrawlService } from './services/firecrawl.js';
 import { ClusteringService } from './services/clustering.js';
 
@@ -128,8 +128,8 @@ function categorizeBookmarks(bookmarks, granularity) {
 }
 
 async function applyStructure(structure) {
-    // 1. Create 'LinkLoom Organized' folder
-    const root = await chrome.bookmarks.create({ title: 'LinkLoom Organized' });
+    // 1. Create 'link-loom Organized' folder
+    const root = await chrome.bookmarks.create({ title: 'link-loom Organized' });
 
     // 2. Create subfolders and move bookmarks
     // Recursive function to handle nested folders

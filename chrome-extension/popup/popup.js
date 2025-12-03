@@ -1287,7 +1287,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         if (node.children) {
                             node.children = filterRecursive(node.children);
                             // Remove empty folders if they became empty
-                            if (node.children.length === 0 && node.title !== "LinkLoom Organized") {
+                            if (node.children.length === 0 && node.title !== "link-loom Organized") {
                                 return false;
                             }
                         }
@@ -1312,7 +1312,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         if (node.children) {
                             node.children = filterRecursive(node.children);
                             // Remove empty folders if they became empty
-                            if (node.children.length === 0 && node.title !== "LinkLoom Organized") {
+                            if (node.children.length === 0 && node.title !== "link-loom Organized") {
                                 return false;
                             }
                         }
@@ -1337,7 +1337,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             {
                 title: "Development",
                 children: [
-                    { title: "GitHub - LinkLoom", url: "https://github.com/..." },
+                    { title: "GitHub - link-loom", url: "https://github.com/..." },
                     { title: "Stack Overflow", url: "https://stackoverflow.com" }
                 ]
             },
