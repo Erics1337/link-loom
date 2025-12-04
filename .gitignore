@@ -3,3 +3,7 @@ node_modules/
 *.log
 
 .env
+backend/.env
+dist/
+/dist
+backend/dist
