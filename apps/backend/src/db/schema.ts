@@ -1,8 +1,14 @@
 import { pgTable, uuid, text, boolean, timestamp, primaryKey, customType } from 'drizzle-orm/pg-core';
 
-const vector = customType<{ data: number[] }>({
+const vector = customType<{ data: number[], driverData: string }>({
     dataType() {
-        return 'vector(1536)';
+        return 'vector';
+    },
+    toDriver(value: number[]): string {
+        return JSON.stringify(value);
+    },
+    fromDriver(value: string): number[] {
+        return JSON.parse(value);
     },
 });
 
@@ -29,6 +35,13 @@ export const bookmarks = pgTable('bookmarks', {
 export const bookmarkEmbeddings = pgTable('bookmark_embeddings', {
     bookmarkId: uuid('bookmark_id').references(() => bookmarks.id, { onDelete: 'cascade' }).primaryKey(),
     vector: vector('vector'),
+});
+
+export const sharedLinks = pgTable('shared_links', {
+    id: text('id').primaryKey(), // SHA-256 hash of URL
+    url: text('url').notNull(),
+    vector: vector('vector'),
+    createdAt: timestamp('created_at').defaultNow(),
 });
 
 export const clusters = pgTable('clusters', {

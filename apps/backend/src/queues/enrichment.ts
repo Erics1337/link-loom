@@ -39,5 +39,6 @@ export const enrichmentProcessor = async (job: Job<EnrichmentJobData>) => {
     await queues.embedding.add('embed', {
         bookmarkId,
         text: `${title} ${description} ${url}`,
+        url,
     });
 };
