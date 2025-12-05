@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@theme {
+  --color-foreground-rgb: 0 0 0;
+  --color-background-start-rgb: 214 219 220;
+  --color-background-end-rgb: 255 255 255;
+}
+
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-foreground-rgb: 255 255 255;
+    --color-background-start-rgb: 0 0 0;
+    --color-background-end-rgb: 0 0 0;
+  }
+}
+
+body {
+  color: rgb(var(--color-foreground-rgb));
+  background: linear-gradient(to bottom,
+      transparent,
+      rgb(var(--color-background-end-rgb))) rgb(var(--color-background-start-rgb));
+}

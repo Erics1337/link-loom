@@ -9,15 +9,27 @@
         "lint": "./node_modules/.bin/next lint"
     },
     "dependencies": {
+        "@stripe/stripe-js": "^8.5.3",
+        "@supabase/ssr": "^0.8.0",
+        "@supabase/supabase-js": "^2.38.4",
+        "clsx": "^2.1.1",
+        "framer-motion": "^12.23.25",
+        "lucide-react": "^0.555.0",
         "next": "14.0.0",
         "react": "^18.2.0",
-        "react-dom": "^18.2.0"
+        "react-dom": "^18.2.0",
+        "stripe": "^20.0.0",
+        "tailwind-merge": "^3.4.0"
     },
     "devDependencies": {
         "@link-loom/tsconfig": "workspace:*",
+        "@tailwindcss/postcss": "^4.1.17",
         "@types/node": "^20.8.10",
         "@types/react": "^18.2.15",
         "@types/react-dom": "^18.2.7",
+        "autoprefixer": "^10.4.22",
+        "postcss": "^8.5.6",
+        "tailwindcss": "4.1.17",
         "typescript": "^5.2.2"
     }
 }

@@ -22,7 +22,12 @@
       "dom",
       "dom.iterable",
       "esnext"
-    ]
+    ],
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    }
   },
   "include": [
     "next-env.d.ts",
