@@ -7,3 +7,6 @@ backend/.env
 dist/
 /dist
 backend/dist
+
+.turbo
+.next

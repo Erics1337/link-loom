@@ -1,9 +1,7 @@
-# Project Rebuild: Link-Loom Agent Prompt
+# Project PRD: Link-Loom
 
 ## 1. Project Overview
-**Link-Loom** is an AI-powered Chrome extension that organizes messy browser bookmarks into a clean, semantic hierarchy. The current iteration has suffered from complexity creep, fragile state synchronization between the extension and backend, and scalability issues.
-
-**Goal**: Rebuild the system from scratch with a focus on **robustness**, **simplicity**, and **scalability**. The core value proposition is "One-click AI organization of bookmarks."
+**Link-Loom** is an AI-powered Chrome extension that organizes messy browser bookmarks into a clean, semantic hierarchy.
 
 ## 2. Core Technologies
 The new system should utilize the following stack (unless you have strong reasons to deviate):

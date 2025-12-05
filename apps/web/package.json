@@ -1,0 +1,23 @@
+{
+    "name": "web",
+    "version": "0.0.0",
+    "private": true,
+    "scripts": {
+        "dev": "./node_modules/.bin/next dev",
+        "build": "./node_modules/.bin/next build",
+        "start": "./node_modules/.bin/next start",
+        "lint": "./node_modules/.bin/next lint"
+    },
+    "dependencies": {
+        "next": "14.0.0",
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0"
+    },
+    "devDependencies": {
+        "@link-loom/tsconfig": "workspace:*",
+        "@types/node": "^20.8.10",
+        "@types/react": "^18.2.15",
+        "@types/react-dom": "^18.2.7",
+        "typescript": "^5.2.2"
+    }
+}

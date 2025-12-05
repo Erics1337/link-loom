@@ -1,0 +1,15 @@
+{
+    "manifest_version": 3,
+    "name": "Link-Loom",
+    "version": "1.0.0",
+    "action": {
+        "default_popup": "popup.html"
+    },
+    "permissions": [
+        "bookmarks",
+        "storage"
+    ],
+    "host_permissions": [
+        "http://localhost:3000/*"
+    ]
+}
