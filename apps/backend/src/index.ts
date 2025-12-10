@@ -8,8 +8,6 @@ const fastify = Fastify({
     logger: true
 });
 
-
-
 fastify.get('/health', async (request, reply) => {
     return { status: 'ok' };
 });
@@ -21,9 +19,8 @@ import { embeddingProcessor } from './queues/embedding';
 import { clusteringProcessor } from './queues/clustering';
 
 import { queues } from './lib/queue';
-import { db } from './db';
-import { bookmarks, clusters, clusterAssignments } from './db/schema';
-import { eq, and } from 'drizzle-orm';
+import { supabase } from './db';
+import OpenAI from 'openai';
 
 const startWorkers = () => {
     createWorker('ingest', ingestProcessor);
@@ -36,7 +33,7 @@ const startWorkers = () => {
 const start = async () => {
     try {
         await fastify.register(cors, {
-            origin: true // Allow all for now, lock down later
+            origin: true
         });
 
         startWorkers();
@@ -44,37 +41,86 @@ const start = async () => {
         // API Routes
         fastify.post('/ingest', async (req: any, reply) => {
             const { userId, bookmarks } = req.body;
+            console.log(`[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId}`);
             await queues.ingest.add('ingest', { userId, bookmarks });
+            console.log(`[INGEST] Queued ingest job for user ${userId}`);
             return { status: 'queued' };
         });
 
         fastify.get('/status/:userId', async (req: any, reply) => {
             const { userId } = req.params;
-            // Simple status check: count pending/processing items
-            // In a real app, we'd have a more robust job tracking
-            const pending = await db.select({ count: bookmarks.id }).from(bookmarks)
-                .where(and(eq(bookmarks.userId, userId), eq(bookmarks.status, 'pending')));
 
-            // Check if clustering is done (this is a simplification)
-            const clusterCount = await db.select({ count: clusters.id }).from(clusters)
-                .where(eq(clusters.userId, userId));
+            // Count total bookmarks for this user
+            const { count: totalCount } = await supabase
+                .from('bookmarks')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', userId);
+
+            // Count pending bookmarks
+            const { count: pendingCount } = await supabase
+                .from('bookmarks')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', userId)
+                .eq('status', 'pending');
+
+            // Count clusters
+            const { count: clusterCount } = await supabase
+                .from('clusters')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', userId);
+
+            console.log(`[STATUS] User ${userId}: total=${totalCount}, pending=${pendingCount}, clusters=${clusterCount}`);
 
             return {
-                pending: pending.length,
-                clusters: clusterCount.length,
-                isDone: pending.length === 0 && clusterCount.length > 0
+                pending: pendingCount ?? 0,
+                total: totalCount ?? 0,
+                clusters: clusterCount ?? 0,
+                isDone: (pendingCount ?? 0) === 0 && (clusterCount ?? 0) > 0
             };
         });
 
         fastify.get('/structure/:userId', async (req: any, reply) => {
             const { userId } = req.params;
-            // Fetch clusters and assignments
-            const userClusters = await db.select().from(clusters).where(eq(clusters.userId, userId));
-            const assignments = await db.select().from(clusterAssignments)
-                .innerJoin(clusters, eq(clusterAssignments.clusterId, clusters.id))
-                .where(eq(clusters.userId, userId));
 
-            return { clusters: userClusters, assignments };
+            // Fetch clusters
+            const { data: userClusters } = await supabase
+                .from('clusters')
+                .select('*')
+                .eq('user_id', userId);
+
+            // Fetch assignments with cluster info
+            const { data: assignments } = await supabase
+                .from('cluster_assignments')
+                .select(`
+                    cluster_id,
+                    bookmark_id,
+                    clusters!inner (user_id)
+                `)
+                .eq('clusters.user_id', userId);
+
+            return { clusters: userClusters ?? [], assignments: assignments ?? [] };
+        });
+
+        fastify.post('/search', async (req: any, reply) => {
+            const { userId, query } = req.body;
+
+            // 1. Embed Query
+            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+            const response = await openai.embeddings.create({
+                model: 'text-embedding-3-small',
+                input: query,
+            });
+            const queryVector = response.data[0].embedding;
+
+            // 2. Semantic Search using Supabase RPC (vector similarity)
+            // This requires a database function for vector search
+            const { data: results } = await supabase.rpc('search_bookmarks', {
+                query_vector: queryVector,
+                user_id: userId,
+                match_count: 20
+            });
+
+            return { results: results ?? [] };
         });
 
         await fastify.listen({ port: 3333, host: '0.0.0.0' });

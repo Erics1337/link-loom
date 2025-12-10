@@ -7,7 +7,7 @@ export type AppStatus = 'idle' | 'weaving' | 'ready' | 'done' | 'error';
 
 export const useBookmarkWeaver = () => {
     const [status, setStatus] = useState<AppStatus>('idle');
-    const [progress, setProgress] = useState({ pending: 0, clusters: 0 });
+    const [progress, setProgress] = useState({ pending: 0, clusters: 0, total: 0 });
     const [userId, setUserId] = useState<string>('');
     const [clusters, setClusters] = useState<BookmarkNode[]>([]);
     const [stats, setStats] = useState({ duplicates: 0, deadLinks: 0 });
@@ -31,7 +31,7 @@ export const useBookmarkWeaver = () => {
         if (typeof chrome === 'undefined' || !chrome.bookmarks) {
             console.log("Running in mock mode");
             setTimeout(() => {
-                setProgress({ pending: 50, clusters: 5 });
+                setProgress({ pending: 50, clusters: 5, total: 100 });
             }, 1000);
             setTimeout(() => {
                 setClusters([
@@ -75,6 +75,8 @@ export const useBookmarkWeaver = () => {
                 }
             };
             traverse(tree[0]);
+            const totalBookmarks = bookmarks.length;
+            setProgress(prev => ({ ...prev, total: totalBookmarks, pending: totalBookmarks }));
 
             // 2. Send to Backend
             await fetch(`${BACKEND_URL}/ingest`, {
@@ -88,7 +90,13 @@ export const useBookmarkWeaver = () => {
                 try {
                     const res = await fetch(`${BACKEND_URL}/status/${userId}`);
                     const data = await res.json();
-                    setProgress({ pending: data.pending, clusters: data.clusters });
+                    console.log('[POLL] Status response:', data);
+                    setProgress(prev => ({ 
+                        ...prev, 
+                        pending: data.pending, 
+                        clusters: data.clusters,
+                        total: data.total || prev.total  // Use backend total if available
+                    }));
 
                     if (data.isDone) {
                         clearInterval(interval);

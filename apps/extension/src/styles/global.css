@@ -136,6 +136,10 @@ p {
     height: 100%;
 }
 
+.h-4 {
+    height: 16px;
+}
+
 .p-4 {
     padding: 16px;
 }

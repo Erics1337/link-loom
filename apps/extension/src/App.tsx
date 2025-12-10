@@ -20,7 +20,10 @@ const App = () => {
         case 'idle':
             return <StartScreen onStart={startWeaving} />;
         case 'weaving':
-            return <WeavingScreen progress={((progress.clusters * 10) + (100 - progress.pending)) / 2} />; // Rough progress calc
+            const progressPercent = progress.total > 0
+                ? ((progress.total - progress.pending) / progress.total) * 100
+                : 5;
+            return <WeavingScreen progress={progressPercent} />;
         case 'ready':
             return (
                 <ResultsScreen

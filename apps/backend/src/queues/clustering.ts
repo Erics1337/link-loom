@@ -1,7 +1,5 @@
 import { Job } from 'bullmq';
-import { db } from '../db';
-import { bookmarks, bookmarkEmbeddings, clusters, clusterAssignments } from '../db/schema';
-import { eq, inArray } from 'drizzle-orm';
+import { supabase } from '../db';
 import { kmeans } from 'ml-kmeans';
 import OpenAI from 'openai';
 
@@ -22,14 +20,11 @@ async function recursiveCluster(
 ) {
     // Base Case: If small enough, stop
     if (bookmarkIds.length <= 5) {
-        // Create a leaf cluster (or just leave them in the parent if parent exists)
-        // For now, let's assume we just assign them to the parent.
-        // If parentId is null (top level) and we have few items, we might just make one folder.
         if (parentId) {
             for (const bid of bookmarkIds) {
-                await db.insert(clusterAssignments).values({
-                    clusterId: parentId,
-                    bookmarkId: bid,
+                await supabase.from('cluster_assignments').insert({
+                    cluster_id: parentId,
+                    bookmark_id: bid,
                 });
             }
         }
@@ -37,7 +32,7 @@ async function recursiveCluster(
     }
 
     // K-Means
-    const k = Math.min(5, bookmarkIds.length); // Split into 5 or fewer
+    const k = Math.min(5, bookmarkIds.length);
     const result = kmeans(vectors, k, { initialization: 'kmeans++' });
 
     // Group by cluster
@@ -53,26 +48,34 @@ async function recursiveCluster(
     for (const key in groups) {
         const group = groups[key];
 
-        // Create a new cluster (folder)
         // Generate Name
         const name = await generateClusterName(group.ids);
 
-        const [newCluster] = await db.insert(clusters).values({
-            userId,
-            name,
-            parentId,
-        }).returning();
+        const { data: newCluster } = await supabase
+            .from('clusters')
+            .insert({
+                user_id: userId,
+                name,
+                parent_id: parentId,
+            })
+            .select()
+            .single();
 
-        // Recurse
-        await recursiveCluster(group.ids, group.vecs, newCluster.id, userId);
+        if (newCluster) {
+            // Recurse
+            await recursiveCluster(group.ids, group.vecs, newCluster.id, userId);
+        }
     }
 }
 
 async function generateClusterName(bookmarkIds: string[]): Promise<string> {
     // Fetch titles
-    const bks = await db.select({ title: bookmarks.title, description: bookmarks.description })
-        .from(bookmarks)
-        .where(inArray(bookmarks.id, bookmarkIds.slice(0, 10))); // Sample 10
+    const { data: bks } = await supabase
+        .from('bookmarks')
+        .select('title, description')
+        .in('id', bookmarkIds.slice(0, 10));
+
+    if (!bks || bks.length === 0) return 'New Folder';
 
     const prompt = `Generate a short, descriptive folder name (max 3 words) for a bookmark folder containing these items:\n` +
         bks.map(b => `- ${b.title}: ${b.description}`).join('\n');
@@ -92,19 +95,26 @@ export const clusteringProcessor = async (job: Job<ClusteringJobData>) => {
     const { userId } = job.data;
     console.log(`Clustering bookmarks for user ${userId}`);
 
-    // Fetch all embedded bookmarks for user
-    const userBookmarks = await db.select({
-        id: bookmarks.id,
-        vector: bookmarkEmbeddings.vector,
-    })
-        .from(bookmarks)
-        .innerJoin(bookmarkEmbeddings, eq(bookmarks.id, bookmarkEmbeddings.bookmarkId))
-        .where(eq(bookmarks.userId, userId));
+    // Fetch all embedded bookmarks for user with their vectors via join
+    const { data: userBookmarks } = await supabase
+        .from('bookmarks')
+        .select(`
+            id,
+            shared_links!content_hash (vector)
+        `)
+        .eq('user_id', userId);
 
-    if (userBookmarks.length === 0) return;
+    if (!userBookmarks || userBookmarks.length === 0) return;
 
-    const ids = userBookmarks.map(b => b.id);
-    const vectors = userBookmarks.map(b => b.vector as number[]);
+    // Filter out bookmarks without vectors
+    const validBookmarks = userBookmarks.filter(b => 
+        b.shared_links && (b.shared_links as any).vector
+    );
+
+    if (validBookmarks.length === 0) return;
+
+    const ids = validBookmarks.map(b => b.id);
+    const vectors = validBookmarks.map(b => (b.shared_links as any).vector as number[]);
 
     // Start Recursion
     await recursiveCluster(ids, vectors, null, userId);

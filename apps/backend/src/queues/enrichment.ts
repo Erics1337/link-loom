@@ -1,8 +1,6 @@
 import { Job } from 'bullmq';
 import { queues } from '../lib/queue';
-import { db } from '../db';
-import { bookmarks } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { supabase } from '../db';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
@@ -28,12 +26,10 @@ export const enrichmentProcessor = async (job: Job<EnrichmentJobData>) => {
     }
 
     // Update DB
-    await db.update(bookmarks)
-        .set({
-            description,
-            status: 'enriched',
-        })
-        .where(eq(bookmarks.id, bookmarkId));
+    await supabase
+        .from('bookmarks')
+        .update({ description, status: 'enriched' })
+        .eq('id', bookmarkId);
 
     // Add to Embedding Queue
     await queues.embedding.add('embed', {
