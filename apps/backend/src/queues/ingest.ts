@@ -53,6 +53,9 @@ export const ingestProcessor = async (job: Job<IngestJobData>) => {
                 .single();
 
             if (error || !inserted) {
+                if (error) {
+                    console.error(`[INGEST WORKER] Failed to insert bookmark ${b.url}:`, error);
+                }
                 // Bookmark already exists or error, skip
                 continue;
             }

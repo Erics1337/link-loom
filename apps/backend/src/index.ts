@@ -5,7 +5,15 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 const fastify = Fastify({
-    logger: true
+    logger: {
+        transport: {
+            target: 'pino-pretty',
+            options: {
+                translateTime: 'HH:MM:ss Z',
+                ignore: 'pid,hostname',
+            },
+        },
+    }
 });
 
 fastify.get('/health', async (request, reply) => {
@@ -51,23 +59,29 @@ const start = async () => {
             const { userId } = req.params;
 
             // Count total bookmarks for this user
-            const { count: totalCount } = await supabase
+            const { count: totalCount, error: totalError } = await supabase
                 .from('bookmarks')
                 .select('*', { count: 'exact', head: true })
                 .eq('user_id', userId);
 
+            if (totalError) console.error('[STATUS] Total Count Error:', totalError);
+
             // Count pending bookmarks
-            const { count: pendingCount } = await supabase
+            const { count: pendingCount, error: pendingError } = await supabase
                 .from('bookmarks')
                 .select('*', { count: 'exact', head: true })
                 .eq('user_id', userId)
                 .eq('status', 'pending');
 
+            if (pendingError) console.error('[STATUS] Pending Count Error:', pendingError);
+
             // Count clusters
-            const { count: clusterCount } = await supabase
+            const { count: clusterCount, error: clusterError } = await supabase
                 .from('clusters')
                 .select('*', { count: 'exact', head: true })
                 .eq('user_id', userId);
+
+            if (clusterError) console.error('[STATUS] Cluster Count Error:', clusterError);
 
             console.log(`[STATUS] User ${userId}: total=${totalCount}, pending=${pendingCount}, clusters=${clusterCount}`);
 

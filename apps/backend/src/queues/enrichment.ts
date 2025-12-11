@@ -21,8 +21,14 @@ export const enrichmentProcessor = async (job: Job<EnrichmentJobData>) => {
         const $ = cheerio.load(response.data);
         title = $('title').text().trim() || '';
         description = $('meta[name="description"]').attr('content') || '';
-    } catch (err) {
-        console.error(`Failed to scrape ${url}`, err);
+    } catch (err: any) {
+        if (err.code === 'ECONNABORTED' || err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
+            console.warn(`[SCRAPE FAILED] ${url}: ${err.message}`);
+        } else if (err.response) {
+             console.warn(`[SCRAPE FAILED] ${url}: Status ${err.response.status}`);
+        } else {
+            console.error(`[SCRAPE FAILED] ${url}`, err.message);
+        }
     }
 
     // Update DB
