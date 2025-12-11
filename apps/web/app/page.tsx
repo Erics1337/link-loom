@@ -36,7 +36,7 @@ export default function Home() {
                     <div className="absolute inset-0 -z-10 bg-[radial-gradient(45rem_50rem_at_top,theme(colors.blue.900),black)] opacity-50" />
                     <div className="mx-auto max-w-7xl px-6 lg:px-8 text-center flex justify-center">
                         <CardContainer className="inter-var">
-                            <CardBody className="bg-gray-50 relative group/card dark:hover:shadow-2xl dark:hover:shadow-emerald-500/[0.1] dark:bg-black dark:border-white/[0.2] border-black/[0.1] w-auto sm:w-[50rem] h-auto rounded-xl p-6 border flex flex-col items-center">
+                            <CardBody className="bg-gray-900 relative group/card hover:shadow-2xl hover:shadow-blue-500/[0.1] border-white/[0.2] w-auto sm:w-[50rem] h-auto rounded-xl p-6 border flex flex-col items-center">
                                 <CardItem translateZ="100" className="w-full mt-4 flex justify-center">
                                     <Image
                                         src="/logo.png"
@@ -47,7 +47,7 @@ export default function Home() {
                                     />
                                 </CardItem>
                                 <CardItem translateZ="60" className="w-full">
-                                    <h1 className="text-5xl sm:text-7xl font-bold tracking-tight bg-gradient-to-br from-white to-gray-500 bg-clip-text text-transparent pb-4">
+                                    <h1 className="text-5xl sm:text-7xl font-bold tracking-tight bg-gradient-to-br from-cyan-400 via-blue-500 to-purple-600 bg-clip-text text-transparent pb-4">
                                         Weave your links <br /> into knowledge.
                                     </h1>
                                 </CardItem>

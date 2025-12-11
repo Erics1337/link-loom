@@ -128,9 +128,11 @@ export const CardItem = ({
     const handleAnimations = () => {
         if (!ref.current) return;
         if (isMouseEntered) {
-            ref.current.style.transform = `translateX(${translateX}px) translateY(${translateY}px) translateZ(${translateZ}px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) rotateZ(${rotateZ}deg)`;
+            // Enhanced effect on hover - multiply translateZ for more pop
+            ref.current.style.transform = `translateX(${translateX}px) translateY(${translateY}px) translateZ(${Number(translateZ) * 1.5}px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) rotateZ(${rotateZ}deg)`;
         } else {
-            ref.current.style.transform = `translateX(0px) translateY(0px) translateZ(0px) rotateX(0deg) rotateY(0deg) rotateZ(0deg)`;
+            // Reset to base 3D depth when not hovering
+            ref.current.style.transform = `translateX(0px) translateY(0px) translateZ(${translateZ}px) rotateX(0deg) rotateY(0deg) rotateZ(0deg)`;
         }
     };
 
@@ -138,6 +140,10 @@ export const CardItem = ({
         <Tag
             ref={ref}
             className={cn("w-fit transition-transform duration-200 ease-linear", className)}
+            style={{
+                transform: `translateZ(${translateZ}px)`,
+                transformStyle: "preserve-3d",
+            }}
             {...rest}
         >
             {children}
