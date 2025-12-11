@@ -5,6 +5,7 @@ export interface BookmarkNode {
     title: string;
     url?: string;
     children?: BookmarkNode[];
+    parentId?: string | null;
     icon?: string; // Optional icon URL or class
 }
 
@@ -41,8 +42,17 @@ const ChevronDown = () => (
     </svg>
 );
 
+const cleanTitle = (title: string) => {
+    return title.replace(/^["']|["']$/g, '').replace(/\*\*/g, '').trim();
+};
+
 const TreeNode: React.FC<{ node: BookmarkNode; defaultExpanded: boolean }> = ({ node, defaultExpanded }) => {
     const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+    
+    React.useEffect(() => {
+        setIsExpanded(defaultExpanded);
+    }, [defaultExpanded]);
+
     const hasChildren = node.children && node.children.length > 0;
 
     const toggle = () => {
@@ -52,32 +62,39 @@ const TreeNode: React.FC<{ node: BookmarkNode; defaultExpanded: boolean }> = ({ 
     return (
         <div className="select-none">
             <div
-                className={`flex items-center py-1 px-2 hover:bg-white/5 rounded cursor-pointer ${!hasChildren ? 'pl-6' : ''}`}
+                className="tree-node"
                 onClick={toggle}
             >
-                {hasChildren && (
-                    <span className="mr-1 text-secondary">
+                {/* Indent calculation or Spacer */}
+                {hasChildren ? (
+                    <span className="mr-1 text-secondary icon-wrapper">
                         {isExpanded ? <ChevronDown /> : <ChevronRight />}
                     </span>
+                ) : (
+                    // Spacer to align with siblings that have a chevron
+                    <span className="w-5 mr-1 inline-block" />
                 )}
 
-                <span className="mr-2 text-secondary">
+                <span className="mr-2 text-primary">
                     {hasChildren ? <FolderIcon /> : <FileIcon />}
                 </span>
 
                 <span className={`text-sm truncate ${hasChildren ? 'font-medium text-primary' : 'text-secondary'}`}>
-                    {node.title}
+                    {cleanTitle(node.title)}
                 </span>
 
                 {!hasChildren && node.url && (
-                    <span className="ml-2 text-xs text-secondary opacity-50 truncate max-w-[150px]">
+                    <span 
+                        className="ml-2 text-xs text-secondary opacity-50 truncate"
+                        style={{ maxWidth: '150px' }}
+                    >
                         {node.url.replace(/^https?:\/\/(www\.)?/, '')}
                     </span>
                 )}
             </div>
 
             {hasChildren && isExpanded && (
-                <div className="pl-4 border-l border-white/10 ml-2">
+                <div className="pl-4 ml-3 border-l-2 border-white-10">
                     {node.children!.map(child => (
                         <TreeNode key={child.id} node={child} defaultExpanded={defaultExpanded} />
                     ))}
@@ -89,7 +106,7 @@ const TreeNode: React.FC<{ node: BookmarkNode; defaultExpanded: boolean }> = ({ 
 
 export const BookmarkTree: React.FC<BookmarkTreeProps> = ({ nodes, defaultExpanded = false }) => {
     return (
-        <div className="flex flex-col gap-1 overflow-y-auto max-h-[300px] pr-2">
+        <div className="flex flex-col gap-1 overflow-y-auto max-h-[300px] pr-2 p-2">
             {nodes.map(node => (
                 <TreeNode key={node.id} node={node} defaultExpanded={defaultExpanded} />
             ))}

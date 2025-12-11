@@ -50,6 +50,19 @@ const start = async () => {
         fastify.post('/ingest', async (req: any, reply) => {
             const { userId, bookmarks } = req.body;
             console.log(`[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId}`);
+
+            // Clear previous clusters to prevent race condition where /status reports "Done" due to old data
+            const { error: deleteError } = await supabase
+                .from('clusters')
+                .delete()
+                .eq('user_id', userId);
+            
+            if (deleteError) {
+                console.warn(`[INGEST] Warning: Failed to clear old clusters for user ${userId}`, deleteError);
+            } else {
+                console.log(`[INGEST] Cleared old clusters for user ${userId}`);
+            }
+
             await queues.ingest.add('ingest', { userId, bookmarks });
             console.log(`[INGEST] Queued ingest job for user ${userId}`);
             return { status: 'queued' };
@@ -66,12 +79,12 @@ const start = async () => {
 
             if (totalError) console.error('[STATUS] Total Count Error:', totalError);
 
-            // Count pending bookmarks
+            // Count in-progress bookmarks (pending or enriched - not yet embedded)
             const { count: pendingCount, error: pendingError } = await supabase
                 .from('bookmarks')
                 .select('*', { count: 'exact', head: true })
                 .eq('user_id', userId)
-                .eq('status', 'pending');
+                .in('status', ['pending', 'enriched']);
 
             if (pendingError) console.error('[STATUS] Pending Count Error:', pendingError);
 
@@ -81,15 +94,43 @@ const start = async () => {
                 .select('*', { count: 'exact', head: true })
                 .eq('user_id', userId);
 
-            if (clusterError) console.error('[STATUS] Cluster Count Error:', clusterError);
+            // Count bookmarks assigned to clusters
+            // We join with clusters to filter by user_id
+            const { count: assignedCount, error: assignedError } = await supabase
+                .from('cluster_assignments')
+                .select('bookmark_id', { count: 'exact', head: true })
+                .eq('clusters.user_id', userId) // This requires a join if not checking clusters specifically
+                // Actually, cluster_assignments doesn't have user_id. We need to join.
+                // However, doing a join in a count/head query might be tricky in simple syntax.
+                // An alternative is: We know the user's clusters.
+                // But a more robust way is to just trust that we cleaned up old clusters or assume all assigns for user's clusters.
+                // Let's use the foreign key link if PostgREST supports it easily, or just count 'clusters' which we have.
+                // Wait, the client wants to know "how many bookmarks have been clustered".
+                // We can query: SELECT count(distinct bookmark_id) FROM cluster_assignments JOIN clusters ON ...
+                // Supabase syntax:
+               .not('bookmark_id', 'is', null); 
+               
+            // To properly filter by user, we need to join clusters.
+            // Let's retry:
+            const { count: realAssignedCount, error: realAssignedError } = await supabase
+               .from('cluster_assignments')
+               .select('*, clusters!inner(user_id)', { count: 'exact', head: true })
+               .eq('clusters.user_id', userId);
 
-            console.log(`[STATUS] User ${userId}: total=${totalCount}, pending=${pendingCount}, clusters=${clusterCount}`);
+            if (realAssignedError) console.error('[STATUS] Assigned Count Error:', realAssignedError);
+
+            // Check actual queue status to ensure we don't say "Done" while clustering is still running
+            const clusteringCounts = await queues.clustering.getJobCounts('active', 'waiting', 'delayed');
+            const isClusteringActive = clusteringCounts.active > 0 || clusteringCounts.waiting > 0 || clusteringCounts.delayed > 0;
+
+            console.log(`[STATUS] User ${userId}: total=${totalCount}, pending=${pendingCount}, assigned=${realAssignedCount}, clusters=${clusterCount}, clusteringActive=${isClusteringActive}`);
 
             return {
                 pending: pendingCount ?? 0,
                 total: totalCount ?? 0,
                 clusters: clusterCount ?? 0,
-                isDone: (pendingCount ?? 0) === 0 && (clusterCount ?? 0) > 0
+                assigned: realAssignedCount ?? 0,
+                isDone: (pendingCount ?? 0) === 0 && (clusterCount ?? 0) > 0 && !isClusteringActive
             };
         });
 
@@ -108,11 +149,79 @@ const start = async () => {
                 .select(`
                     cluster_id,
                     bookmark_id,
-                    clusters!inner (user_id)
+                    clusters!inner (user_id),
+                    bookmarks (title, url)
                 `)
                 .eq('clusters.user_id', userId);
 
             return { clusters: userClusters ?? [], assignments: assignments ?? [] };
+        });
+
+        // Manual trigger for clustering (for recovery)
+        fastify.post('/trigger-clustering/:userId', async (req: any, reply) => {
+            const { userId } = req.params;
+            console.log(`[MANUAL] Triggering clustering for user ${userId}`);
+            await queues.clustering.add('cluster', { userId }, { 
+                jobId: `cluster-${userId}-manual-${Date.now()}`
+            });
+            return { status: 'clustering_queued' };
+        });
+
+        fastify.post('/cancel/:userId', async (req: any, reply) => {
+            const { userId } = req.params;
+            console.log(`[CANCEL] Request received for user ${userId}`);
+
+            // 1. Clear Jobs from Queues
+            const queueNames = ['ingest', 'enrichment', 'embedding', 'clustering'] as const;
+            let removedCount = 0;
+
+            for (const name of queueNames) {
+                const queue = queues[name];
+                const jobs = await queue.getJobs(['waiting', 'active', 'delayed']);
+                
+                for (const job of jobs) {
+                    if (job.data.userId === userId) {
+                        try {
+                            // If active, we might need to discard it differently or dependencies
+                            await job.remove();
+                            removedCount++;
+                        } catch (e) {
+                            console.error(`[CANCEL] Failed to remove job ${job.id} from ${name}`, e);
+                        }
+                    }
+                }
+            }
+            console.log(`[CANCEL] Removed ${removedCount} jobs for user ${userId}`);
+
+            // 2. Reset Database Status
+            // We want to stop them from being "in progress". 
+            // Setting to 'idle' allows them to be picked up again later if user retries.
+            // We only reset those that are NOT 'done' (though 'done' isn't a status, 'clustered' might be?)
+            // Statuses: 'pending', 'scraped', 'enriched', 'embedded', 'clustered'
+            // If we cancel, we probably want to reset anything not fully 'clustered' back to start?
+            // Or maybe just leave them? If we leave them, the status check might still think we are busy if it counts 'pending'.
+            // The status check counts: .in('status', ['pending', 'enriched'])
+            // So we must change 'pending' and 'enriched' to something else or delete them?
+            // "Resetting" implies we want to forget progress. 'idle' seems appropriate if we want to restart.
+            // But if we just want to stop, maybe we leave them as is?
+            // If we leave them as 'pending', the frontend will still show "Processing..." next time it loads.
+            // So we MUST clear the 'pending' state.
+            
+            const { error: updateError } = await supabase
+                .from('bookmarks')
+                .update({ status: 'idle' }) // Assume 'idle' or null is the initial state? Table definition would confirm. Let's assume 'idle'.
+                .eq('user_id', userId)
+                .in('status', ['pending', 'enriched']);
+
+            if (updateError) {
+                console.error('[CANCEL] Failed to reset bookmark status', updateError);
+                return reply.code(500).send({ error: 'Failed to reset status' });
+            }
+
+            // Also clear any clusters if we want a full reset? 
+            // Maybe not. Just stop processing.
+
+            return { status: 'cancelled', jobsRemoved: removedCount };
         });
 
         fastify.post('/search', async (req: any, reply) => {

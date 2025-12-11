@@ -1,7 +1,7 @@
 import { Job } from 'bullmq';
 import { queues } from '../lib/queue';
 import { supabase } from '../db';
-import axios from 'axios';
+
 import * as cheerio from 'cheerio';
 
 interface EnrichmentJobData {
@@ -17,17 +17,21 @@ export const enrichmentProcessor = async (job: Job<EnrichmentJobData>) => {
     let title = '';
 
     try {
-        const response = await axios.get(url, { timeout: 5000 });
-        const $ = cheerio.load(response.data);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        
+        const html = await response.text();
+        const $ = cheerio.load(html);
         title = $('title').text().trim() || '';
         description = $('meta[name="description"]').attr('content') || '';
     } catch (err: any) {
-        if (err.code === 'ECONNABORTED' || err.code === 'ECONNREFUSED' || err.code === 'ENOTFOUND') {
-            console.warn(`[SCRAPE FAILED] ${url}: ${err.message}`);
-        } else if (err.response) {
-             console.warn(`[SCRAPE FAILED] ${url}: Status ${err.response.status}`);
+        if (err.name === 'AbortError') {
+             console.warn(`[SCRAPE TIMEOUT] ${url}`);
         } else {
-            console.error(`[SCRAPE FAILED] ${url}`, err.message);
+             console.warn(`[SCRAPE FAILED] ${url}: ${err.message}`);
         }
     }
 

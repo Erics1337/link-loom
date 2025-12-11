@@ -88,6 +88,14 @@ export const ingestProcessor = async (job: Job<IngestJobData>) => {
             }
         }
         console.log(`[INGEST WORKER] Done: ${processed} bookmarks saved`);
+
+        // Schedule clustering to run after embeddings complete
+        // Add with delay to allow embedding jobs to finish first
+        console.log(`[INGEST WORKER] Scheduling clustering job for user ${userId}`);
+        await queues.clustering.add('cluster', { userId }, { 
+            delay: 2000, 
+            jobId: `cluster-${userId}-${Date.now()}` // Unique ID to ensure it runs
+        });
     } catch (error) {
         console.error(`[INGEST WORKER] ERROR:`, error);
         throw error;

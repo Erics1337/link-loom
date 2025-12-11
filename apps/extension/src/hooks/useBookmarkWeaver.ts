@@ -7,7 +7,7 @@ export type AppStatus = 'idle' | 'weaving' | 'ready' | 'done' | 'error';
 
 export const useBookmarkWeaver = () => {
     const [status, setStatus] = useState<AppStatus>('idle');
-    const [progress, setProgress] = useState({ pending: 0, clusters: 0, total: 0 });
+    const [progress, setProgress] = useState({ pending: 0, clusters: 0, assigned: 0, total: 0 });
     const [userId, setUserId] = useState<string>('');
     const [clusters, setClusters] = useState<BookmarkNode[]>([]);
     const [stats, setStats] = useState({ duplicates: 0, deadLinks: 0 });
@@ -31,11 +31,12 @@ export const useBookmarkWeaver = () => {
                     const data = await res.json();
                     console.log('[INIT] Status response:', data);
                     
-                    if (data.pending > 0) {
+                    if (data.pending > 0 || (data.total > 0 && !data.isDone)) {
                         setStatus('weaving');
                         setProgress({ 
                             pending: data.pending, 
-                            clusters: data.clusters, 
+                            clusters: data.clusters,
+                            assigned: data.assigned || 0,
                             total: data.total 
                         });
                     } else if (data.isDone) {
@@ -69,6 +70,7 @@ export const useBookmarkWeaver = () => {
                     ...prev, 
                     pending: data.pending, 
                     clusters: data.clusters,
+                    assigned: data.assigned || 0,
                     // Use backend total if available, otherwise keep existing
                     total: data.total || prev.total 
                 }));
@@ -87,12 +89,14 @@ export const useBookmarkWeaver = () => {
 
     const startWeaving = useCallback(async () => {
         setStatus('weaving');
+        setClusters([]); // Reset clusters to avoid showing old results
+        setProgress({ pending: 0, clusters: 0, assigned: 0, total: 0 }); // Reset progress
 
         // Mock for local dev
         if (typeof chrome === 'undefined' || !chrome.bookmarks) {
              console.log("Running in mock mode");
             setTimeout(() => {
-                setProgress({ pending: 50, clusters: 5, total: 100 });
+                setProgress({ pending: 50, clusters: 5, assigned: 20, total: 100 });
             }, 1000);
             setTimeout(() => {
                  setClusters([
@@ -158,24 +162,62 @@ export const useBookmarkWeaver = () => {
         try {
             const res = await fetch(`${BACKEND_URL}/structure/${targetId}`);
             const data = await res.json();
+            
+            // data = { clusters: [], assignments: [] }
+            // 1. Map assignments to bookmarks
+            // Wait, we need the bookmark details (title, url) which are currently not returned by /structure fully?
+            // Checking backend: /structure does a join but assignments only has bookmark_id and cluster_id?
+            // Let's verify what /structure returns.
+            // ... Logic pause to check backend response ...
+            // Assuming we need to fetch bookmarks or the backend provided them.
+            // Backend `assignments` query: .select(`cluster_id, bookmark_id, clusters!inner(user_id)`)
+            // It lacks title/url. We need to fetch bookmarks too.
+            // Or update /structure to return bookmark details.
+            
+            // Assuming for now we update /structure too in next step.
+            // Let's implement the tree construction assuming data contains what we need.
+            
+            const clusterMap = new Map<string, BookmarkNode>();
+            
+            // 1. Create Cluster Nodes
+            data.clusters.forEach((c: any) => {
+                clusterMap.set(c.id, {
+                    id: c.id,
+                    title: c.name,
+                    children: [],
+                    parentId: c.parent_id
+                });
+            });
 
-            // Transform backend data to BookmarkNode[]
-            // Assuming data.clusters is the structure we want
-            // For now, let's mock the transformation or assume backend returns compatible tree
-            // We'll map it to our UI structure
+            // 2. Add Bookmarks to Clusters
+            data.assignments.forEach((a: any) => {
+                const cluster = clusterMap.get(a.cluster_id);
+                if (cluster && cluster.children && a.bookmarks) {
+                    cluster.children.push({
+                        id: a.bookmark_id,
+                        title: a.bookmarks.title,
+                        url: a.bookmarks.url
+                    });
+                }
+            });
 
-            const transformedClusters: BookmarkNode[] = data.clusters.map((c: any) => ({
-                id: c.id,
-                title: c.name,
-                children: c.items?.map((item: any) => ({
-                    id: item.id,
-                    title: item.title,
-                    url: item.url
-                })) || []
-            }));
+            // 3. Build Tree (Clusters into Clusters)
+            const rootNodes: BookmarkNode[] = [];
+            
+            clusterMap.forEach((node) => {
+                const parentId = node.parentId;
+                if (parentId && clusterMap.has(parentId)) {
+                    const parent = clusterMap.get(parentId);
+                    if (parent && parent.children) {
+                        parent.children.push(node);
+                    }
+                } else {
+                    rootNodes.push(node);
+                }
+            });
 
-            setClusters(transformedClusters);
-            setStats({ duplicates: 7, deadLinks: 0 }); // Mock stats for now
+            setClusters(rootNodes);
+            setStats({ duplicates: 0, deadLinks: 0 }); 
             setStatus('ready');
         } catch (error) {
             console.error("Fetch results error", error);
@@ -188,12 +230,26 @@ export const useBookmarkWeaver = () => {
         setStatus('done');
     };
 
+    const cancelWeaving = async () => {
+        if (!userId) return;
+        try {
+            await fetch(`${BACKEND_URL}/cancel/${userId}`, { method: 'POST' });
+        } catch (error) {
+            console.error("Cancel error", error);
+        } finally {
+            // Always reset UI state
+            setStatus('idle');
+            setProgress({ pending: 0, clusters: 0, assigned: 0, total: 0 });
+        }
+    };
+
     return {
         status,
         progress,
         clusters,
         stats,
         startWeaving,
+        cancelWeaving,
         applyChanges,
         setStatus
     };

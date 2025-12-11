@@ -8,7 +8,7 @@ import { useTheme } from './hooks/useTheme';
 import './styles/global.css';
 
 const App = () => {
-    const { status, progress, clusters, stats, startWeaving, applyChanges, setStatus } = useBookmarkWeaver();
+    const { status, progress, clusters, stats, startWeaving, cancelWeaving, applyChanges, setStatus } = useBookmarkWeaver();
     const [view, setView] = useState<'main' | 'settings'>('main');
     useTheme(); // Initialize theme
 
@@ -20,10 +20,35 @@ const App = () => {
         case 'idle':
             return <StartScreen onStart={startWeaving} />;
         case 'weaving':
-            const progressPercent = progress.total > 0
-                ? ((progress.total - progress.pending) / progress.total) * 100
-                : 5;
-            return <WeavingScreen progress={progressPercent} />;
+            // Logic: 
+            // - If pending > 0, we are "Processing" (Ingesting/Embedding).
+            // - If pending is low (<= 5), we are "Clustering" using the 'assigned' count.
+            
+            let progressPercent = 5;
+            let statusMessage = "Analyzing bookmark graph...";
+
+            if (progress.total > 0) {
+                const pendingPercent = ((progress.total - progress.pending) / progress.total) * 100;
+                
+                // If we are basically done with pending items but not "done"
+                if (progress.pending <= 5 && !status.includes('ready')) {
+                    // Clustering Phase: Progress based on assigned bookmarks
+                    // We map assigned count (0 -> total) to 90% -> 100%? 
+                    // No, let's treat the whole process as two stages?
+                    // Or better: If pending is low, we switch to "clustering progress"
+                    
+                    const assignedPercent = (progress.assigned / progress.total) * 100;
+                    progressPercent = Math.max(90, Math.min(assignedPercent, 99)); // Keep it at least 90% as we are done with ingest
+                    
+                    statusMessage = `Structuring ${progress.assigned} of ${progress.total} bookmarks...`;
+                } else {
+                    // Processing Phase
+                    progressPercent = Math.min(pendingPercent, 90); // Cap at 90% until clustering starts
+                    statusMessage = `Processing ${progress.total - progress.pending} of ${progress.total} bookmarks...`;
+                }
+            }
+
+            return <WeavingScreen progress={progressPercent} statusMessage={statusMessage} onCancel={cancelWeaving} />;
         case 'ready':
             return (
                 <ResultsScreen
