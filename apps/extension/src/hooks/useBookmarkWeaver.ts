@@ -13,37 +13,98 @@ export const useBookmarkWeaver = () => {
     const [stats, setStats] = useState({ duplicates: 0, deadLinks: 0 });
 
     useEffect(() => {
-        chrome.storage.local.get(['userId'], (result) => {
-            if (result.userId) {
-                setUserId(result.userId as string);
+        chrome.storage.local.get(['userId'], async (result) => {
+            let currentUserId = result.userId as string | undefined;
+            if (currentUserId) {
+                setUserId(currentUserId as string);
             } else {
                 const newId = crypto.randomUUID();
                 chrome.storage.local.set({ userId: newId });
                 setUserId(newId);
+                currentUserId = newId;
+            }
+
+            // Check backend status immediately to restore state
+            if (currentUserId) {
+                try {
+                    const res = await fetch(`${BACKEND_URL}/status/${currentUserId}`);
+                    const data = await res.json();
+                    console.log('[INIT] Status response:', data);
+                    
+                    if (data.pending > 0) {
+                        setStatus('weaving');
+                        setProgress({ 
+                            pending: data.pending, 
+                            clusters: data.clusters, 
+                            total: data.total 
+                        });
+                    } else if (data.isDone) {
+                         // Only set to ready if we have clusters, otherwise stay idle (new user)
+                        setStatus('ready');
+                        await fetchResults(currentUserId);
+                    }
+                } catch (e) {
+                    console.error("Failed to check initial status", e);
+                }
             }
         });
     }, []);
+
+    // Polling Effect
+    useEffect(() => {
+        if (status !== 'weaving' || !userId) return;
+
+        // Mock for local dev polling
+        if (typeof chrome === 'undefined' || !chrome.bookmarks) {
+             // Mock polling logic handled in startWeaving for now or ignore
+             return;
+        }
+
+        const interval = setInterval(async () => {
+            try {
+                const res = await fetch(`${BACKEND_URL}/status/${userId}`);
+                const data = await res.json();
+                console.log('[POLL] Status response:', data);
+                setProgress(prev => ({ 
+                    ...prev, 
+                    pending: data.pending, 
+                    clusters: data.clusters,
+                    // Use backend total if available, otherwise keep existing
+                    total: data.total || prev.total 
+                }));
+
+                if (data.isDone) {
+                    clearInterval(interval);
+                    await fetchResults(userId);
+                }
+            } catch (e) {
+                console.error("Polling error", e);
+            }
+        }, 2000);
+
+        return () => clearInterval(interval);
+    }, [status, userId]);
 
     const startWeaving = useCallback(async () => {
         setStatus('weaving');
 
         // Mock for local dev
         if (typeof chrome === 'undefined' || !chrome.bookmarks) {
-            console.log("Running in mock mode");
+             console.log("Running in mock mode");
             setTimeout(() => {
                 setProgress({ pending: 50, clusters: 5, total: 100 });
             }, 1000);
             setTimeout(() => {
-                setClusters([
+                 setClusters([
                     {
                         id: '1', title: 'Development', children: [
-                            {
+                             {
                                 id: '1-1', title: 'AI Research', children: [
                                     { id: '1-1-1', title: 'OpenAI Platform', url: 'https://platform.openai.com' },
                                     { id: '1-1-2', title: 'LangChain', url: 'https://python.langchain.com' }
                                 ]
                             },
-                            {
+                             {
                                 id: '1-2', title: 'Frontend', children: [
                                     { id: '1-2-1', title: 'React', url: 'https://react.dev' }
                                 ]
@@ -56,7 +117,7 @@ export const useBookmarkWeaver = () => {
                         ]
                     }
                 ]);
-                setStats({ duplicates: 7, deadLinks: 0 });
+                 setStats({ duplicates: 7, deadLinks: 0 });
                 setStatus('ready');
             }, 3000);
             return;
@@ -84,37 +145,18 @@ export const useBookmarkWeaver = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ userId, bookmarks }),
             });
-
-            // 3. Poll Status
-            const interval = setInterval(async () => {
-                try {
-                    const res = await fetch(`${BACKEND_URL}/status/${userId}`);
-                    const data = await res.json();
-                    console.log('[POLL] Status response:', data);
-                    setProgress(prev => ({ 
-                        ...prev, 
-                        pending: data.pending, 
-                        clusters: data.clusters,
-                        total: data.total || prev.total  // Use backend total if available
-                    }));
-
-                    if (data.isDone) {
-                        clearInterval(interval);
-                        await fetchResults();
-                    }
-                } catch (e) {
-                    console.error("Polling error", e);
-                }
-            }, 2000);
+            
+            // Polling is now handled by useEffect
         } catch (error) {
             console.error("Weaving error", error);
             setStatus('error');
         }
     }, [userId]);
 
-    const fetchResults = async () => {
+    const fetchResults = async (idOverride?: string) => {
+        const targetId = idOverride || userId;
         try {
-            const res = await fetch(`${BACKEND_URL}/structure/${userId}`);
+            const res = await fetch(`${BACKEND_URL}/structure/${targetId}`);
             const data = await res.json();
 
             // Transform backend data to BookmarkNode[]
