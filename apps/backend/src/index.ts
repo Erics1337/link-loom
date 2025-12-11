@@ -32,10 +32,10 @@ import OpenAI from 'openai';
 
 const startWorkers = () => {
     createWorker('ingest', ingestProcessor);
-    createWorker('enrichment', enrichmentProcessor);
-    createWorker('embedding', embeddingProcessor);
+    createWorker('enrichment', enrichmentProcessor, { concurrency: 50 });
+    createWorker('embedding', embeddingProcessor, { concurrency: 20 });
     createWorker('clustering', clusteringProcessor);
-    console.log('Workers started');
+    console.log('Workers started with optimized concurrency (Enrichment: 50, Embedding: 20)');
 };
 
 const start = async () => {

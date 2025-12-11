@@ -21,7 +21,7 @@ connection.on('error', (err: any) => {
 });
 
 export const createQueue = (name: string) => new Queue(name, { connection });
-export const createWorker = (name: string, processor: any) => new Worker(name, processor, { connection });
+export const createWorker = (name: string, processor: any, options: any = {}) => new Worker(name, processor, { connection, ...options });
 export const createQueueEvents = (name: string) => new QueueEvents(name, { connection });
 
 export const queues = {
