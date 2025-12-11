@@ -106,7 +106,7 @@ const TreeNode: React.FC<{ node: BookmarkNode; defaultExpanded: boolean }> = ({ 
 
 export const BookmarkTree: React.FC<BookmarkTreeProps> = ({ nodes, defaultExpanded = false }) => {
     return (
-        <div className="flex flex-col gap-1 overflow-y-auto max-h-[300px] pr-2 p-2">
+        <div className="flex flex-col gap-1 overflow-y-auto flex-1 h-full min-h-0 pr-2 p-2">
             {nodes.map(node => (
                 <TreeNode key={node.id} node={node} defaultExpanded={defaultExpanded} />
             ))}

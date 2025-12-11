@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { BookmarkTree, BookmarkNode } from '../components/BookmarkTree';
+import { PopOutButton } from '../components/PopOutButton';
 
 interface ResultsScreenProps {
     clusters: BookmarkNode[];
@@ -19,12 +20,18 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({ clusters, stats, o
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-xl font-bold text-gradient">Link Loom</h1>
+                    <div className="flex items-center gap-2">
+                        <img src="/icons/icon-48.png" alt="Logo" className="w-6 h-6" />
+                        <h1 className="text-xl font-bold text-gradient">Link Loom</h1>
+                    </div>
                     <p className="text-xs text-secondary mt-1">
                         Organize your bookmarks with AI clustering.
                     </p>
                 </div>
-                <span className="badge">v 0.1</span>
+                <div className="flex items-center gap-2">
+                    <span className="badge">v 0.1</span>
+                    <PopOutButton />
+                </div>
             </div>
 
             {/* Actions */}
@@ -41,7 +48,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({ clusters, stats, o
             </div>
 
             {/* Tree View Card */}
-            <div className="card flex-1 overflow-hidden flex flex-col p-0">
+            <div className="card flex-1 min-h-0 overflow-hidden flex flex-col p-0">
                 <div className="p-2 border-b border-white-10 text-xs font-medium text-secondary uppercase tracking-wider">
                     Proposed Structure
                 </div>

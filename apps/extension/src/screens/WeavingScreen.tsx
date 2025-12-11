@@ -1,5 +1,6 @@
 import React from 'react';
 import { ProgressBar } from '../components/ProgressBar';
+import { PopOutButton } from '../components/PopOutButton';
 
 interface WeavingScreenProps {
     progress: number;
@@ -9,8 +10,16 @@ interface WeavingScreenProps {
 
 export const WeavingScreen: React.FC<WeavingScreenProps> = ({ progress, statusMessage = "Analyzing bookmark graph and building clusters.", onCancel }) => {
     return (
-        <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-            <h1 className="mb-2 text-3xl font-bold">Link Loom</h1>
+        <div className="flex flex-col items-center justify-center h-full p-6 text-center relative">
+            <div className="absolute top-4 right-4 flex items-center gap-2">
+                <span className="text-secondary text-xs">v 0.1</span>
+                <PopOutButton />
+            </div>
+
+            <div className="flex items-center justify-center gap-3 mb-2">
+                <img src="/icons/icon-48.png" alt="Logo" className="w-10 h-10" />
+                <h1 className="text-3xl font-bold">Link Loom</h1>
+            </div>
             <p className="mb-12 text-lg text-secondary">
                 Organize your bookmarks<br />with AI clustering.
             </p>
