@@ -68,8 +68,68 @@ const start = async () => {
             return { status: 'queued' };
         });
 
+        // Device Registration
+        fastify.post('/register-device', async (req: any, reply) => {
+            const { userId, deviceId, name } = req.body;
+            
+            // 1. Check current device count
+            const { count, error: countError } = await supabase
+                .from('user_devices')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', userId);
+            
+            if (countError) {
+                console.error('[Device] Count error:', countError);
+                return reply.code(500).send({ error: 'Database error' });
+            }
+
+            // 2. Register if under limit or already exists
+            // Upsert doesn't quite work for "limit check" on insert unless we rely on db constraint trigger or check manually.
+            // We'll check manually here for simplicity.
+            
+            // Check if this device already exists
+            const { data: existing } = await supabase
+                .from('user_devices')
+                .select('id')
+                .eq('user_id', userId)
+                .eq('device_id', deviceId)
+                .single();
+
+            if (existing) {
+                // Update last_seen
+                await supabase.from('user_devices').update({ last_seen_at: new Date() }).eq('id', existing.id);
+                return { status: 'registered' };
+            }
+
+            if ((count ?? 0) >= 3) {
+                return reply.code(403).send({ error: 'Device limit reached. Please manage devices in dashboard.' });
+            }
+
+            const { error: insertError } = await supabase.from('user_devices').insert({
+                user_id: userId,
+                device_id: deviceId,
+                name: name || 'Unknown Device'
+            });
+
+            if (insertError) {
+                 console.error('[Device] Insert error:', insertError);
+                 return reply.code(500).send({ error: 'Failed to register device' });
+            }
+
+            return { status: 'registered' };
+        });
+
         fastify.get('/status/:userId', async (req: any, reply) => {
             const { userId } = req.params;
+
+            // Get User Premium Status
+            const { data: user } = await supabase
+                .from('users')
+                .select('is_premium')
+                .eq('id', userId)
+                .single();
+            
+            const isPremium = user?.is_premium ?? false;
 
             // Count total bookmarks for this user
             const { count: totalCount, error: totalError } = await supabase
@@ -130,7 +190,8 @@ const start = async () => {
                 total: totalCount ?? 0,
                 clusters: clusterCount ?? 0,
                 assigned: realAssignedCount ?? 0,
-                isDone: (pendingCount ?? 0) === 0 && (clusterCount ?? 0) > 0 && !isClusteringActive
+                isDone: (pendingCount ?? 0) === 0 && (clusterCount ?? 0) > 0 && !isClusteringActive,
+                isPremium, // Return premium status
             };
         });
 

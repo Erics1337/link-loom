@@ -28,16 +28,55 @@ const limit = pLimit(10); // Concurrency limit
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function generateClusterName(bookmarkIds: string[]): Promise<string> {
-    // Fetch titles
+    // Fetch bookmark data including URL for fallback
     const { data: bks } = await supabase
         .from('bookmarks')
-        .select('title, description')
+        .select('title, description, url')
         .in('id', bookmarkIds.slice(0, 10));
 
-    if (!bks || bks.length === 0) return 'New Folder';
+    if (!bks || bks.length === 0) return 'Miscellaneous';
 
-    const prompt = `Generate a short, descriptive folder name (max 3 words) for a bookmark folder containing these items. DO NOT use quotes, markdown, or punctuation:\n` +
-        bks.map(b => `- ${b.title}: ${b.description}`).join('\n');
+    // Filter out bookmarks with empty or generic titles
+    const genericTitles = ['new folder', 'untitled', 'bookmark', ''];
+    const meaningfulBookmarks = bks.filter(b => {
+        const title = (b.title || '').toLowerCase().trim();
+        return title && !genericTitles.includes(title);
+    });
+
+    // If no meaningful bookmarks, try to extract info from URLs
+    const bookmarkInfoList = meaningfulBookmarks.length > 0 
+        ? meaningfulBookmarks 
+        : bks;
+
+    // Build context for each bookmark
+    const contextLines = bookmarkInfoList.map(b => {
+        const title = b.title?.trim() || '';
+        const description = b.description?.trim() || '';
+        const url = b.url || '';
+        
+        // Extract domain from URL as fallback context
+        let domain = '';
+        try {
+            domain = new URL(url).hostname.replace('www.', '');
+        } catch {}
+        
+        // Build the most informative line possible
+        if (title && description) {
+            return `- ${title}: ${description}`;
+        } else if (title) {
+            return `- ${title} (${domain})`;
+        } else if (domain) {
+            return `- ${domain}${description ? ': ' + description : ''}`;
+        }
+        return null;
+    }).filter(Boolean);
+
+    if (contextLines.length === 0) {
+        return 'Miscellaneous';
+    }
+
+    const prompt = `Generate a short, descriptive folder name (max 3 words) for a bookmark folder containing these items. The name should describe the TOPIC or CATEGORY of these bookmarks. DO NOT use quotes, markdown, punctuation, or generic names like "New Folder" or "Miscellaneous":\n` +
+        contextLines.join('\n');
 
     let retries = 0;
     const maxRetries = 5;
@@ -49,9 +88,17 @@ async function generateClusterName(bookmarkIds: string[]): Promise<string> {
                 model: 'gpt-4o-mini',
                 messages: [{ role: 'user', content: prompt }],
             });
-            let name = response.choices[0].message.content?.trim() || 'New Folder';
-            // Clean up common artifacts just in case
+            let name = response.choices[0].message.content?.trim() || '';
+            // Clean up common artifacts
             name = name.replace(/^["']|["']$/g, '').replace(/\*\*/g, '').trim();
+            
+            // Reject if OpenAI returns a generic name
+            const genericResponses = ['new folder', 'untitled', 'bookmarks', 'miscellaneous', 'folder', ''];
+            if (genericResponses.includes(name.toLowerCase())) {
+                log(`OpenAI returned generic name "${name}", using fallback`);
+                return 'General';
+            }
+            
             return name;
         } catch (e: any) {
             if (e.status === 429) {
@@ -62,10 +109,10 @@ async function generateClusterName(bookmarkIds: string[]): Promise<string> {
                 continue;
             }
             console.error('OpenAI Error:', e);
-            return 'New Folder';
+            return 'General';
         }
     }
-    return 'New Folder';
+    return 'General';
 }
 
 // Recursive function to cluster bookmarks

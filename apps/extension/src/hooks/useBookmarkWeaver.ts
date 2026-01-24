@@ -12,6 +12,8 @@ export const useBookmarkWeaver = () => {
     const [clusters, setClusters] = useState<BookmarkNode[]>([]);
     const [stats, setStats] = useState({ duplicates: 0, deadLinks: 0 });
 
+    const [isPremium, setIsPremium] = useState(false);
+
     useEffect(() => {
         chrome.storage.local.get(['userId'], async (result) => {
             let currentUserId = result.userId as string | undefined;
@@ -29,8 +31,9 @@ export const useBookmarkWeaver = () => {
                 try {
                     const res = await fetch(`${BACKEND_URL}/status/${currentUserId}`);
                     const data = await res.json();
-                    console.log('[INIT] Status response:', data);
                     
+                    if (data.isPremium) setIsPremium(true);
+
                     if (data.pending > 0 || (data.total > 0 && !data.isDone)) {
                         setStatus('weaving');
                         setProgress({ 
@@ -65,7 +68,9 @@ export const useBookmarkWeaver = () => {
             try {
                 const res = await fetch(`${BACKEND_URL}/status/${userId}`);
                 const data = await res.json();
-                console.log('[POLL] Status response:', data);
+                
+                if (data.isPremium) setIsPremium(true);
+
                 setProgress(prev => ({ 
                     ...prev, 
                     pending: data.pending, 
@@ -86,6 +91,14 @@ export const useBookmarkWeaver = () => {
 
         return () => clearInterval(interval);
     }, [status, userId]);
+
+
+
+    // ... (rest of file)
+    
+    // I will use a cleaner approach: just add the state and update the return.
+    // I'll make two smaller edits.
+
 
     const startWeaving = useCallback(async () => {
         setStatus('weaving');
@@ -251,6 +264,7 @@ export const useBookmarkWeaver = () => {
         startWeaving,
         cancelWeaving,
         applyChanges,
-        setStatus
+        setStatus,
+        isPremium
     };
 };
