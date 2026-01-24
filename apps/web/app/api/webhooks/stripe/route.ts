@@ -29,18 +29,32 @@ export async function POST(request: Request) {
   const session = event.data.object as Stripe.Checkout.Session
 
   if (event.type === 'checkout.session.completed') {
-    const subscription = await stripe.subscriptions.retrieve(session.subscription as string)
-    const userId = session.metadata!.userId
+    const session = event.data.object as Stripe.Checkout.Session
+    const userId = session.metadata?.userId || session.client_reference_id
 
-    await supabase
-      .from('users')
-      .update({
-        is_premium: true,
-        stripe_customer_id: subscription.customer as string,
-        subscription_id: subscription.id,
-        subscription_status: subscription.status,
-      })
-      .eq('id', userId)
+    if (session.mode === 'subscription' && session.subscription) {
+      const subscription = await stripe.subscriptions.retrieve(session.subscription as string)
+      await supabase
+        .from('users')
+        .update({
+          is_premium: true,
+          stripe_customer_id: subscription.customer as string,
+          subscription_id: subscription.id,
+          subscription_status: subscription.status,
+        })
+        .eq('id', userId!)
+    } else if (session.mode === 'payment') {
+       // One-time payment (Lifetime)
+       await supabase
+        .from('users')
+        .update({
+          is_premium: true,
+          subscription_status: 'lifetime',
+          stripe_customer_id: session.customer as string || undefined,
+          subscription_id: session.id // Use session ID as reference
+        })
+        .eq('id', userId!)
+    }
   }
 
   if (event.type === 'customer.subscription.updated') {
