@@ -14,6 +14,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
         redirect('/login')
     }
 
+    // Get user premium status
+    const { data: userRecord } = await supabase
+        .from('users')
+        .select('is_premium')
+        .eq('id', session.user.id)
+        .single()
+
+    const isPremium = userRecord?.is_premium ?? false
+
     return (
         <div className="min-h-screen bg-gray-900 text-white flex">
             {/* Sidebar */}
@@ -58,7 +67,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                         <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500" />
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-white truncate">{session.user.email}</p>
-                            <p className="text-xs text-gray-500 truncate">Free Plan</p>
+                            <p className={`text-xs truncate ${isPremium ? 'text-green-400' : 'text-gray-500'}`}>{isPremium ? 'Pro Plan' : 'Free Plan'}</p>
                         </div>
                     </div>
                     <form action="/auth/signout" method="post">
