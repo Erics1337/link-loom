@@ -239,8 +239,109 @@ export const useBookmarkWeaver = () => {
     };
 
     const applyChanges = async () => {
-        // Implementation for applying changes
-        setStatus('done');
+        // Mock mode - just mark as done
+        if (typeof chrome === 'undefined' || !chrome.bookmarks) {
+            console.log('[ApplyChanges] Mock mode - simulating success');
+            setStatus('done');
+            return;
+        }
+
+        try {
+            setStatus('weaving'); // Show progress indicator
+            console.log('[ApplyChanges] Starting to apply changes...');
+
+            // 1. Fetch structure with chrome_ids from backend
+            const res = await fetch(`${BACKEND_URL}/structure/${userId}`);
+            const data = await res.json();
+            const { clusters: serverClusters, assignments } = data;
+
+            if (!serverClusters?.length) {
+                console.warn('[ApplyChanges] No clusters to apply');
+                setStatus('done');
+                return;
+            }
+
+            // 2. Create a "Link Loom" parent folder at the root of "Other Bookmarks"
+            const otherBookmarksId = '2'; // Chrome's "Other Bookmarks" folder ID
+            const linkLoomFolder = await chrome.bookmarks.create({
+                parentId: otherBookmarksId,
+                title: `Link Loom - ${new Date().toLocaleDateString()}`
+            });
+            console.log('[ApplyChanges] Created Link Loom folder:', linkLoomFolder.id);
+
+            // 3. Build cluster hierarchy map and topological sort
+            const clusterMap = new Map<string, { cluster: any; chromeId?: string }>();
+            serverClusters.forEach((c: any) => {
+                clusterMap.set(c.id, { cluster: c });
+            });
+
+            // Topological sort - parents before children
+            const sortedClusters: any[] = [];
+            const visited = new Set<string>();
+
+            const visit = (clusterId: string) => {
+                if (visited.has(clusterId)) return;
+                const item = clusterMap.get(clusterId);
+                if (!item) return;
+                
+                // Visit parent first
+                if (item.cluster.parent_id && clusterMap.has(item.cluster.parent_id)) {
+                    visit(item.cluster.parent_id);
+                }
+                
+                visited.add(clusterId);
+                sortedClusters.push(item.cluster);
+            };
+
+            serverClusters.forEach((c: any) => visit(c.id));
+
+            // 4. Create folder hierarchy in Chrome
+            for (const cluster of sortedClusters) {
+                const parentChromeId = cluster.parent_id 
+                    ? clusterMap.get(cluster.parent_id)?.chromeId 
+                    : linkLoomFolder.id;
+
+                try {
+                    const folder = await chrome.bookmarks.create({
+                        parentId: parentChromeId || linkLoomFolder.id,
+                        title: cluster.name || 'Unnamed Folder'
+                    });
+                    clusterMap.get(cluster.id)!.chromeId = folder.id;
+                    console.log(`[ApplyChanges] Created folder: ${cluster.name} (${folder.id})`);
+                } catch (err) {
+                    console.error(`[ApplyChanges] Failed to create folder: ${cluster.name}`, err);
+                }
+            }
+
+            // 5. Move bookmarks to their assigned folders
+            let movedCount = 0;
+            let skippedCount = 0;
+
+            for (const assignment of assignments) {
+                const chromeId = assignment.bookmarks?.chrome_id;
+                const targetFolderId = clusterMap.get(assignment.cluster_id)?.chromeId;
+
+                if (!chromeId || !targetFolderId) {
+                    skippedCount++;
+                    continue;
+                }
+
+                try {
+                    await chrome.bookmarks.move(chromeId, { parentId: targetFolderId });
+                    movedCount++;
+                } catch (err) {
+                    // Bookmark may have been deleted or moved by user
+                    console.warn(`[ApplyChanges] Failed to move bookmark ${chromeId}:`, err);
+                    skippedCount++;
+                }
+            }
+
+            console.log(`[ApplyChanges] Complete! Moved: ${movedCount}, Skipped: ${skippedCount}`);
+            setStatus('done');
+        } catch (error) {
+            console.error('[ApplyChanges] Error:', error);
+            setStatus('error');
+        }
     };
 
     const cancelWeaving = async () => {

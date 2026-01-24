@@ -7,7 +7,7 @@ export type DeviceAuthStatus = 'checking' | 'authorized' | 'limit_reached' | 'er
 
 export const useDeviceAuth = (userId: string) => {
     const [authStatus, setAuthStatus] = useState<DeviceAuthStatus>('checking');
-    const [isPremium, setIsPremium] = useState(false);
+    const [isPremium] = useState(false);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     useEffect(() => {

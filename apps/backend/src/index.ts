@@ -204,14 +204,14 @@ const start = async () => {
                 .select('*')
                 .eq('user_id', userId);
 
-            // Fetch assignments with cluster info
+            // Fetch assignments with cluster info and chrome_id for Apply Changes
             const { data: assignments } = await supabase
                 .from('cluster_assignments')
                 .select(`
                     cluster_id,
                     bookmark_id,
                     clusters!inner (user_id),
-                    bookmarks (title, url)
+                    bookmarks (title, url, chrome_id)
                 `)
                 .eq('clusters.user_id', userId);
 

@@ -19,7 +19,7 @@ const App = () => {
     const [userId, setUserId] = useState<string>('');
     
     useEffect(() => {
-        chrome.storage.local.get(['userId'], (res) => {
+        chrome.storage.local.get(['userId'], (res: { userId?: string }) => {
              if (res.userId) setUserId(res.userId);
         });
     }, []);
