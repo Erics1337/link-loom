@@ -156,19 +156,49 @@ export const useBookmarkWeaver = () => {
             const totalBookmarks = bookmarks.length;
             setProgress(prev => ({ ...prev, total: totalBookmarks, pending: totalBookmarks }));
 
-            // 2. Send to Backend
-            await fetch(`${BACKEND_URL}/ingest`, {
+            // 2. Pre-check: Warn if over limit and not premium
+            const FREE_TIER_LIMIT = 500;
+            if (!isPremium && totalBookmarks > FREE_TIER_LIMIT) {
+                console.warn(`[WEAVING] User has ${totalBookmarks} bookmarks, exceeds free tier limit of ${FREE_TIER_LIMIT}`);
+                // We'll still try to send - backend will enforce and give detailed error
+            }
+
+            // 3. Send to Backend
+            const response = await fetch(`${BACKEND_URL}/ingest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ userId, bookmarks }),
             });
+
+            // Handle 402 Payment Required (limit exceeded)
+            if (response.status === 402) {
+                const errorData = await response.json();
+                console.error('[WEAVING] Limit exceeded:', errorData);
+                setStats({ 
+                    duplicates: 0, 
+                    deadLinks: 0 
+                });
+                // Set error with a message that can be displayed
+                setStatus('error');
+                // Store error message in localStorage for display
+                if (typeof chrome !== 'undefined' && chrome.storage) {
+                    chrome.storage.local.set({ 
+                        weavingError: errorData.message || 'Free tier limit exceeded. Upgrade to Pro for unlimited bookmarks.'
+                    });
+                }
+                return;
+            }
+
+            if (!response.ok) {
+                throw new Error(`Backend error: ${response.status}`);
+            }
             
             // Polling is now handled by useEffect
         } catch (error) {
             console.error("Weaving error", error);
             setStatus('error');
         }
-    }, [userId]);
+    }, [userId, isPremium]);
 
     const fetchResults = async (idOverride?: string) => {
         const targetId = idOverride || userId;

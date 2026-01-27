@@ -51,6 +51,38 @@ const start = async () => {
             const { userId, bookmarks } = req.body;
             console.log(`[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId}`);
 
+            // Premium Tier Enforcement - Check if user is over limit
+            const { data: user } = await supabase
+                .from('users')
+                .select('is_premium')
+                .eq('id', userId)
+                .single();
+
+            const isPremium = user?.is_premium ?? false;
+            const FREE_TIER_LIMIT = 500;
+
+            if (!isPremium) {
+                // Count existing bookmarks
+                const { count: existingCount } = await supabase
+                    .from('bookmarks')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('user_id', userId);
+
+                const totalAfterIngest = (existingCount ?? 0) + (bookmarks?.length ?? 0);
+
+                if (totalAfterIngest > FREE_TIER_LIMIT) {
+                    console.log(`[INGEST] User ${userId} exceeded free tier limit: ${totalAfterIngest}/${FREE_TIER_LIMIT}`);
+                    return reply.code(402).send({
+                        error: 'Bookmark limit exceeded',
+                        message: `Free tier is limited to ${FREE_TIER_LIMIT} bookmarks. You have ${existingCount ?? 0} and tried to add ${bookmarks?.length ?? 0}.`,
+                        limit: FREE_TIER_LIMIT,
+                        current: existingCount ?? 0,
+                        attempted: bookmarks?.length ?? 0,
+                        upgradeUrl: '/dashboard/billing'
+                    });
+                }
+            }
+
             // Clear previous clusters to prevent race condition where /status reports "Done" due to old data
             const { error: deleteError } = await supabase
                 .from('clusters')
