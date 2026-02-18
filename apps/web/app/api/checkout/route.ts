@@ -3,8 +3,13 @@ import { NextResponse } from 'next/server'
 import Stripe from 'stripe'
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!)
+const stripePriceIdPro = process.env.STRIPE_PRICE_ID_PRO
 
 export async function POST(request: Request) {
+  if (!stripePriceIdPro) {
+    return new NextResponse('Missing STRIPE_PRICE_ID_PRO', { status: 500 })
+  }
+
   const supabase = createClient()
   const {
     data: { session },
@@ -20,7 +25,7 @@ export async function POST(request: Request) {
     client_reference_id: session.user.id,
     line_items: [
       {
-        price: 'price_1234567890', // Replace with your actual Stripe Price ID
+        price: stripePriceIdPro,
         quantity: 1,
       },
     ],

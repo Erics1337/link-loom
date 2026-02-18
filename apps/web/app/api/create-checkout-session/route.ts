@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2023-10-16' as any,
 });
+const defaultProPriceId = process.env.STRIPE_PRICE_ID_PRO;
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -12,21 +13,33 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 export async function POST(req: Request) {
   try {
-    const { userId, priceId, successUrl, cancelUrl } = await req.json();
+    const { userId, email, priceId, successUrl, cancelUrl, mode } = await req.json();
+    const checkoutPriceId = priceId || defaultProPriceId;
 
-    if (!userId || !priceId) {
-      return new NextResponse('Missing userId or priceId', { status: 400 });
+    if (!userId || !checkoutPriceId) {
+      return new NextResponse('Missing userId or priceId (or STRIPE_PRICE_ID_PRO)', { status: 400 });
     }
 
-    // Optional: Check if user already exists or get email
-    const { data: user } = await supabase.from('users').select('email').eq('id', userId).single();
+    const normalizedMode = mode === 'subscription' ? 'subscription' : 'payment';
+
+    // Ensure user row exists so webhooks can reliably update premium state.
+    await supabase.from('users').upsert(
+      { id: userId, email: email || null },
+      { onConflict: 'id' }
+    );
+
+    const { data: user } = await supabase
+      .from('users')
+      .select('email')
+      .eq('id', userId)
+      .maybeSingle();
 
     const session = await stripe.checkout.sessions.create({
-      mode: 'payment', // One-time payment
+      mode: normalizedMode,
       payment_method_types: ['card'],
       line_items: [
         {
-          price: priceId,
+          price: checkoutPriceId,
           quantity: 1,
         },
       ],
