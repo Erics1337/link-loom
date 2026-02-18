@@ -11,7 +11,7 @@ import './styles/global.css';
 
 const App = () => {
     // We get isPremium from the hook now
-    const { status, progress, clusters, stats, startWeaving, cancelWeaving, applyChanges, setStatus } = useBookmarkWeaver();
+    const { status, progress, clusters, stats, startWeaving, cancelWeaving, applyChanges, setStatus, errorMessage } = useBookmarkWeaver();
     const [view, setView] = useState<'main' | 'settings'>('main');
     useTheme();
 
@@ -56,9 +56,10 @@ const App = () => {
                 if (progress.total > 0) {
                     const pendingPercent = ((progress.total - progress.pending) / progress.total) * 100;
                     if (progress.pending <= 5 && !status.includes('ready')) {
-                        const assignedPercent = (progress.assigned / progress.total) * 100;
+                        const safeAssigned = Math.min(progress.assigned, progress.total);
+                        const assignedPercent = (safeAssigned / progress.total) * 100;
                         progressPercent = Math.max(90, Math.min(assignedPercent, 99)); 
-                        statusMessage = `Structuring ${progress.assigned} of ${progress.total} bookmarks...`;
+                        statusMessage = `Structuring ${safeAssigned} of ${progress.total} bookmarks...`;
                     } else {
                         progressPercent = Math.min(pendingPercent, 90);
                         statusMessage = `Processing ${progress.total - progress.pending} of ${progress.total} bookmarks...`;
@@ -86,16 +87,30 @@ const App = () => {
                         </button>
                     </div>
                 );
-            case 'error':
-                 return (
+            case 'error': {
+                const isLimitError = (errorMessage || '').toLowerCase().includes('free tier');
+                return (
                     <div className="flex flex-col items-center justify-center h-full p-6 text-center">
                         <h1 className="text-2xl font-bold mb-4 text-red-500">Error</h1>
-                        <p className="text-secondary mb-8">Something went wrong.</p>
+                        <p className="text-secondary mb-8">
+                            {errorMessage || 'Something went wrong.'}
+                        </p>
+                        {isLimitError && (
+                            <a
+                                href="http://localhost:3000/dashboard/billing"
+                                target="_blank"
+                                rel="noreferrer"
+                                className="btn btn-primary mb-3"
+                            >
+                                Upgrade to Pro
+                            </a>
+                        )}
                         <button onClick={() => setStatus('idle')} className="btn">
                             Try Again
                         </button>
                     </div>
                 );
+            }
             default:
                 return null;
         }

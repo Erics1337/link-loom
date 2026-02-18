@@ -1,9 +1,23 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { BookmarkNode } from '../components/BookmarkTree';
 
 const BACKEND_URL = 'http://localhost:3333';
+const CLIENT_FREE_TIER_HINT = 500;
 
 export type AppStatus = 'idle' | 'weaving' | 'ready' | 'done' | 'error';
+
+const normalizeBookmarkUrl = (url: string) => {
+    try {
+        const parsed = new URL(url);
+        parsed.hash = '';
+        if (parsed.pathname.endsWith('/')) {
+            parsed.pathname = parsed.pathname.slice(0, -1);
+        }
+        return parsed.toString();
+    } catch {
+        return url.trim();
+    }
+};
 
 export const useBookmarkWeaver = () => {
     const [status, setStatus] = useState<AppStatus>('idle');
@@ -11,6 +25,8 @@ export const useBookmarkWeaver = () => {
     const [userId, setUserId] = useState<string>('');
     const [clusters, setClusters] = useState<BookmarkNode[]>([]);
     const [stats, setStats] = useState({ duplicates: 0, deadLinks: 0 });
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const clusterRecoveryTriggered = useRef(false);
 
     const [isPremium, setIsPremium] = useState(false);
 
@@ -80,6 +96,19 @@ export const useBookmarkWeaver = () => {
                     total: data.total || prev.total 
                 }));
 
+                // Recovery path: if all bookmarks are embedded but no clusters were created,
+                // trigger clustering once more to avoid getting stuck at "Structuring 0 of N".
+                if (
+                    !clusterRecoveryTriggered.current &&
+                    data.total > 0 &&
+                    data.pending === 0 &&
+                    data.clusters === 0
+                ) {
+                    clusterRecoveryTriggered.current = true;
+                    fetch(`${BACKEND_URL}/trigger-clustering/${userId}`, { method: 'POST' })
+                        .catch((err) => console.error('[WEAVING] Failed to trigger recovery clustering', err));
+                }
+
                 if (data.isDone) {
                     clearInterval(interval);
                     await fetchResults(userId);
@@ -102,8 +131,10 @@ export const useBookmarkWeaver = () => {
 
     const startWeaving = useCallback(async () => {
         setStatus('weaving');
+        setErrorMessage(null);
         setClusters([]); // Reset clusters to avoid showing old results
         setProgress({ pending: 0, clusters: 0, assigned: 0, total: 0 }); // Reset progress
+        clusterRecoveryTriggered.current = false;
 
         // Mock for local dev
         if (typeof chrome === 'undefined' || !chrome.bookmarks) {
@@ -156,10 +187,19 @@ export const useBookmarkWeaver = () => {
             const totalBookmarks = bookmarks.length;
             setProgress(prev => ({ ...prev, total: totalBookmarks, pending: totalBookmarks }));
 
+            // Compute duplicate URLs for preview stats (dead-links remain server-side TODO).
+            const urlCounts = new Map<string, number>();
+            bookmarks.forEach((bookmark) => {
+                const key = normalizeBookmarkUrl(bookmark.url);
+                urlCounts.set(key, (urlCounts.get(key) || 0) + 1);
+            });
+            const duplicateCount = Array.from(urlCounts.values())
+                .reduce((sum, count) => sum + Math.max(0, count - 1), 0);
+            setStats({ duplicates: duplicateCount, deadLinks: 0 });
+
             // 2. Pre-check: Warn if over limit and not premium
-            const FREE_TIER_LIMIT = 500;
-            if (!isPremium && totalBookmarks > FREE_TIER_LIMIT) {
-                console.warn(`[WEAVING] User has ${totalBookmarks} bookmarks, exceeds free tier limit of ${FREE_TIER_LIMIT}`);
+            if (!isPremium && totalBookmarks > CLIENT_FREE_TIER_HINT) {
+                console.warn(`[WEAVING] User has ${totalBookmarks} bookmarks, exceeds free tier hint of ${CLIENT_FREE_TIER_HINT}`);
                 // We'll still try to send - backend will enforce and give detailed error
             }
 
@@ -179,13 +219,10 @@ export const useBookmarkWeaver = () => {
                     deadLinks: 0 
                 });
                 // Set error with a message that can be displayed
+                setErrorMessage(
+                    errorData.message || 'Free tier limit exceeded. Upgrade to Pro for unlimited bookmarks.'
+                );
                 setStatus('error');
-                // Store error message in localStorage for display
-                if (typeof chrome !== 'undefined' && chrome.storage) {
-                    chrome.storage.local.set({ 
-                        weavingError: errorData.message || 'Free tier limit exceeded. Upgrade to Pro for unlimited bookmarks.'
-                    });
-                }
                 return;
             }
 
@@ -196,6 +233,10 @@ export const useBookmarkWeaver = () => {
             // Polling is now handled by useEffect
         } catch (error) {
             console.error("Weaving error", error);
+            const message = error instanceof Error
+                ? error.message
+                : 'Something went wrong while organizing bookmarks.';
+            setErrorMessage(message);
             setStatus('error');
         }
     }, [userId, isPremium]);
@@ -244,6 +285,16 @@ export const useBookmarkWeaver = () => {
                 }
             });
 
+            const urlCounts = new Map<string, number>();
+            data.assignments.forEach((a: any) => {
+                const rawUrl = a.bookmarks?.url;
+                if (!rawUrl) return;
+                const key = normalizeBookmarkUrl(rawUrl);
+                urlCounts.set(key, (urlCounts.get(key) || 0) + 1);
+            });
+            const duplicateCount = Array.from(urlCounts.values())
+                .reduce((sum, count) => sum + Math.max(0, count - 1), 0);
+
             // 3. Build Tree (Clusters into Clusters)
             const rootNodes: BookmarkNode[] = [];
             
@@ -260,10 +311,11 @@ export const useBookmarkWeaver = () => {
             });
 
             setClusters(rootNodes);
-            setStats({ duplicates: 0, deadLinks: 0 }); 
+            setStats({ duplicates: duplicateCount, deadLinks: 0 });
             setStatus('ready');
         } catch (error) {
             console.error("Fetch results error", error);
+            setErrorMessage('Failed to load organized bookmark structure.');
             setStatus('error');
         }
     };
@@ -277,8 +329,27 @@ export const useBookmarkWeaver = () => {
         }
 
         try {
+            const confirmed = window.confirm(
+                'Apply changes will move bookmarks into a new Link Loom folder. A backup snapshot will be created first. Continue?'
+            );
+            if (!confirmed) return;
+
             setStatus('weaving'); // Show progress indicator
             console.log('[ApplyChanges] Starting to apply changes...');
+
+            // 0. Save a local snapshot backup before any changes.
+            const currentTree = await chrome.bookmarks.getTree();
+            const storageResult = await chrome.storage.local.get(['bookmarkBackups']);
+            const existingBackups = Array.isArray(storageResult.bookmarkBackups)
+                ? storageResult.bookmarkBackups
+                : [];
+            existingBackups.unshift({
+                id: crypto.randomUUID(),
+                createdAt: new Date().toISOString(),
+                tree: currentTree
+            });
+            await chrome.storage.local.set({ bookmarkBackups: existingBackups.slice(0, 3) });
+            console.log('[ApplyChanges] Saved bookmark backup snapshot');
 
             // 1. Fetch structure with chrome_ids from backend
             const res = await fetch(`${BACKEND_URL}/structure/${userId}`);
@@ -367,9 +438,11 @@ export const useBookmarkWeaver = () => {
             }
 
             console.log(`[ApplyChanges] Complete! Moved: ${movedCount}, Skipped: ${skippedCount}`);
+            clusterRecoveryTriggered.current = false;
             setStatus('done');
         } catch (error) {
             console.error('[ApplyChanges] Error:', error);
+            setErrorMessage('Failed to apply changes to Chrome bookmarks.');
             setStatus('error');
         }
     };
@@ -383,7 +456,9 @@ export const useBookmarkWeaver = () => {
         } finally {
             // Always reset UI state
             setStatus('idle');
+            setErrorMessage(null);
             setProgress({ pending: 0, clusters: 0, assigned: 0, total: 0 });
+            clusterRecoveryTriggered.current = false;
         }
     };
 
@@ -396,6 +471,7 @@ export const useBookmarkWeaver = () => {
         cancelWeaving,
         applyChanges,
         setStatus,
-        isPremium
+        isPremium,
+        errorMessage
     };
 };

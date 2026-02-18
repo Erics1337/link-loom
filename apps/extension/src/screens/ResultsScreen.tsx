@@ -14,6 +14,15 @@ interface ResultsScreenProps {
 
 export const ResultsScreen: React.FC<ResultsScreenProps> = ({ clusters, stats, onApply, onBack }) => {
     const [expandAll, setExpandAll] = useState(false);
+    const totalBookmarks = React.useMemo(() => {
+        const countLeaves = (nodes: BookmarkNode[]): number =>
+            nodes.reduce((sum, node) => {
+                if (!node.children || node.children.length === 0) return sum + (node.url ? 1 : 0);
+                return sum + countLeaves(node.children);
+            }, 0);
+
+        return countLeaves(clusters);
+    }, [clusters]);
 
     return (
         <div className="flex flex-col h-full p-4 gap-4">
@@ -42,8 +51,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({ clusters, stats, o
                 >
                     {expandAll ? 'Collapse all' : 'Expand all'}
                 </button>
-                <button className="btn btn-secondary flex-1">
-                    Auto rename
+                <button className="btn btn-secondary flex-1" disabled title="Not implemented yet">
+                    Auto rename (Soon)
                 </button>
             </div>
 
@@ -58,14 +67,21 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({ clusters, stats, o
             {/* Footer Stats & Actions */}
             <div className="flex flex-col gap-3">
                 <div className="stat-row">
+                    <span className="text-secondary text-sm">Total bookmarks</span>
+                    <span className="badge-count">{totalBookmarks}</span>
+                </div>
+                <div className="stat-row">
                     <span className="text-secondary text-sm">Dead links</span>
-                    <button className="text-btn-danger">Delete all</button>
+                    <div className="flex items-center gap-2">
+                        <span className="badge-count">{stats.deadLinks}</span>
+                        <button className="text-btn-danger" disabled={stats.deadLinks === 0}>Delete all</button>
+                    </div>
                 </div>
                 <div className="stat-row">
                     <span className="text-secondary text-sm">Duplicates</span>
                     <div className="flex items-center gap-2">
                         <span className="badge-count">{stats.duplicates}</span>
-                        <button className="text-btn-danger">Delete all</button>
+                        <button className="text-btn-danger" disabled={stats.duplicates === 0}>Delete all</button>
                     </div>
                 </div>
                 
@@ -77,6 +93,9 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({ clusters, stats, o
                         Apply Changes
                     </button>
                 </div>
+                <p className="text-xs text-secondary">
+                    A bookmark backup snapshot is saved automatically before applying changes.
+                </p>
             </div>
         </div>
     );

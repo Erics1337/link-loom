@@ -30,7 +30,7 @@ export const WeavingScreen: React.FC<WeavingScreenProps> = ({ progress, statusMe
             </div>
 
             <p className="text-sm text-secondary opacity-80 max-w-[280px] mb-6">
-                You can keep this window open while Link Loom groups similar links together.
+                Processing runs in the background. You can minimize or close this popup and reopen it to check progress.
             </p>
             
             <button 

@@ -30,12 +30,24 @@ import { queues } from './lib/queue';
 import { supabase } from './db';
 import OpenAI from 'openai';
 
+const DEFAULT_FREE_TIER_LIMIT = 500;
+const parsedFreeTierLimit = Number.parseInt(process.env.FREE_TIER_LIMIT ?? `${DEFAULT_FREE_TIER_LIMIT}`, 10);
+const FREE_TIER_LIMIT = Number.isNaN(parsedFreeTierLimit) ? DEFAULT_FREE_TIER_LIMIT : parsedFreeTierLimit;
+
 const startWorkers = () => {
     createWorker('ingest', ingestProcessor);
     createWorker('enrichment', enrichmentProcessor, { concurrency: 50 });
     createWorker('embedding', embeddingProcessor, { concurrency: 20 });
     createWorker('clustering', clusteringProcessor);
     console.log('Workers started with optimized concurrency (Enrichment: 50, Embedding: 20)');
+};
+
+const ensureUserExists = async (userId: string) => {
+    const { error } = await supabase
+        .from('users')
+        .upsert({ id: userId }, { onConflict: 'id' });
+
+    return error;
 };
 
 const start = async () => {
@@ -45,21 +57,27 @@ const start = async () => {
         });
 
         startWorkers();
+        console.log(`[CONFIG] FREE_TIER_LIMIT=${FREE_TIER_LIMIT}`);
 
         // API Routes
         fastify.post('/ingest', async (req: any, reply) => {
             const { userId, bookmarks } = req.body;
             console.log(`[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId}`);
 
+            const userError = await ensureUserExists(userId);
+            if (userError) {
+                console.error('[INGEST] Failed to ensure user exists:', userError);
+                return reply.code(500).send({ error: 'Failed to initialize user' });
+            }
+
             // Premium Tier Enforcement - Check if user is over limit
             const { data: user } = await supabase
                 .from('users')
                 .select('is_premium')
                 .eq('id', userId)
-                .single();
+                .maybeSingle();
 
             const isPremium = user?.is_premium ?? false;
-            const FREE_TIER_LIMIT = 500;
 
             if (!isPremium) {
                 // Count existing bookmarks
@@ -74,7 +92,7 @@ const start = async () => {
                     console.log(`[INGEST] User ${userId} exceeded free tier limit: ${totalAfterIngest}/${FREE_TIER_LIMIT}`);
                     return reply.code(402).send({
                         error: 'Bookmark limit exceeded',
-                        message: `Free tier is limited to ${FREE_TIER_LIMIT} bookmarks. You have ${existingCount ?? 0} and tried to add ${bookmarks?.length ?? 0}.`,
+                        message: `Free tier allows up to ${FREE_TIER_LIMIT} bookmarks stored in Link Loom. You currently have ${existingCount ?? 0} stored, and this Chrome import contains ${bookmarks?.length ?? 0}.`,
                         limit: FREE_TIER_LIMIT,
                         current: existingCount ?? 0,
                         attempted: bookmarks?.length ?? 0,
@@ -103,6 +121,12 @@ const start = async () => {
         // Device Registration
         fastify.post('/register-device', async (req: any, reply) => {
             const { userId, deviceId, name } = req.body;
+
+            const userError = await ensureUserExists(userId);
+            if (userError) {
+                console.error('[Device] Failed to ensure user exists:', userError);
+                return reply.code(500).send({ error: 'Failed to initialize user' });
+            }
             
             // 1. Check current device count
             const { count, error: countError } = await supabase
@@ -125,7 +149,7 @@ const start = async () => {
                 .select('id')
                 .eq('user_id', userId)
                 .eq('device_id', deviceId)
-                .single();
+                .maybeSingle();
 
             if (existing) {
                 // Update last_seen
@@ -159,7 +183,7 @@ const start = async () => {
                 .from('users')
                 .select('is_premium')
                 .eq('id', userId)
-                .single();
+                .maybeSingle();
             
             const isPremium = user?.is_premium ?? false;
 
@@ -186,42 +210,31 @@ const start = async () => {
                 .select('*', { count: 'exact', head: true })
                 .eq('user_id', userId);
 
-            // Count bookmarks assigned to clusters
-            // We join with clusters to filter by user_id
-            const { count: assignedCount, error: assignedError } = await supabase
-                .from('cluster_assignments')
-                .select('bookmark_id', { count: 'exact', head: true })
-                .eq('clusters.user_id', userId) // This requires a join if not checking clusters specifically
-                // Actually, cluster_assignments doesn't have user_id. We need to join.
-                // However, doing a join in a count/head query might be tricky in simple syntax.
-                // An alternative is: We know the user's clusters.
-                // But a more robust way is to just trust that we cleaned up old clusters or assume all assigns for user's clusters.
-                // Let's use the foreign key link if PostgREST supports it easily, or just count 'clusters' which we have.
-                // Wait, the client wants to know "how many bookmarks have been clustered".
-                // We can query: SELECT count(distinct bookmark_id) FROM cluster_assignments JOIN clusters ON ...
-                // Supabase syntax:
-               .not('bookmark_id', 'is', null); 
-               
-            // To properly filter by user, we need to join clusters.
-            // Let's retry:
-            const { count: realAssignedCount, error: realAssignedError } = await supabase
-               .from('cluster_assignments')
-               .select('*, clusters!inner(user_id)', { count: 'exact', head: true })
-               .eq('clusters.user_id', userId);
+            if (clusterError) console.error('[STATUS] Cluster Count Error:', clusterError);
 
-            if (realAssignedError) console.error('[STATUS] Assigned Count Error:', realAssignedError);
+            // Count distinct bookmarks assigned to clusters for this user.
+            // A bookmark can appear in multiple cluster rows across retries, so we de-duplicate by bookmark_id.
+            const { data: assignmentRows, error: assignmentError } = await supabase
+                .from('cluster_assignments')
+                .select('bookmark_id, clusters!inner(user_id)')
+                .eq('clusters.user_id', userId);
+
+            if (assignmentError) console.error('[STATUS] Assigned Count Error:', assignmentError);
+            const distinctAssignedCount = new Set(
+                (assignmentRows ?? []).map((row: any) => row.bookmark_id)
+            ).size;
 
             // Check actual queue status to ensure we don't say "Done" while clustering is still running
             const clusteringCounts = await queues.clustering.getJobCounts('active', 'waiting', 'delayed');
             const isClusteringActive = clusteringCounts.active > 0 || clusteringCounts.waiting > 0 || clusteringCounts.delayed > 0;
 
-            console.log(`[STATUS] User ${userId}: total=${totalCount}, pending=${pendingCount}, assigned=${realAssignedCount}, clusters=${clusterCount}, clusteringActive=${isClusteringActive}`);
+            console.log(`[STATUS] User ${userId}: total=${totalCount}, pending=${pendingCount}, assigned=${distinctAssignedCount}, clusters=${clusterCount}, clusteringActive=${isClusteringActive}`);
 
             return {
                 pending: pendingCount ?? 0,
                 total: totalCount ?? 0,
                 clusters: clusterCount ?? 0,
-                assigned: realAssignedCount ?? 0,
+                assigned: distinctAssignedCount,
                 isDone: (pendingCount ?? 0) === 0 && (clusterCount ?? 0) > 0 && !isClusteringActive,
                 isPremium, // Return premium status
             };
