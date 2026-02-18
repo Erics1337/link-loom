@@ -2,6 +2,8 @@ import { Job } from 'bullmq';
 import { queues } from '../lib/queue';
 import { supabase } from '../db';
 import { createHash } from 'crypto';
+import { isUserCancelled } from '../lib/cancellation';
+import { ClusteringSettings, normalizeClusteringSettings } from '../lib/clusteringSettings';
 
 interface IngestJobData {
     userId: string;
@@ -10,13 +12,22 @@ interface IngestJobData {
         url: string;
         title: string;
     }[];
+    clusteringSettings?: ClusteringSettings;
 }
 
 export const ingestProcessor = async (job: Job<IngestJobData>) => {
     const { userId, bookmarks: rawBookmarks } = job.data;
+    const clusteringSettings = normalizeClusteringSettings(job.data.clusteringSettings);
     console.log(`[INGEST WORKER] Starting: ${rawBookmarks.length} bookmarks for user ${userId}`);
 
     try {
+        if (isUserCancelled(userId)) {
+            console.log(`[INGEST WORKER] Cancelled before start for user ${userId}`);
+            return;
+        }
+
+        await job.updateProgress({ processed: 0, total: rawBookmarks.length });
+
         // Ensure user exists (create if missing)
         const { data: existingUser } = await supabase
             .from('users')
@@ -29,8 +40,15 @@ export const ingestProcessor = async (job: Job<IngestJobData>) => {
             await supabase.from('users').upsert({ id: userId }, { onConflict: 'id' });
         }
 
-        let processed = 0;
+        let saved = 0;
+        let handled = 0;
         for (const b of rawBookmarks) {
+            if (isUserCancelled(userId)) {
+                console.log(`[INGEST WORKER] Cancelled during ingest for user ${userId}`);
+                return;
+            }
+
+            handled++;
             const urlHash = createHash('sha256').update(b.url).digest('hex');
 
             // 1. Ensure Shared Link Exists (Idempotent)
@@ -57,6 +75,9 @@ export const ingestProcessor = async (job: Job<IngestJobData>) => {
                     console.error(`[INGEST WORKER] Failed to insert bookmark ${b.url}:`, error);
                 }
                 // Bookmark already exists or error, skip
+                if (handled % 25 === 0 || handled === rawBookmarks.length) {
+                    await job.updateProgress({ processed: handled, total: rawBookmarks.length });
+                }
                 continue;
             }
 
@@ -77,22 +98,34 @@ export const ingestProcessor = async (job: Job<IngestJobData>) => {
             } else {
                 // Cache MISS - Add to Enrichment Queue
                 await queues.enrichment.add('enrich', {
+                    userId,
                     bookmarkId: inserted.id,
                     url: inserted.url,
                 });
             }
 
-            processed++;
-            if (processed % 100 === 0) {
-                console.log(`[INGEST WORKER] Processed ${processed}/${rawBookmarks.length}`);
+            saved++;
+
+            if (handled % 25 === 0 || handled === rawBookmarks.length) {
+                await job.updateProgress({ processed: handled, total: rawBookmarks.length });
+            }
+
+            if (handled % 100 === 0) {
+                console.log(`[INGEST WORKER] Processed ${handled}/${rawBookmarks.length}`);
             }
         }
-        console.log(`[INGEST WORKER] Done: ${processed} bookmarks saved`);
+        await job.updateProgress({ processed: rawBookmarks.length, total: rawBookmarks.length });
+        console.log(`[INGEST WORKER] Done: ${saved} bookmarks saved (${handled} handled)`);
+
+        if (isUserCancelled(userId)) {
+            console.log(`[INGEST WORKER] Cancelled before scheduling clustering for user ${userId}`);
+            return;
+        }
 
         // Schedule clustering to run after embeddings complete
         // Add with delay to allow embedding jobs to finish first
         console.log(`[INGEST WORKER] Scheduling clustering job for user ${userId}`);
-        await queues.clustering.add('cluster', { userId }, { 
+        await queues.clustering.add('cluster', { userId, clusteringSettings }, {
             delay: 2000, 
             jobId: `cluster-${userId}-${Date.now()}` // Unique ID to ensure it runs
         });

@@ -1,5 +1,7 @@
 # Link Loom Backend
 
+For the full, current architecture and status snapshot, see [`ARCHITECTURE.md`](./ARCHITECTURE.md) (as of February 17, 2026).
+
 ## Architecture
 
 ### Shared Embedding Cache
@@ -14,3 +16,5 @@ To optimize costs and performance, Link Loom uses a **Shared Embedding Cache**.
 
 - `FREE_TIER_LIMIT`: Optional override for the free bookmark cap (default `500`).
   - Example for local testing large libraries: `FREE_TIER_LIMIT=10000`
+- `CLUSTER_NAME_CONCURRENCY`: Parallel cluster-name workers (default `4`).
+- `CLUSTER_NAME_MIN_BOOKMARKS_FOR_AI`: Minimum bookmarks in a group before calling OpenAI for a generated name (default `12`).

@@ -1,17 +1,24 @@
 import { Job } from 'bullmq';
 import { queues } from '../lib/queue';
 import { supabase } from '../db';
+import { isUserCancelled } from '../lib/cancellation';
 
 import * as cheerio from 'cheerio';
 
 interface EnrichmentJobData {
+    userId: string;
     bookmarkId: string;
     url: string;
 }
 
 export const enrichmentProcessor = async (job: Job<EnrichmentJobData>) => {
-    const { bookmarkId, url } = job.data;
+    const { userId, bookmarkId, url } = job.data;
     console.log(`Enriching bookmark ${bookmarkId}: ${url}`);
+
+    if (isUserCancelled(userId)) {
+        console.log(`[ENRICHMENT] Cancelled before start for user ${userId}`);
+        return;
+    }
 
     let description = '';
     let title = '';
@@ -35,14 +42,25 @@ export const enrichmentProcessor = async (job: Job<EnrichmentJobData>) => {
         }
     }
 
+    if (isUserCancelled(userId)) {
+        console.log(`[ENRICHMENT] Cancelled after fetch for user ${userId}`);
+        return;
+    }
+
     // Update DB
     await supabase
         .from('bookmarks')
         .update({ description, status: 'enriched' })
         .eq('id', bookmarkId);
 
+    if (isUserCancelled(userId)) {
+        console.log(`[ENRICHMENT] Cancelled before embedding enqueue for user ${userId}`);
+        return;
+    }
+
     // Add to Embedding Queue
     await queues.embedding.add('embed', {
+        userId,
         bookmarkId,
         text: `${title} ${description} ${url}`,
         url,

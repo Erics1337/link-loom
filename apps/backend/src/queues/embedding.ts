@@ -2,22 +2,29 @@ import { Job } from 'bullmq';
 import { supabase } from '../db';
 import OpenAI from 'openai';
 import { createHash } from 'crypto';
+import { isUserCancelled } from '../lib/cancellation';
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
 interface EmbeddingJobData {
+    userId: string;
     bookmarkId: string;
     text: string;
     url: string;
 }
 
 export const embeddingProcessor = async (job: Job<EmbeddingJobData>) => {
-    const { bookmarkId, text, url } = job.data;
+    const { userId, bookmarkId, text, url } = job.data;
     console.log(`Processing bookmark ${bookmarkId}`);
 
     try {
+        if (isUserCancelled(userId)) {
+            console.log(`[EMBEDDING] Cancelled before start for user ${userId}`);
+            return;
+        }
+
         // 1. Calculate Hash
         const urlHash = createHash('sha256').update(url).digest('hex');
 
@@ -49,6 +56,11 @@ export const embeddingProcessor = async (job: Job<EmbeddingJobData>) => {
         }
 
         // 3. Update Status
+        if (isUserCancelled(userId)) {
+            console.log(`[EMBEDDING] Cancelled before status update for user ${userId}`);
+            return;
+        }
+
         await supabase
             .from('bookmarks')
             .update({ status: 'embedded' })

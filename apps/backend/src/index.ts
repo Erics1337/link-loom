@@ -29,6 +29,8 @@ import { clusteringProcessor } from './queues/clustering';
 import { queues } from './lib/queue';
 import { supabase } from './db';
 import OpenAI from 'openai';
+import { markUserCancelled, clearUserCancelled } from './lib/cancellation';
+import { normalizeClusteringSettings } from './lib/clusteringSettings';
 
 const DEFAULT_FREE_TIER_LIMIT = 500;
 const parsedFreeTierLimit = Number.parseInt(process.env.FREE_TIER_LIMIT ?? `${DEFAULT_FREE_TIER_LIMIT}`, 10);
@@ -61,8 +63,12 @@ const start = async () => {
 
         // API Routes
         fastify.post('/ingest', async (req: any, reply) => {
-            const { userId, bookmarks } = req.body;
-            console.log(`[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId}`);
+            const { userId, bookmarks, clusteringSettings: rawClusteringSettings } = req.body;
+            const clusteringSettings = normalizeClusteringSettings(rawClusteringSettings);
+            console.log(
+                `[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId} (density=${clusteringSettings.folderDensity}, tone=${clusteringSettings.namingTone}, mode=${clusteringSettings.organizationMode})`
+            );
+            clearUserCancelled(userId);
 
             const userError = await ensureUserExists(userId);
             if (userError) {
@@ -113,7 +119,7 @@ const start = async () => {
                 console.log(`[INGEST] Cleared old clusters for user ${userId}`);
             }
 
-            await queues.ingest.add('ingest', { userId, bookmarks });
+            await queues.ingest.add('ingest', { userId, bookmarks, clusteringSettings });
             console.log(`[INGEST] Queued ingest job for user ${userId}`);
             return { status: 'queued' };
         });
@@ -178,64 +184,112 @@ const start = async () => {
         fastify.get('/status/:userId', async (req: any, reply) => {
             const { userId } = req.params;
 
-            // Get User Premium Status
-            const { data: user } = await supabase
-                .from('users')
-                .select('is_premium')
-                .eq('id', userId)
-                .maybeSingle();
-            
+            // Get user and bookmark status counts in parallel for richer stage reporting.
+            const [
+                { data: user },
+                { count: totalCount, error: totalError },
+                { count: pendingRawCount, error: pendingRawError },
+                { count: enrichedCount, error: enrichedError },
+                { count: embeddedCount, error: embeddedError },
+                { count: erroredCount, error: erroredError },
+                { count: clusterCount, error: clusterError },
+                { count: assignedCount, error: assignmentError }
+            ] = await Promise.all([
+                supabase
+                    .from('users')
+                    .select('is_premium')
+                    .eq('id', userId)
+                    .maybeSingle(),
+                supabase
+                    .from('bookmarks')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('user_id', userId),
+                supabase
+                    .from('bookmarks')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('user_id', userId)
+                    .eq('status', 'pending'),
+                supabase
+                    .from('bookmarks')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('user_id', userId)
+                    .eq('status', 'enriched'),
+                supabase
+                    .from('bookmarks')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('user_id', userId)
+                    .eq('status', 'embedded'),
+                supabase
+                    .from('bookmarks')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('user_id', userId)
+                    .eq('status', 'error'),
+                supabase
+                    .from('clusters')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('user_id', userId),
+                supabase
+                    .from('cluster_assignments')
+                    .select('bookmark_id, clusters!inner(user_id)', { count: 'exact', head: true })
+                    .eq('clusters.user_id', userId)
+            ]);
+
             const isPremium = user?.is_premium ?? false;
 
-            // Count total bookmarks for this user
-            const { count: totalCount, error: totalError } = await supabase
-                .from('bookmarks')
-                .select('*', { count: 'exact', head: true })
-                .eq('user_id', userId);
-
             if (totalError) console.error('[STATUS] Total Count Error:', totalError);
-
-            // Count in-progress bookmarks (pending or enriched - not yet embedded)
-            const { count: pendingCount, error: pendingError } = await supabase
-                .from('bookmarks')
-                .select('*', { count: 'exact', head: true })
-                .eq('user_id', userId)
-                .in('status', ['pending', 'enriched']);
-
-            if (pendingError) console.error('[STATUS] Pending Count Error:', pendingError);
-
-            // Count clusters
-            const { count: clusterCount, error: clusterError } = await supabase
-                .from('clusters')
-                .select('*', { count: 'exact', head: true })
-                .eq('user_id', userId);
-
+            if (pendingRawError) console.error('[STATUS] Pending Raw Count Error:', pendingRawError);
+            if (enrichedError) console.error('[STATUS] Enriched Count Error:', enrichedError);
+            if (embeddedError) console.error('[STATUS] Embedded Count Error:', embeddedError);
+            if (erroredError) console.error('[STATUS] Errored Count Error:', erroredError);
             if (clusterError) console.error('[STATUS] Cluster Count Error:', clusterError);
 
-            // Count distinct bookmarks assigned to clusters for this user.
-            // A bookmark can appear in multiple cluster rows across retries, so we de-duplicate by bookmark_id.
-            const { data: assignmentRows, error: assignmentError } = await supabase
-                .from('cluster_assignments')
-                .select('bookmark_id, clusters!inner(user_id)')
-                .eq('clusters.user_id', userId);
-
             if (assignmentError) console.error('[STATUS] Assigned Count Error:', assignmentError);
-            const distinctAssignedCount = new Set(
-                (assignmentRows ?? []).map((row: any) => row.bookmark_id)
-            ).size;
+            // Each bookmark is assigned once, so an exact count is enough and avoids returning all rows.
+            const distinctAssignedCount = assignedCount ?? 0;
+            const processingCount = (pendingRawCount ?? 0) + (enrichedCount ?? 0);
+            const remainingToAssign = Math.max((embeddedCount ?? 0) - distinctAssignedCount, 0);
+
+            // Ingest progress for current user (helps frontend show realistic progress when cache hits dominate).
+            const ingestJobs = await queues.ingest.getJobs(['active', 'waiting', 'delayed']);
+            const userIngestJob = ingestJobs.find((job: any) => job.data?.userId === userId);
+            const isIngesting = Boolean(userIngestJob);
+            let ingestProcessed = 0;
+            let ingestTotal = totalCount ?? 0;
+
+            if (userIngestJob) {
+                const progress = userIngestJob.progress as any;
+                if (typeof progress === 'number') {
+                    ingestProcessed = progress;
+                } else if (progress && typeof progress === 'object') {
+                    ingestProcessed = Number(progress.processed) || 0;
+                    ingestTotal = Number(progress.total) || ingestTotal;
+                }
+            }
 
             // Check actual queue status to ensure we don't say "Done" while clustering is still running
             const clusteringCounts = await queues.clustering.getJobCounts('active', 'waiting', 'delayed');
             const isClusteringActive = clusteringCounts.active > 0 || clusteringCounts.waiting > 0 || clusteringCounts.delayed > 0;
 
-            console.log(`[STATUS] User ${userId}: total=${totalCount}, pending=${pendingCount}, assigned=${distinctAssignedCount}, clusters=${clusterCount}, clusteringActive=${isClusteringActive}`);
+            console.log(
+                `[STATUS] User ${userId}: total=${totalCount}, pending=${pendingRawCount ?? 0}, enriched=${enrichedCount ?? 0}, embedded=${embeddedCount ?? 0}, errored=${erroredCount ?? 0}, assigned=${distinctAssignedCount}, clusters=${clusterCount}, ingesting=${isIngesting}, ingestProcessed=${ingestProcessed}/${ingestTotal}, clusteringActive=${isClusteringActive}`
+            );
 
             return {
-                pending: pendingCount ?? 0,
+                pending: processingCount,
+                pendingRaw: pendingRawCount ?? 0,
+                enriched: enrichedCount ?? 0,
+                embedded: embeddedCount ?? 0,
+                errored: erroredCount ?? 0,
+                processing: processingCount,
+                remainingToAssign,
                 total: totalCount ?? 0,
                 clusters: clusterCount ?? 0,
                 assigned: distinctAssignedCount,
-                isDone: (pendingCount ?? 0) === 0 && (clusterCount ?? 0) > 0 && !isClusteringActive,
+                isIngesting,
+                ingestProcessed,
+                ingestTotal,
+                isClusteringActive,
+                isDone: processingCount === 0 && (clusterCount ?? 0) > 0 && !isClusteringActive,
                 isPremium, // Return premium status
             };
         });
@@ -266,6 +320,7 @@ const start = async () => {
         // Manual trigger for clustering (for recovery)
         fastify.post('/trigger-clustering/:userId', async (req: any, reply) => {
             const { userId } = req.params;
+            clearUserCancelled(userId);
             console.log(`[MANUAL] Triggering clustering for user ${userId}`);
             await queues.clustering.add('cluster', { userId }, { 
                 jobId: `cluster-${userId}-manual-${Date.now()}`
@@ -275,47 +330,44 @@ const start = async () => {
 
         fastify.post('/cancel/:userId', async (req: any, reply) => {
             const { userId } = req.params;
-            console.log(`[CANCEL] Request received for user ${userId}`);
+            const clearAllQueues = Boolean(req.body?.clearAllQueues);
+            console.log(`[CANCEL] Request received for user ${userId} (clearAllQueues=${clearAllQueues})`);
+            markUserCancelled(userId);
 
             // 1. Clear Jobs from Queues
             const queueNames = ['ingest', 'enrichment', 'embedding', 'clustering'] as const;
             let removedCount = 0;
+            let failedToRemove = 0;
+            const jobStates = ['waiting', 'active', 'delayed', 'paused', 'prioritized', 'waiting-children', 'completed', 'failed'] as any;
 
             for (const name of queueNames) {
                 const queue = queues[name];
-                const jobs = await queue.getJobs(['waiting', 'active', 'delayed']);
+                const jobs = await queue.getJobs(jobStates);
                 
                 for (const job of jobs) {
-                    if (job.data.userId === userId) {
+                    const belongsToUser = job.data?.userId === userId;
+                    if (clearAllQueues || belongsToUser) {
                         try {
-                            // If active, we might need to discard it differently or dependencies
                             await job.remove();
                             removedCount++;
                         } catch (e) {
                             console.error(`[CANCEL] Failed to remove job ${job.id} from ${name}`, e);
+                            failedToRemove++;
                         }
                     }
                 }
-            }
-            console.log(`[CANCEL] Removed ${removedCount} jobs for user ${userId}`);
 
-            // 2. Reset Database Status
-            // We want to stop them from being "in progress". 
-            // Setting to 'idle' allows them to be picked up again later if user retries.
-            // We only reset those that are NOT 'done' (though 'done' isn't a status, 'clustered' might be?)
-            // Statuses: 'pending', 'scraped', 'enriched', 'embedded', 'clustered'
-            // If we cancel, we probably want to reset anything not fully 'clustered' back to start?
-            // Or maybe just leave them? If we leave them, the status check might still think we are busy if it counts 'pending'.
-            // The status check counts: .in('status', ['pending', 'enriched'])
-            // So we must change 'pending' and 'enriched' to something else or delete them?
-            // "Resetting" implies we want to forget progress. 'idle' seems appropriate if we want to restart.
-            // But if we just want to stop, maybe we leave them as is?
-            // If we leave them as 'pending', the frontend will still show "Processing..." next time it loads.
-            // So we MUST clear the 'pending' state.
-            
+                if (clearAllQueues) {
+                    await queue.clean(0, 10000, 'completed');
+                    await queue.clean(0, 10000, 'failed');
+                }
+            }
+            console.log(`[CANCEL] Removed ${removedCount} jobs for user ${userId} (failed=${failedToRemove})`);
+
+            // 2. Reset in-flight bookmarks so /status no longer reports the user as processing.
             const { error: updateError } = await supabase
                 .from('bookmarks')
-                .update({ status: 'idle' }) // Assume 'idle' or null is the initial state? Table definition would confirm. Let's assume 'idle'.
+                .update({ status: 'idle' })
                 .eq('user_id', userId)
                 .in('status', ['pending', 'enriched']);
 
@@ -324,10 +376,7 @@ const start = async () => {
                 return reply.code(500).send({ error: 'Failed to reset status' });
             }
 
-            // Also clear any clusters if we want a full reset? 
-            // Maybe not. Just stop processing.
-
-            return { status: 'cancelled', jobsRemoved: removedCount };
+            return { status: 'cancelled', jobsRemoved: removedCount, failedToRemove, clearAllQueues };
         });
 
         fastify.post('/search', async (req: any, reply) => {
