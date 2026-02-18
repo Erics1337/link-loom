@@ -1,30 +1,123 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { StartScreen } from './screens/StartScreen';
 import { WeavingScreen } from './screens/WeavingScreen';
 import { ResultsScreen } from './screens/ResultsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
+import { LoginScreen, SignUpPlan } from './screens/LoginScreen';
+import { BackupsScreen } from './screens/BackupsScreen';
 import { Layout } from './components/Layout';
-import { useBookmarkWeaver } from './hooks/useBookmarkWeaver';
+import { BookmarkBackupSnapshot, useBookmarkWeaver } from './hooks/useBookmarkWeaver';
 import { useDeviceAuth } from './hooks/useDeviceAuth';
+import { useClusteringSettings } from './hooks/useClusteringSettings';
+import { useExtensionAuth } from './hooks/useExtensionAuth';
 import { useTheme } from './hooks/useTheme';
 import './styles/global.css';
 
+const WEB_APP_URL = (import.meta.env.VITE_WEB_APP_URL as string | undefined) || 'http://localhost:3000';
+const STRIPE_PRO_PRICE_ID = import.meta.env.VITE_STRIPE_PRICE_ID_PRO as string | undefined;
+
 const App = () => {
-    // We get isPremium from the hook now
-    const { status, progress, clusters, stats, startWeaving, cancelWeaving, applyChanges, setStatus, errorMessage } = useBookmarkWeaver();
-    const [view, setView] = useState<'main' | 'settings'>('main');
+    const { user: authUser, errorMessage: authErrorMessage, signIn, signUp, signOut } = useExtensionAuth();
+    const { settings: clusteringSettings, updateSettings: updateClusteringSettings } = useClusteringSettings();
+    const {
+        status,
+        progress,
+        clusters,
+        stats,
+        isPremium,
+        startWeaving,
+        cancelWeaving,
+        loadBookmarkBackups,
+        saveCurrentBookmarkBackup,
+        deleteBookmarkBackup,
+        restoreBookmarkBackup,
+        applyChanges,
+        setStatus,
+        errorMessage
+    } = useBookmarkWeaver(authUser?.id, clusteringSettings);
+    const [view, setView] = useState<'main' | 'settings' | 'login' | 'backups'>('main');
+    const [backups, setBackups] = useState<BookmarkBackupSnapshot[]>([]);
     useTheme();
 
-    // Device Auth Logic
-    const [userId, setUserId] = useState<string>('');
-    
-    useEffect(() => {
-        chrome.storage.local.get(['userId'], (res: { userId?: string }) => {
-             if (res.userId) setUserId(res.userId);
-        });
-    }, []);
+    const { authStatus, errorMsg } = useDeviceAuth(authUser?.id || '');
 
-    const { authStatus, errorMsg } = useDeviceAuth(userId);
+    const handleOpenBackups = async () => {
+        if (!authUser) {
+            setView('login');
+            return;
+        }
+
+        const list = await loadBookmarkBackups();
+        setBackups(list);
+        setView('backups');
+    };
+
+    const startPaidCheckout = async (userIdForCheckout: string, email?: string | null) => {
+        if (!STRIPE_PRO_PRICE_ID) {
+            throw new Error('Pro checkout is not configured. Set VITE_STRIPE_PRICE_ID_PRO.');
+        }
+
+        const response = await fetch(`${WEB_APP_URL}/api/create-checkout-session`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                userId: userIdForCheckout,
+                email: email || undefined,
+                mode: 'subscription',
+                priceId: STRIPE_PRO_PRICE_ID,
+                successUrl: `${WEB_APP_URL}/dashboard/billing?success=true`,
+                cancelUrl: `${WEB_APP_URL}/dashboard/billing?canceled=true`
+            })
+        });
+
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.url) {
+            throw new Error(payload?.error || payload?.message || 'Failed to create checkout session.');
+        }
+
+        window.open(payload.url as string, '_blank', 'noopener,noreferrer');
+    };
+
+    const handleSignIn = async (email: string, password: string) => {
+        await signIn(email, password);
+        setView('main');
+    };
+
+    const handleSignUp = async (email: string, password: string, plan: SignUpPlan) => {
+        const result = await signUp(email, password);
+        if (plan === 'paid') {
+            if (!result.authenticated || !result.userId) {
+                throw new Error('Confirm your email first, then sign in and start Pro checkout.');
+            }
+            await startPaidCheckout(result.userId, result.email || email);
+        }
+
+        if (result.authenticated) {
+            setView('main');
+        }
+
+        return result;
+    };
+
+    const handleStartOrganizing = async () => {
+        await startWeaving();
+    };
+
+    const handleRestoreBackup = async (backupId: string) => {
+        await restoreBookmarkBackup(backupId);
+    };
+
+    const handleDeleteBackup = async (backupId: string) => {
+        await deleteBookmarkBackup(backupId);
+        const list = await loadBookmarkBackups();
+        setBackups(list);
+    };
+
+    const handleSaveCurrentBackup = async () => {
+        await saveCurrentBookmarkBackup();
+        const list = await loadBookmarkBackups();
+        setBackups(list);
+    };
 
     const renderContent = () => {
         // 1. Check Device Limit (Blocking)
@@ -42,30 +135,118 @@ const App = () => {
 
         // 2. Settings View
         if (view === 'settings') {
-            return <SettingsScreen onBack={() => setView('main')} />;
+            return (
+                <SettingsScreen
+                    onBack={() => setView('main')}
+                    settings={clusteringSettings}
+                    onSettingsChange={updateClusteringSettings}
+                />
+            );
+        }
+
+        if (view === 'login') {
+            return (
+                <LoginScreen
+                    onBack={() => setView('main')}
+                    onSignIn={handleSignIn}
+                    onSignUp={handleSignUp}
+                    initialError={authErrorMessage}
+                />
+            );
+        }
+
+        if (view === 'backups') {
+            return (
+                <BackupsScreen
+                    backups={backups}
+                    onBack={() => setView('main')}
+                    onSaveCurrent={handleSaveCurrentBackup}
+                    onRestore={handleRestoreBackup}
+                    onDelete={handleDeleteBackup}
+                />
+            );
         }
 
         // 3. Main App Flow
         switch (status) {
             case 'idle':
-                return <StartScreen onStart={startWeaving} />;
+                return (
+                    <StartScreen
+                        onStart={handleStartOrganizing}
+                        onOpenSettings={() => setView('settings')}
+                        onOpenLogin={() => setView('login')}
+                        onOpenBackups={handleOpenBackups}
+                        onSignOut={signOut}
+                        isLoggedIn={Boolean(authUser)}
+                        isPremium={Boolean(authUser && isPremium)}
+                        accountEmail={authUser?.email}
+                    />
+                );
             case 'weaving':
                 let progressPercent = 5;
                 let statusMessage = "Analyzing bookmark graph...";
+                let statusDetail = "";
+                const totalBookmarks = Math.max(progress.total || progress.ingestTotal || 0, 0);
+                const safeTotal = Math.max(totalBookmarks, 1);
+                const safeEmbedded = Math.min(progress.embedded || 0, totalBookmarks);
+                const safeAssigned = Math.min(progress.assigned || 0, totalBookmarks);
 
-                if (progress.total > 0) {
-                    const pendingPercent = ((progress.total - progress.pending) / progress.total) * 100;
-                    if (progress.pending <= 5 && !status.includes('ready')) {
-                        const safeAssigned = Math.min(progress.assigned, progress.total);
-                        const assignedPercent = (safeAssigned / progress.total) * 100;
-                        progressPercent = Math.max(90, Math.min(assignedPercent, 99)); 
-                        statusMessage = `Structuring ${safeAssigned} of ${progress.total} bookmarks...`;
+                if (progress.isIngesting && progress.assigned === 0 && progress.clusters === 0) {
+                    const ingestTotal = Math.max(progress.ingestTotal || progress.total || 0, 1);
+                    const ingestProcessed = Math.min(progress.ingestProcessed || 0, ingestTotal);
+                    progressPercent = Math.max(8, Math.min((ingestProcessed / ingestTotal) * 45, 45));
+                    statusMessage = `Stage 1/3: Indexing ${ingestProcessed} of ${ingestTotal} bookmarks...`;
+                    statusDetail = "Scanning links, checking cache hits, and queueing uncached pages.";
+                } else if (totalBookmarks > 0 && progress.pending > 0) {
+                    const embedPercent = Math.min((safeEmbedded / safeTotal) * 100, 100);
+                    progressPercent = Math.max(45, Math.min(45 + (embedPercent * 0.45), 90));
+                    statusMessage = "Stage 2/3: Enriching pages and generating embeddings...";
+
+                    const detailParts = [
+                        `Queued: ${progress.pendingRaw || 0}`,
+                        `Enriched: ${progress.enriched || 0}`,
+                        `Embedded: ${safeEmbedded}/${totalBookmarks}`
+                    ];
+
+                    if (progress.isClusteringActive || progress.clusters > 0) {
+                        detailParts.push(`Folders: ${progress.clusters}`);
+                    }
+
+                    if (progress.errored > 0) {
+                        detailParts.push(`Errors: ${progress.errored}`);
                     } else {
-                        progressPercent = Math.min(pendingPercent, 90);
-                        statusMessage = `Processing ${progress.total - progress.pending} of ${progress.total} bookmarks...`;
+                        detailParts.push("Errors: 0");
+                    }
+
+                    statusDetail = detailParts.join(" • ");
+                } else if (totalBookmarks > 0) {
+                    if (safeAssigned > 0) {
+                        const assignedPercent = (safeAssigned / safeTotal) * 100;
+                        progressPercent = Math.max(90, Math.min(90 + (assignedPercent * 0.09), 99));
+                        statusMessage = "Stage 3/3: Structuring bookmarks into folders...";
+                        const remaining = Math.max(
+                            progress.remainingToAssign || (totalBookmarks - safeAssigned - (progress.errored || 0)),
+                            0
+                        );
+                        statusDetail = `Assigned: ${safeAssigned}/${totalBookmarks} • Folders: ${progress.clusters} • Remaining: ${remaining}`;
+                    } else {
+                        const clusterSignal = Math.log10((progress.clusters || 0) + 1);
+                        const clusterDrivenPercent = 88 + Math.min(clusterSignal * 3.3, 10);
+                        progressPercent = Math.max(88, Math.min(clusterDrivenPercent, 98));
+                        statusMessage = "Stage 3/3: Preparing clustered structure...";
+                        statusDetail = progress.clusters > 0
+                            ? `Folders created: ${progress.clusters} • Waiting for first assignment batch`
+                            : "Creating initial folder groups from embedded bookmarks.";
                     }
                 }
-                return <WeavingScreen progress={progressPercent} statusMessage={statusMessage} onCancel={cancelWeaving} />;
+                return (
+                    <WeavingScreen
+                        progress={progressPercent}
+                        statusMessage={statusMessage}
+                        statusDetail={statusDetail}
+                        onCancel={cancelWeaving}
+                    />
+                );
             case 'ready':
                 // Here we can show a "Premium Only" banner if they used a premium feature, 
                 // but for now we just show the results.

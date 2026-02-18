@@ -22,8 +22,10 @@
         "storage"
     ],
     "host_permissions": [
+        "http://127.0.0.1:54321/*",
         "http://localhost:3000/*",
-        "http://localhost:3333/*"
+        "http://localhost:3333/*",
+        "https://*.supabase.co/*"
     ],
     "background": {
         "service_worker": "src/background.ts",

@@ -5,10 +5,16 @@ import { PopOutButton } from '../components/PopOutButton';
 interface WeavingScreenProps {
     progress: number;
     statusMessage?: string;
+    statusDetail?: string;
     onCancel: () => void;
 }
 
-export const WeavingScreen: React.FC<WeavingScreenProps> = ({ progress, statusMessage = "Analyzing bookmark graph and building clusters.", onCancel }) => {
+export const WeavingScreen: React.FC<WeavingScreenProps> = ({
+    progress,
+    statusMessage = "Analyzing bookmark graph and building clusters.",
+    statusDetail,
+    onCancel
+}) => {
     return (
         <div className="flex flex-col items-center justify-center h-full p-6 text-center relative">
             <div className="absolute top-4 right-4 flex items-center gap-2">
@@ -26,6 +32,9 @@ export const WeavingScreen: React.FC<WeavingScreenProps> = ({ progress, statusMe
 
             <div className="w-full mb-8 text-left">
                 <p className="mb-3 text-base font-medium text-white">{statusMessage}</p>
+                {statusDetail && (
+                    <p className="mb-3 text-xs text-secondary">{statusDetail}</p>
+                )}
                 <ProgressBar progress={progress} />
             </div>
 

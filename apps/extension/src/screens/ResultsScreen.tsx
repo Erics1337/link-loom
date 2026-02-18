@@ -12,7 +12,12 @@ interface ResultsScreenProps {
     onBack: () => void;
 }
 
-export const ResultsScreen: React.FC<ResultsScreenProps> = ({ clusters, stats, onApply, onBack }) => {
+export const ResultsScreen: React.FC<ResultsScreenProps> = ({
+    clusters,
+    stats,
+    onApply,
+    onBack
+}) => {
     const [expandAll, setExpandAll] = useState(false);
     const totalBookmarks = React.useMemo(() => {
         const countLeaves = (nodes: BookmarkNode[]): number =>
@@ -86,7 +91,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({ clusters, stats, o
                 </div>
                 
                 <div className="flex gap-3 mt-2">
-                    <button onClick={onBack} className="btn btn-secondary">
+                    <button onClick={onBack} className="btn btn-secondary flex-1">
                         Back
                     </button>
                     <button onClick={onApply} className="btn btn-primary flex-1">
@@ -94,7 +99,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({ clusters, stats, o
                     </button>
                 </div>
                 <p className="text-xs text-secondary">
-                    A bookmark backup snapshot is saved automatically before applying changes.
+                    Backups are managed in the main screen and require login.
                 </p>
             </div>
         </div>

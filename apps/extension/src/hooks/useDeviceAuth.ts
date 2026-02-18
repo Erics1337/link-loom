@@ -2,8 +2,12 @@
 import { useState, useEffect } from 'react';
 
 const BACKEND_URL = 'http://localhost:3333';
+const BACKEND_UNAVAILABLE_MESSAGE = `Cannot reach Link Loom backend at ${BACKEND_URL}.`;
 
 export type DeviceAuthStatus = 'checking' | 'authorized' | 'limit_reached' | 'error';
+
+const isFailedFetchError = (error: unknown) =>
+    error instanceof TypeError && error.message.toLowerCase().includes('failed to fetch');
 
 export const useDeviceAuth = (userId: string) => {
     const [authStatus, setAuthStatus] = useState<DeviceAuthStatus>('checking');
@@ -11,7 +15,11 @@ export const useDeviceAuth = (userId: string) => {
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     useEffect(() => {
-        if (!userId) return;
+        if (!userId) {
+            setAuthStatus('authorized');
+            setErrorMsg(null);
+            return;
+        }
 
         const registerDevice = async () => {
             try {
@@ -54,6 +62,12 @@ export const useDeviceAuth = (userId: string) => {
                 setAuthStatus('authorized');
 
             } catch (err: any) {
+                if (isFailedFetchError(err)) {
+                    console.warn('[DeviceAuth] Backend not reachable; skipping device registration for now.');
+                    setAuthStatus('error');
+                    setErrorMsg(BACKEND_UNAVAILABLE_MESSAGE);
+                    return;
+                }
                 console.error('[DeviceAuth] Error:', err);
                 setAuthStatus('error');
                 setErrorMsg(err.message);

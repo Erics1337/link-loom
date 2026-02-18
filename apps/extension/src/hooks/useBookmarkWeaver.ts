@@ -1,10 +1,36 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { BookmarkNode } from '../components/BookmarkTree';
+import { ClusteringSettings, normalizeClusteringSettings } from '../lib/clusteringSettings';
 
 const BACKEND_URL = 'http://localhost:3333';
-const CLIENT_FREE_TIER_HINT = 500;
+const BACKEND_UNAVAILABLE_MESSAGE = `Cannot reach Link Loom backend at ${BACKEND_URL}. Start the backend dev server and try again.`;
+const STRUCTURE_VERSIONS_STORAGE_KEY = 'bookmarkStructureVersions';
+const MAX_STRUCTURE_VERSIONS = 20;
+const MAX_BOOKMARK_BACKUPS = 10;
 
 export type AppStatus = 'idle' | 'weaving' | 'ready' | 'done' | 'error';
+type BookmarkStats = { duplicates: number; deadLinks: number };
+
+export type BookmarkStructureVersion = {
+    id: string;
+    createdAt: string;
+    clusters: BookmarkNode[];
+    stats: BookmarkStats;
+    summary: {
+        folders: number;
+        bookmarks: number;
+    };
+};
+
+export type BookmarkBackupSnapshot = {
+    id: string;
+    createdAt: string;
+    tree: chrome.bookmarks.BookmarkTreeNode[];
+    summary: {
+        folders: number;
+        bookmarks: number;
+    };
+};
 
 const normalizeBookmarkUrl = (url: string) => {
     try {
@@ -19,56 +45,170 @@ const normalizeBookmarkUrl = (url: string) => {
     }
 };
 
-export const useBookmarkWeaver = () => {
+const isFailedFetchError = (error: unknown) =>
+    error instanceof TypeError && error.message.toLowerCase().includes('failed to fetch');
+
+type WeavingProgress = {
+    pending: number;
+    pendingRaw: number;
+    enriched: number;
+    embedded: number;
+    errored: number;
+    processing: number;
+    remainingToAssign: number;
+    clusters: number;
+    assigned: number;
+    total: number;
+    isIngesting: boolean;
+    ingestProcessed: number;
+    ingestTotal: number;
+    isClusteringActive: boolean;
+};
+
+const createEmptyProgress = (): WeavingProgress => ({
+    pending: 0,
+    pendingRaw: 0,
+    enriched: 0,
+    embedded: 0,
+    errored: 0,
+    processing: 0,
+    remainingToAssign: 0,
+    clusters: 0,
+    assigned: 0,
+    total: 0,
+    isIngesting: false,
+    ingestProcessed: 0,
+    ingestTotal: 0,
+    isClusteringActive: false
+});
+
+const summarizeStructure = (nodes: BookmarkNode[]) => {
+    let folders = 0;
+    let bookmarks = 0;
+
+    const walk = (branch: BookmarkNode[]) => {
+        branch.forEach((node) => {
+            const hasChildren = Boolean(node.children?.length);
+            if (hasChildren) {
+                folders += 1;
+                walk(node.children!);
+            } else if (node.url) {
+                bookmarks += 1;
+            }
+        });
+    };
+
+    walk(nodes);
+    return { folders, bookmarks };
+};
+
+const getBookmarkBackupStorageKey = (accountUserId: string) => `bookmarkBackups:${accountUserId}`;
+
+const summarizeBookmarkTree = (nodes: chrome.bookmarks.BookmarkTreeNode[]) => {
+    let folders = 0;
+    let bookmarks = 0;
+
+    const walk = (branch: chrome.bookmarks.BookmarkTreeNode[]) => {
+        branch.forEach((node) => {
+            if (node.url) {
+                bookmarks += 1;
+                return;
+            }
+
+            folders += 1;
+            if (Array.isArray(node.children) && node.children.length > 0) {
+                walk(node.children);
+            }
+        });
+    };
+
+    walk(nodes);
+    return { folders, bookmarks };
+};
+
+const cloneBookmarkTree = (tree: chrome.bookmarks.BookmarkTreeNode[]) =>
+    JSON.parse(JSON.stringify(tree)) as chrome.bookmarks.BookmarkTreeNode[];
+
+export const useBookmarkWeaver = (
+    accountUserId?: string | null,
+    clusteringSettings?: ClusteringSettings
+) => {
     const [status, setStatus] = useState<AppStatus>('idle');
-    const [progress, setProgress] = useState({ pending: 0, clusters: 0, assigned: 0, total: 0 });
+    const [progress, setProgress] = useState<WeavingProgress>(createEmptyProgress());
     const [userId, setUserId] = useState<string>('');
     const [clusters, setClusters] = useState<BookmarkNode[]>([]);
-    const [stats, setStats] = useState({ duplicates: 0, deadLinks: 0 });
+    const [stats, setStats] = useState<BookmarkStats>({ duplicates: 0, deadLinks: 0 });
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const clusterRecoveryTriggered = useRef(false);
 
     const [isPremium, setIsPremium] = useState(false);
+    const effectiveClusteringSettings = normalizeClusteringSettings(clusteringSettings);
 
     useEffect(() => {
-        chrome.storage.local.get(['userId'], async (result) => {
+        let cancelled = false;
+
+        const resolveUserId = async () => {
+            if (accountUserId) return accountUserId;
+            if (typeof chrome === 'undefined' || !chrome.storage?.local) return crypto.randomUUID();
+
+            const result = await chrome.storage.local.get(['userId']);
             let currentUserId = result.userId as string | undefined;
-            if (currentUserId) {
-                setUserId(currentUserId as string);
-            } else {
-                const newId = crypto.randomUUID();
-                chrome.storage.local.set({ userId: newId });
-                setUserId(newId);
-                currentUserId = newId;
+            if (!currentUserId) {
+                currentUserId = crypto.randomUUID();
+                await chrome.storage.local.set({ userId: currentUserId });
             }
+            return currentUserId;
+        };
 
-            // Check backend status immediately to restore state
-            if (currentUserId) {
-                try {
-                    const res = await fetch(`${BACKEND_URL}/status/${currentUserId}`);
-                    const data = await res.json();
-                    
-                    if (data.isPremium) setIsPremium(true);
+        const hydrate = async () => {
+            const resolvedUserId = await resolveUserId();
+            if (cancelled || !resolvedUserId) return;
+            setUserId(resolvedUserId);
 
-                    if (data.pending > 0 || (data.total > 0 && !data.isDone)) {
-                        setStatus('weaving');
-                        setProgress({ 
-                            pending: data.pending, 
-                            clusters: data.clusters,
-                            assigned: data.assigned || 0,
-                            total: data.total 
-                        });
-                    } else if (data.isDone) {
-                         // Only set to ready if we have clusters, otherwise stay idle (new user)
-                        setStatus('ready');
-                        await fetchResults(currentUserId);
-                    }
-                } catch (e) {
-                    console.error("Failed to check initial status", e);
+            try {
+                const res = await fetch(`${BACKEND_URL}/status/${resolvedUserId}`);
+                const data = await res.json();
+                if (cancelled) return;
+
+                if (data.isPremium) setIsPremium(true);
+                else setIsPremium(false);
+
+                if (data.pending > 0 || (data.total > 0 && !data.isDone)) {
+                    setStatus('weaving');
+                    setProgress({
+                        pending: data.pending,
+                        pendingRaw: data.pendingRaw ?? data.pending ?? 0,
+                        enriched: data.enriched ?? 0,
+                        embedded: data.embedded ?? 0,
+                        errored: data.errored ?? 0,
+                        processing: data.processing ?? data.pending ?? 0,
+                        remainingToAssign: data.remainingToAssign ?? 0,
+                        clusters: data.clusters,
+                        assigned: data.assigned || 0,
+                        total: data.total,
+                        isIngesting: Boolean(data.isIngesting),
+                        ingestProcessed: data.ingestProcessed || 0,
+                        ingestTotal: data.ingestTotal || data.total || 0,
+                        isClusteringActive: Boolean(data.isClusteringActive)
+                    });
+                } else if (data.isDone) {
+                    setStatus('ready');
+                    await fetchResults(resolvedUserId);
                 }
+            } catch (e) {
+                if (isFailedFetchError(e)) {
+                    console.warn('[STATUS] Backend not reachable during initial status check.');
+                    return;
+                }
+                console.error("Failed to check initial status", e);
             }
-        });
-    }, []);
+        };
+
+        hydrate();
+        return () => {
+            cancelled = true;
+        };
+    }, [accountUserId]);
 
     // Polling Effect
     useEffect(() => {
@@ -90,10 +230,20 @@ export const useBookmarkWeaver = () => {
                 setProgress(prev => ({ 
                     ...prev, 
                     pending: data.pending, 
+                    pendingRaw: data.pendingRaw ?? data.pending ?? 0,
+                    enriched: data.enriched ?? 0,
+                    embedded: data.embedded ?? 0,
+                    errored: data.errored ?? 0,
+                    processing: data.processing ?? data.pending ?? 0,
+                    remainingToAssign: data.remainingToAssign ?? 0,
                     clusters: data.clusters,
                     assigned: data.assigned || 0,
                     // Use backend total if available, otherwise keep existing
-                    total: data.total || prev.total 
+                    total: data.total || prev.total,
+                    isIngesting: Boolean(data.isIngesting),
+                    ingestProcessed: data.ingestProcessed || 0,
+                    ingestTotal: data.ingestTotal || data.total || prev.total,
+                    isClusteringActive: Boolean(data.isClusteringActive)
                 }));
 
                 // Recovery path: if all bookmarks are embedded but no clusters were created,
@@ -102,7 +252,8 @@ export const useBookmarkWeaver = () => {
                     !clusterRecoveryTriggered.current &&
                     data.total > 0 &&
                     data.pending === 0 &&
-                    data.clusters === 0
+                    data.clusters === 0 &&
+                    !data.isIngesting
                 ) {
                     clusterRecoveryTriggered.current = true;
                     fetch(`${BACKEND_URL}/trigger-clustering/${userId}`, { method: 'POST' })
@@ -114,33 +265,43 @@ export const useBookmarkWeaver = () => {
                     await fetchResults(userId);
                 }
             } catch (e) {
+                if (isFailedFetchError(e)) {
+                    console.warn('[STATUS] Polling skipped because backend is unavailable.');
+                    return;
+                }
                 console.error("Polling error", e);
             }
         }, 2000);
 
         return () => clearInterval(interval);
     }, [status, userId]);
-
-
-
-    // ... (rest of file)
-    
-    // I will use a cleaner approach: just add the state and update the return.
-    // I'll make two smaller edits.
-
-
     const startWeaving = useCallback(async () => {
         setStatus('weaving');
         setErrorMessage(null);
         setClusters([]); // Reset clusters to avoid showing old results
-        setProgress({ pending: 0, clusters: 0, assigned: 0, total: 0 }); // Reset progress
+        setProgress(createEmptyProgress()); // Reset progress
         clusterRecoveryTriggered.current = false;
 
         // Mock for local dev
         if (typeof chrome === 'undefined' || !chrome.bookmarks) {
              console.log("Running in mock mode");
             setTimeout(() => {
-                setProgress({ pending: 50, clusters: 5, assigned: 20, total: 100 });
+                setProgress({
+                    pending: 50,
+                    pendingRaw: 40,
+                    enriched: 10,
+                    embedded: 50,
+                    errored: 0,
+                    processing: 50,
+                    remainingToAssign: 80,
+                    clusters: 5,
+                    assigned: 20,
+                    total: 100,
+                    isIngesting: false,
+                    ingestProcessed: 100,
+                    ingestTotal: 100,
+                    isClusteringActive: true
+                });
             }, 1000);
             setTimeout(() => {
                  setClusters([
@@ -185,7 +346,21 @@ export const useBookmarkWeaver = () => {
             };
             traverse(tree[0]);
             const totalBookmarks = bookmarks.length;
-            setProgress(prev => ({ ...prev, total: totalBookmarks, pending: totalBookmarks }));
+            setProgress(prev => ({
+                ...prev,
+                total: totalBookmarks,
+                pending: totalBookmarks,
+                pendingRaw: totalBookmarks,
+                enriched: 0,
+                embedded: 0,
+                errored: 0,
+                processing: totalBookmarks,
+                remainingToAssign: totalBookmarks,
+                isIngesting: true,
+                ingestProcessed: 0,
+                ingestTotal: totalBookmarks,
+                isClusteringActive: false
+            }));
 
             // Compute duplicate URLs for preview stats (dead-links remain server-side TODO).
             const urlCounts = new Map<string, number>();
@@ -197,17 +372,11 @@ export const useBookmarkWeaver = () => {
                 .reduce((sum, count) => sum + Math.max(0, count - 1), 0);
             setStats({ duplicates: duplicateCount, deadLinks: 0 });
 
-            // 2. Pre-check: Warn if over limit and not premium
-            if (!isPremium && totalBookmarks > CLIENT_FREE_TIER_HINT) {
-                console.warn(`[WEAVING] User has ${totalBookmarks} bookmarks, exceeds free tier hint of ${CLIENT_FREE_TIER_HINT}`);
-                // We'll still try to send - backend will enforce and give detailed error
-            }
-
-            // 3. Send to Backend
+            // 2. Send to Backend
             const response = await fetch(`${BACKEND_URL}/ingest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId, bookmarks }),
+                body: JSON.stringify({ userId, bookmarks, clusteringSettings: effectiveClusteringSettings }),
             });
 
             // Handle 402 Payment Required (limit exceeded)
@@ -232,14 +401,20 @@ export const useBookmarkWeaver = () => {
             
             // Polling is now handled by useEffect
         } catch (error) {
-            console.error("Weaving error", error);
-            const message = error instanceof Error
-                ? error.message
-                : 'Something went wrong while organizing bookmarks.';
+            const message = isFailedFetchError(error)
+                ? BACKEND_UNAVAILABLE_MESSAGE
+                : error instanceof Error
+                    ? error.message
+                    : 'Something went wrong while organizing bookmarks.';
+            if (isFailedFetchError(error)) {
+                console.warn('[WEAVING] Backend unreachable while starting weave.');
+            } else {
+                console.error("Weaving error", error);
+            }
             setErrorMessage(message);
             setStatus('error');
         }
-    }, [userId, isPremium]);
+    }, [effectiveClusteringSettings, isPremium, userId]);
 
     const fetchResults = async (idOverride?: string) => {
         const targetId = idOverride || userId;
@@ -314,11 +489,179 @@ export const useBookmarkWeaver = () => {
             setStats({ duplicates: duplicateCount, deadLinks: 0 });
             setStatus('ready');
         } catch (error) {
-            console.error("Fetch results error", error);
-            setErrorMessage('Failed to load organized bookmark structure.');
+            if (isFailedFetchError(error)) {
+                console.warn('[RESULTS] Backend unreachable while loading structure.');
+                setErrorMessage(BACKEND_UNAVAILABLE_MESSAGE);
+            } else {
+                console.error("Fetch results error", error);
+                setErrorMessage('Failed to load organized bookmark structure.');
+            }
             setStatus('error');
         }
     };
+
+    const saveStructureVersion = useCallback(async () => {
+        if (!clusters.length) {
+            throw new Error('No bookmark structure is available to save yet.');
+        }
+
+        const snapshot: BookmarkStructureVersion = {
+            id: crypto.randomUUID(),
+            createdAt: new Date().toISOString(),
+            clusters: JSON.parse(JSON.stringify(clusters)) as BookmarkNode[],
+            stats: { ...stats },
+            summary: summarizeStructure(clusters)
+        };
+
+        if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+            return snapshot;
+        }
+
+        const storageResult = await chrome.storage.local.get([STRUCTURE_VERSIONS_STORAGE_KEY]);
+        const existingVersions = Array.isArray(storageResult[STRUCTURE_VERSIONS_STORAGE_KEY])
+            ? (storageResult[STRUCTURE_VERSIONS_STORAGE_KEY] as BookmarkStructureVersion[])
+            : [];
+        const nextVersions = [snapshot, ...existingVersions].slice(0, MAX_STRUCTURE_VERSIONS);
+        await chrome.storage.local.set({ [STRUCTURE_VERSIONS_STORAGE_KEY]: nextVersions });
+        return snapshot;
+    }, [clusters, stats]);
+
+    const loadStructureVersions = useCallback(async () => {
+        if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+            return [] as BookmarkStructureVersion[];
+        }
+
+        const storageResult = await chrome.storage.local.get([STRUCTURE_VERSIONS_STORAGE_KEY]);
+        return Array.isArray(storageResult[STRUCTURE_VERSIONS_STORAGE_KEY])
+            ? (storageResult[STRUCTURE_VERSIONS_STORAGE_KEY] as BookmarkStructureVersion[])
+            : [];
+    }, []);
+
+    const restoreStructureVersion = useCallback(async (versionId: string) => {
+        const versions = await loadStructureVersions();
+        const version = versions.find((item) => item.id === versionId);
+        if (!version) {
+            throw new Error('Selected version no longer exists.');
+        }
+
+        setClusters(Array.isArray(version.clusters) ? version.clusters : []);
+        setStats(version.stats || { duplicates: 0, deadLinks: 0 });
+        setStatus('ready');
+        return version;
+    }, [loadStructureVersions]);
+
+    const deleteStructureVersion = useCallback(async (versionId: string) => {
+        if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+            return;
+        }
+
+        const versions = await loadStructureVersions();
+        const remaining = versions.filter((item) => item.id !== versionId);
+        await chrome.storage.local.set({ [STRUCTURE_VERSIONS_STORAGE_KEY]: remaining });
+    }, [loadStructureVersions]);
+
+    const loadBookmarkBackups = useCallback(async () => {
+        if (!accountUserId) return [] as BookmarkBackupSnapshot[];
+        if (typeof chrome === 'undefined' || !chrome.storage?.local) return [] as BookmarkBackupSnapshot[];
+
+        const storageKey = getBookmarkBackupStorageKey(accountUserId);
+        const result = await chrome.storage.local.get([storageKey]);
+        return Array.isArray(result[storageKey])
+            ? (result[storageKey] as BookmarkBackupSnapshot[])
+            : [];
+    }, [accountUserId]);
+
+    const saveCurrentBookmarkBackup = useCallback(async () => {
+        if (!accountUserId) {
+            throw new Error('You need to log in to save backups.');
+        }
+        if (typeof chrome === 'undefined' || !chrome.bookmarks || !chrome.storage?.local) {
+            throw new Error('Bookmark APIs are unavailable in this environment.');
+        }
+
+        const storageKey = getBookmarkBackupStorageKey(accountUserId);
+        const currentTree = await chrome.bookmarks.getTree();
+        const storageResult = await chrome.storage.local.get([storageKey]);
+        const existingBackups = Array.isArray(storageResult[storageKey])
+            ? (storageResult[storageKey] as BookmarkBackupSnapshot[])
+            : [];
+
+        const snapshot: BookmarkBackupSnapshot = {
+            id: crypto.randomUUID(),
+            createdAt: new Date().toISOString(),
+            tree: cloneBookmarkTree(currentTree),
+            summary: summarizeBookmarkTree(currentTree)
+        };
+
+        await chrome.storage.local.set({
+            [storageKey]: [snapshot, ...existingBackups].slice(0, MAX_BOOKMARK_BACKUPS)
+        });
+        return snapshot;
+    }, [accountUserId]);
+
+    const deleteBookmarkBackup = useCallback(async (backupId: string) => {
+        if (!accountUserId) {
+            throw new Error('You need to log in to manage backups.');
+        }
+        if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
+
+        const storageKey = getBookmarkBackupStorageKey(accountUserId);
+        const backups = await loadBookmarkBackups();
+        const nextBackups = backups.filter((item) => item.id !== backupId);
+        await chrome.storage.local.set({ [storageKey]: nextBackups });
+    }, [accountUserId, loadBookmarkBackups]);
+
+    const restoreBookmarkBackup = useCallback(async (backupId: string) => {
+        if (!accountUserId) {
+            throw new Error('You need to log in to restore backups.');
+        }
+        if (typeof chrome === 'undefined' || !chrome.bookmarks) {
+            throw new Error('Bookmarks API is unavailable in this environment.');
+        }
+
+        const backups = await loadBookmarkBackups();
+        const snapshot = backups.find((item) => item.id === backupId);
+        if (!snapshot) {
+            throw new Error('Selected backup no longer exists.');
+        }
+
+        const restoreRoot = await chrome.bookmarks.create({
+            parentId: '2',
+            title: `Link Loom Restore - ${new Date().toLocaleDateString()}`
+        });
+
+        const recreateNode = async (node: chrome.bookmarks.BookmarkTreeNode, parentId: string): Promise<void> => {
+            if (node.url) {
+                await chrome.bookmarks.create({
+                    parentId,
+                    title: node.title || node.url,
+                    url: node.url
+                });
+                return;
+            }
+
+            const folder = await chrome.bookmarks.create({
+                parentId,
+                title: node.title || 'Folder'
+            });
+
+            if (!Array.isArray(node.children)) return;
+            for (const child of node.children) {
+                await recreateNode(child, folder.id);
+            }
+        };
+
+        for (const root of snapshot.tree || []) {
+            if (root.id === '0' && Array.isArray(root.children)) {
+                for (const child of root.children) {
+                    await recreateNode(child, restoreRoot.id);
+                }
+                continue;
+            }
+
+            await recreateNode(root, restoreRoot.id);
+        }
+    }, [accountUserId, loadBookmarkBackups]);
 
     const applyChanges = async () => {
         // Mock mode - just mark as done
@@ -330,26 +673,22 @@ export const useBookmarkWeaver = () => {
 
         try {
             const confirmed = window.confirm(
-                'Apply changes will move bookmarks into a new Link Loom folder. A backup snapshot will be created first. Continue?'
+                accountUserId
+                    ? 'Apply changes will move bookmarks into a new Link Loom folder. A backup snapshot will be created first. Continue?'
+                    : 'Apply changes will move bookmarks into a new Link Loom folder. Log in to enable automatic backups. Continue without backup?'
             );
             if (!confirmed) return;
 
             setStatus('weaving'); // Show progress indicator
             console.log('[ApplyChanges] Starting to apply changes...');
 
-            // 0. Save a local snapshot backup before any changes.
-            const currentTree = await chrome.bookmarks.getTree();
-            const storageResult = await chrome.storage.local.get(['bookmarkBackups']);
-            const existingBackups = Array.isArray(storageResult.bookmarkBackups)
-                ? storageResult.bookmarkBackups
-                : [];
-            existingBackups.unshift({
-                id: crypto.randomUUID(),
-                createdAt: new Date().toISOString(),
-                tree: currentTree
-            });
-            await chrome.storage.local.set({ bookmarkBackups: existingBackups.slice(0, 3) });
-            console.log('[ApplyChanges] Saved bookmark backup snapshot');
+            // 0. Save a local snapshot backup before any changes (logged-in users only).
+            if (accountUserId) {
+                await saveCurrentBookmarkBackup();
+                console.log('[ApplyChanges] Saved bookmark backup snapshot');
+            } else {
+                console.log('[ApplyChanges] Skipped backup snapshot because user is not logged in');
+            }
 
             // 1. Fetch structure with chrome_ids from backend
             const res = await fetch(`${BACKEND_URL}/structure/${userId}`);
@@ -441,8 +780,13 @@ export const useBookmarkWeaver = () => {
             clusterRecoveryTriggered.current = false;
             setStatus('done');
         } catch (error) {
-            console.error('[ApplyChanges] Error:', error);
-            setErrorMessage('Failed to apply changes to Chrome bookmarks.');
+            if (isFailedFetchError(error)) {
+                console.warn('[ApplyChanges] Backend unreachable while applying changes.');
+                setErrorMessage(BACKEND_UNAVAILABLE_MESSAGE);
+            } else {
+                console.error('[ApplyChanges] Error:', error);
+                setErrorMessage('Failed to apply changes to Chrome bookmarks.');
+            }
             setStatus('error');
         }
     };
@@ -450,14 +794,18 @@ export const useBookmarkWeaver = () => {
     const cancelWeaving = async () => {
         if (!userId) return;
         try {
-            await fetch(`${BACKEND_URL}/cancel/${userId}`, { method: 'POST' });
+            await fetch(`${BACKEND_URL}/cancel/${userId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clearAllQueues: true })
+            });
         } catch (error) {
             console.error("Cancel error", error);
         } finally {
             // Always reset UI state
             setStatus('idle');
             setErrorMessage(null);
-            setProgress({ pending: 0, clusters: 0, assigned: 0, total: 0 });
+            setProgress(createEmptyProgress());
             clusterRecoveryTriggered.current = false;
         }
     };
@@ -469,6 +817,14 @@ export const useBookmarkWeaver = () => {
         stats,
         startWeaving,
         cancelWeaving,
+        saveStructureVersion,
+        loadStructureVersions,
+        restoreStructureVersion,
+        deleteStructureVersion,
+        loadBookmarkBackups,
+        saveCurrentBookmarkBackup,
+        deleteBookmarkBackup,
+        restoreBookmarkBackup,
         applyChanges,
         setStatus,
         isPremium,
