@@ -52,9 +52,16 @@ export const ingestProcessor = async (job: Job<IngestJobData>) => {
             const urlHash = createHash('sha256').update(b.url).digest('hex');
 
             // 1. Ensure Shared Link Exists (Idempotent)
-            await supabase
+            const { error: sharedUpsertError } = await supabase
                 .from('shared_links')
                 .upsert({ id: urlHash, url: b.url }, { onConflict: 'id' });
+            if (sharedUpsertError) {
+                console.error(`[INGEST WORKER] Failed to upsert shared link ${b.url}:`, sharedUpsertError);
+                if (handled % 25 === 0 || handled === rawBookmarks.length) {
+                    await job.updateProgress({ processed: handled, total: rawBookmarks.length });
+                }
+                continue;
+            }
 
             // 2. Insert Bookmark linked to Shared Link
             const { data: inserted, error } = await supabase
@@ -82,26 +89,48 @@ export const ingestProcessor = async (job: Job<IngestJobData>) => {
             }
 
             // 3. Check if Shared Link already has a vector (Cache Hit)
-            const { data: shared } = await supabase
+            const { data: shared, error: sharedLookupError } = await supabase
                 .from('shared_links')
                 .select('vector')
                 .eq('id', urlHash)
                 .single();
+            if (sharedLookupError) {
+                console.error(`[INGEST WORKER] Failed to lookup shared vector for ${b.url}:`, sharedLookupError);
+                await supabase
+                    .from('bookmarks')
+                    .update({ status: 'error' })
+                    .eq('id', inserted.id);
+                if (handled % 25 === 0 || handled === rawBookmarks.length) {
+                    await job.updateProgress({ processed: handled, total: rawBookmarks.length });
+                }
+                continue;
+            }
 
             if (shared?.vector) {
                 console.log(`[INGEST WORKER] Cache HIT for ${b.url}`);
                 // Mark as embedded immediately
-                await supabase
+                const { error: embeddedUpdateError } = await supabase
                     .from('bookmarks')
                     .update({ status: 'embedded' })
                     .eq('id', inserted.id);
+                if (embeddedUpdateError) {
+                    console.error(`[INGEST WORKER] Failed to mark bookmark as embedded ${inserted.id}:`, embeddedUpdateError);
+                    await supabase
+                        .from('bookmarks')
+                        .update({ status: 'error' })
+                        .eq('id', inserted.id);
+                }
             } else {
                 // Cache MISS - Add to Enrichment Queue
-                await queues.enrichment.add('enrich', {
-                    userId,
-                    bookmarkId: inserted.id,
-                    url: inserted.url,
-                });
+                await queues.enrichment.add(
+                    'enrich',
+                    {
+                        userId,
+                        bookmarkId: inserted.id,
+                        url: inserted.url,
+                    },
+                    { attempts: 3, backoff: { type: 'exponential', delay: 1000 } }
+                );
             }
 
             saved++;

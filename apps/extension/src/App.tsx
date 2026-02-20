@@ -31,6 +31,13 @@ const App = () => {
         saveCurrentBookmarkBackup,
         deleteBookmarkBackup,
         restoreBookmarkBackup,
+        autoRenameBookmarks,
+        isAutoRenaming,
+        deleteAllDuplicates,
+        deleteAllDeadLinks,
+        isDeletingDuplicates,
+        isDeletingDeadLinks,
+        isScanningDeadLinks,
         applyChanges,
         setStatus,
         errorMessage
@@ -254,6 +261,14 @@ const App = () => {
                     <ResultsScreen
                         clusters={clusters}
                         stats={stats}
+                        onAutoRename={autoRenameBookmarks}
+                        isAutoRenaming={isAutoRenaming}
+                        onOpenSettings={() => setView('settings')}
+                        onDeleteDuplicates={deleteAllDuplicates}
+                        onDeleteDeadLinks={deleteAllDeadLinks}
+                        isDeletingDuplicates={isDeletingDuplicates}
+                        isDeletingDeadLinks={isDeletingDeadLinks}
+                        isScanningDeadLinks={isScanningDeadLinks}
                         onApply={applyChanges}
                         onBack={() => setStatus('idle')}
                     />

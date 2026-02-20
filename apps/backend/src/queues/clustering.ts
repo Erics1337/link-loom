@@ -5,6 +5,8 @@ import OpenAI from 'openai';
 import pLimit from 'p-limit';
 import { isUserCancelled } from '../lib/cancellation';
 import { ClusteringDensityProfile, ClusteringSettings, getDensityProfile, normalizeClusteringSettings } from '../lib/clusteringSettings';
+import { emojiPrefixLabel } from '../lib/emojiNaming';
+import { queues } from '../lib/queue';
 
 import fs from 'fs';
 import path from 'path';
@@ -109,6 +111,136 @@ const parseVector = (raw: unknown): number[] | null => {
     return values;
 };
 
+const getJoinedSharedVector = (joined: unknown): unknown => {
+    if (!joined) return null;
+    if (Array.isArray(joined)) {
+        if (joined.length === 0) return null;
+        const first = joined[0] as { vector?: unknown };
+        return first?.vector ?? null;
+    }
+
+    if (typeof joined === 'object') {
+        return (joined as { vector?: unknown }).vector ?? null;
+    }
+
+    return null;
+};
+
+const hasPipelineJobsForUser = async (userId: string): Promise<boolean> => {
+    const jobStates = ['active', 'waiting', 'delayed'] as any;
+    const [ingestJobs, enrichmentJobs, embeddingJobs] = await Promise.all([
+        queues.ingest.getJobs(jobStates),
+        queues.enrichment.getJobs(jobStates),
+        queues.embedding.getJobs(jobStates),
+    ]);
+
+    const belongsToUser = (job: any) => job.data?.userId === userId;
+    return ingestJobs.some(belongsToUser) || enrichmentJobs.some(belongsToUser) || embeddingJobs.some(belongsToUser);
+};
+
+const recoverStalePipelineState = async (userId: string) => {
+    const { data: inflightBookmarks, error: inflightError } = await supabase
+        .from('bookmarks')
+        .select(`
+            id,
+            status,
+            title,
+            description,
+            url,
+            shared_links!content_hash (vector)
+        `)
+        .eq('user_id', userId)
+        .in('status', ['pending', 'enriched']);
+
+    if (inflightError) {
+        log(`[CLUSTERING] Recovery query failed for user ${userId}: ${JSON.stringify(inflightError)}`);
+        return;
+    }
+
+    if (!inflightBookmarks || inflightBookmarks.length === 0) return;
+
+    const toMarkEmbedded: string[] = [];
+    const toQueueEnrichment: Array<{ bookmarkId: string; url: string }> = [];
+    const toQueueEmbedding: Array<{ bookmarkId: string; url: string; text: string }> = [];
+
+    for (const bookmark of inflightBookmarks as Array<{
+        id: string;
+        status: string;
+        title?: string | null;
+        description?: string | null;
+        url?: string | null;
+        shared_links?: unknown;
+    }>) {
+        const rawVector = getJoinedSharedVector(bookmark.shared_links);
+        const parsedVector = parseVector(rawVector);
+
+        if (parsedVector) {
+            toMarkEmbedded.push(bookmark.id);
+            continue;
+        }
+
+        if (!bookmark.url) continue;
+
+        if (bookmark.status === 'enriched') {
+            const title = bookmark.title ?? '';
+            const description = bookmark.description ?? '';
+            toQueueEmbedding.push({
+                bookmarkId: bookmark.id,
+                url: bookmark.url,
+                text: `${title} ${description} ${bookmark.url}`,
+            });
+            continue;
+        }
+
+        if (bookmark.status === 'pending') {
+            toQueueEnrichment.push({
+                bookmarkId: bookmark.id,
+                url: bookmark.url,
+            });
+        }
+    }
+
+    if (toMarkEmbedded.length > 0) {
+        const { error: markEmbeddedError } = await supabase
+            .from('bookmarks')
+            .update({ status: 'embedded' })
+            .in('id', toMarkEmbedded);
+
+        if (markEmbeddedError) {
+            log(`[CLUSTERING] Recovery failed to mark embedded for user ${userId}: ${JSON.stringify(markEmbeddedError)}`);
+        } else {
+            log(`[CLUSTERING] Recovery marked ${toMarkEmbedded.length} stale bookmarks as embedded for user ${userId}`);
+        }
+    }
+
+    for (const enrichmentJob of toQueueEnrichment) {
+        await queues.enrichment.add(
+            'enrich',
+            { userId, bookmarkId: enrichmentJob.bookmarkId, url: enrichmentJob.url },
+            { attempts: 3, backoff: { type: 'exponential', delay: 1000 } }
+        );
+    }
+
+    for (const embeddingJob of toQueueEmbedding) {
+        await queues.embedding.add(
+            'embed',
+            {
+                userId,
+                bookmarkId: embeddingJob.bookmarkId,
+                url: embeddingJob.url,
+                text: embeddingJob.text,
+            },
+            { attempts: 3, backoff: { type: 'exponential', delay: 1000 } }
+        );
+    }
+
+    if (toQueueEnrichment.length > 0 || toQueueEmbedding.length > 0) {
+        log(
+            `[CLUSTERING] Recovery queued enrichment=${toQueueEnrichment.length}, embedding=${toQueueEmbedding.length} for user ${userId}`
+        );
+    }
+};
+
 const sampleBookmarkIds = (bookmarkIds: string[], sampleSize: number): string[] => {
     if (bookmarkIds.length <= sampleSize) return bookmarkIds;
 
@@ -141,6 +273,11 @@ const getOrganizationInstruction = (settings: ClusteringSettings): string => {
     }
 
     return 'Organization mode: topic-first. Prefer specific topics over broad categories.';
+};
+
+const finalizeClusterName = (name: string, settings: ClusteringSettings, contextText: string): string => {
+    if (!settings.useEmojiNames) return name;
+    return emojiPrefixLabel(name, contextText, 'folder');
 };
 
 const chooseSplitK = (count: number, profile: ClusteringDensityProfile): number => {
@@ -334,20 +471,27 @@ async function generateClusterName(bookmarkIds: string[], settings: ClusteringSe
             return null;
         })
         .filter((line): line is string => Boolean(line));
+    const contextText = contextLines.join(' ');
 
     if (contextLines.length === 0) {
-        return generateHeuristicClusterName(bks as Array<{ title?: string | null; description?: string | null; url?: string | null }>);
+        const heuristicName = generateHeuristicClusterName(
+            bks as Array<{ title?: string | null; description?: string | null; url?: string | null }>
+        );
+        return finalizeClusterName(heuristicName, settings, '');
     }
 
-    const cacheKey = `${settings.namingTone}|${settings.organizationMode}|${contextLines.join('\n').toLowerCase()}`;
+    const cacheKey = `${settings.namingTone}|${settings.organizationMode}|${settings.useEmojiNames ? 'emoji' : 'plain'}|${contextLines.join('\n').toLowerCase()}`;
     const cachedName = clusterNameCache.get(cacheKey);
     if (cachedName) return cachedName;
 
     // Avoid expensive naming calls for smaller groups where local heuristics are good enough.
     if (bookmarkIds.length < CLUSTER_NAME_MIN_BOOKMARKS_FOR_AI || !process.env.OPENAI_API_KEY) {
-        const heuristicName = generateHeuristicClusterName(bks as Array<{ title?: string | null; description?: string | null; url?: string | null }>);
-        clusterNameCache.set(cacheKey, heuristicName);
-        return heuristicName;
+        const heuristicName = generateHeuristicClusterName(
+            bks as Array<{ title?: string | null; description?: string | null; url?: string | null }>
+        );
+        const finalized = finalizeClusterName(heuristicName, settings, contextText);
+        clusterNameCache.set(cacheKey, finalized);
+        return finalized;
     }
 
     const prompt = [
@@ -381,13 +525,17 @@ async function generateClusterName(bookmarkIds: string[], settings: ClusteringSe
             name = name.replace(/^\s*["']|["']\s*$/g, '').replace(/\*\*/g, '').trim();
 
             if (!name || GENERIC_RESPONSES.has(name.toLowerCase())) {
-                const heuristicName = generateHeuristicClusterName(bks as Array<{ title?: string | null; description?: string | null; url?: string | null }>);
-                clusterNameCache.set(cacheKey, heuristicName);
-                return heuristicName;
+                const heuristicName = generateHeuristicClusterName(
+                    bks as Array<{ title?: string | null; description?: string | null; url?: string | null }>
+                );
+                const finalizedFallback = finalizeClusterName(heuristicName, settings, contextText);
+                clusterNameCache.set(cacheKey, finalizedFallback);
+                return finalizedFallback;
             }
 
-            clusterNameCache.set(cacheKey, name);
-            return name;
+            const finalized = finalizeClusterName(name, settings, contextText);
+            clusterNameCache.set(cacheKey, finalized);
+            return finalized;
         } catch (e: any) {
             if (e.status === 429) {
                 retries++;
@@ -402,11 +550,17 @@ async function generateClusterName(bookmarkIds: string[], settings: ClusteringSe
             }
 
             log(`OpenAI naming error: ${JSON.stringify(e)}`);
-            return generateHeuristicClusterName(bks as Array<{ title?: string | null; description?: string | null; url?: string | null }>);
+            const heuristicName = generateHeuristicClusterName(
+                bks as Array<{ title?: string | null; description?: string | null; url?: string | null }>
+            );
+            return finalizeClusterName(heuristicName, settings, contextText);
         }
     }
 
-    return generateHeuristicClusterName(bks as Array<{ title?: string | null; description?: string | null; url?: string | null }>);
+    const heuristicName = generateHeuristicClusterName(
+        bks as Array<{ title?: string | null; description?: string | null; url?: string | null }>
+    );
+    return finalizeClusterName(heuristicName, settings, contextText);
 }
 
 // Recursive function to cluster bookmarks.
@@ -490,11 +644,44 @@ export const clusteringProcessor = async (job: Job<ClusteringJobData>) => {
     const { userId } = job.data;
     const settings = normalizeClusteringSettings(job.data.clusteringSettings);
     log(
-        `Clustering bookmarks for user ${userId} (density=${settings.folderDensity}, tone=${settings.namingTone}, mode=${settings.organizationMode})`
+        `Clustering bookmarks for user ${userId} (density=${settings.folderDensity}, tone=${settings.namingTone}, mode=${settings.organizationMode}, emoji=${settings.useEmojiNames})`
     );
 
     if (isUserCancelled(userId)) {
         log(`[CLUSTERING] Cancelled before start for user ${userId}`);
+        return;
+    }
+
+    // Delay clustering until enrichment/embedding pipeline settles to avoid partial structures.
+    const { count: initialInflightCount } = await supabase
+        .from('bookmarks')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .in('status', ['pending', 'enriched']);
+    let inflightCount = initialInflightCount ?? 0;
+
+    if (inflightCount > 0) {
+        const hasPipelineJobs = await hasPipelineJobsForUser(userId);
+
+        if (!hasPipelineJobs) {
+            log(`[CLUSTERING] No active pipeline jobs for user ${userId}; attempting stale-state recovery`);
+            await recoverStalePipelineState(userId);
+            const { count: recoveredInflightCount } = await supabase
+                .from('bookmarks')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', userId)
+                .in('status', ['pending', 'enriched']);
+            inflightCount = recoveredInflightCount ?? inflightCount;
+        }
+    }
+
+    if (inflightCount > 0) {
+        log(`[CLUSTERING] Deferring user ${userId}; ${inflightCount} bookmarks still pending enrichment/embedding`);
+        await queues.clustering.add(
+            'cluster',
+            { userId, clusteringSettings: settings },
+            { delay: 5000, jobId: `cluster-${userId}-deferred-${Date.now()}` }
+        );
         return;
     }
 

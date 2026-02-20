@@ -325,14 +325,95 @@ p {
 .tree-node {
   display: flex;
   align-items: center;
-  padding: 4px 8px;
-  border-radius: 4px;
-  cursor: pointer;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 6px;
   transition: background 0.1s;
+  min-width: 0;
+}
+
+.tree-folder {
+  cursor: pointer;
+}
+
+.tree-link {
+  cursor: default;
 }
 
 .tree-node:hover {
   background: rgba(255, 255, 255, 0.05);
+}
+
+.tree-chevron,
+.tree-node-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+}
+
+.tree-chevron {
+  width: 18px;
+  min-width: 18px;
+}
+
+.tree-chevron-spacer {
+  visibility: hidden;
+}
+
+.tree-node-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.tree-folder-content {
+  display: block;
+}
+
+.tree-link-content {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.tree-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.tree-folder-title {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tree-link-title {
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 0;
+  flex: 1;
+}
+
+.tree-url-inline {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  max-width: 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.tree-children {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .border-white-10 {
@@ -348,6 +429,10 @@ p {
 
 .p-0 {
   padding: 0 !important;
+}
+
+.p-1 {
+  padding: 4px;
 }
 
 .p-2 {

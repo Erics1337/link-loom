@@ -14,6 +14,9 @@ interface BookmarkTreeProps {
     defaultExpanded?: boolean;
 }
 
+const INDENT_STEP_PX = 8;
+const MAX_VISIBLE_DEPTH = 3;
+
 const FolderIcon = () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
@@ -46,7 +49,15 @@ const cleanTitle = (title: string) => {
     return title.replace(/^["']|["']$/g, '').replace(/\*\*/g, '').trim();
 };
 
-const TreeNode: React.FC<{ node: BookmarkNode; defaultExpanded: boolean }> = ({ node, defaultExpanded }) => {
+const formatHost = (url: string) => {
+    try {
+        return new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+        return url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0] || url;
+    }
+};
+
+const TreeNode: React.FC<{ node: BookmarkNode; defaultExpanded: boolean; depth: number }> = ({ node, defaultExpanded, depth }) => {
     const [isExpanded, setIsExpanded] = useState(defaultExpanded);
     
     React.useEffect(() => {
@@ -54,6 +65,7 @@ const TreeNode: React.FC<{ node: BookmarkNode; defaultExpanded: boolean }> = ({ 
     }, [defaultExpanded]);
 
     const hasChildren = node.children && node.children.length > 0;
+    const leftPadding = 6 + Math.min(depth, MAX_VISIBLE_DEPTH) * INDENT_STEP_PX;
 
     const toggle = () => {
         if (hasChildren) setIsExpanded(!isExpanded);
@@ -62,41 +74,39 @@ const TreeNode: React.FC<{ node: BookmarkNode; defaultExpanded: boolean }> = ({ 
     return (
         <div className="select-none">
             <div
-                className="tree-node"
-                onClick={toggle}
+                className={`tree-node ${hasChildren ? 'tree-folder' : 'tree-link'}`}
+                style={{ paddingLeft: `${leftPadding}px` }}
+                onClick={hasChildren ? toggle : undefined}
             >
-                {/* Indent calculation or Spacer */}
                 {hasChildren ? (
-                    <span className="mr-1 text-secondary icon-wrapper">
+                    <span className="tree-chevron text-secondary">
                         {isExpanded ? <ChevronDown /> : <ChevronRight />}
                     </span>
                 ) : (
-                    // Spacer to align with siblings that have a chevron
-                    <span className="w-5 mr-1 inline-block" />
+                    <span className="tree-chevron tree-chevron-spacer" />
                 )}
 
-                <span className="mr-2 text-primary">
+                <span className={`tree-node-icon ${hasChildren ? 'text-primary' : 'text-secondary'}`}>
                     {hasChildren ? <FolderIcon /> : <FileIcon />}
                 </span>
 
-                <span className={`text-sm truncate ${hasChildren ? 'font-medium text-primary' : 'text-secondary'}`}>
-                    {cleanTitle(node.title)}
-                </span>
-
-                {!hasChildren && node.url && (
-                    <span 
-                        className="ml-2 text-xs text-secondary opacity-50 truncate"
-                        style={{ maxWidth: '150px' }}
-                    >
-                        {node.url.replace(/^https?:\/\/(www\.)?/, '')}
+                <div className={`tree-node-content ${hasChildren ? 'tree-folder-content' : 'tree-link-content'}`}>
+                    <span className={`tree-title ${hasChildren ? 'tree-folder-title' : 'tree-link-title'}`}>
+                        {cleanTitle(node.title)}
                     </span>
-                )}
+
+                    {!hasChildren && node.url && (
+                        <span className="tree-url-inline">
+                            {formatHost(node.url)}
+                        </span>
+                    )}
+                </div>
             </div>
 
             {hasChildren && isExpanded && (
-                <div className="pl-4 ml-3 border-l-2 border-white-10">
+                <div className="tree-children">
                     {node.children!.map(child => (
-                        <TreeNode key={child.id} node={child} defaultExpanded={defaultExpanded} />
+                        <TreeNode key={child.id} node={child} defaultExpanded={defaultExpanded} depth={depth + 1} />
                     ))}
                 </div>
             )}
@@ -108,7 +118,7 @@ export const BookmarkTree: React.FC<BookmarkTreeProps> = ({ nodes, defaultExpand
     return (
         <div className="flex flex-col gap-1 overflow-y-auto flex-1 h-full min-h-0 pr-2 p-2">
             {nodes.map(node => (
-                <TreeNode key={node.id} node={node} defaultExpanded={defaultExpanded} />
+                <TreeNode key={node.id} node={node} defaultExpanded={defaultExpanded} depth={0} />
             ))}
         </div>
     );

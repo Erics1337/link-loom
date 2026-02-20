@@ -29,11 +29,14 @@ export const embeddingProcessor = async (job: Job<EmbeddingJobData>) => {
         const urlHash = createHash('sha256').update(url).digest('hex');
 
         // 2. Check Shared Cache
-        const { data: cached } = await supabase
+        const { data: cached, error: cacheLookupError } = await supabase
             .from('shared_links')
             .select('vector')
             .eq('id', urlHash)
             .single();
+        if (cacheLookupError) {
+            throw new Error(`Shared link lookup failed for ${url}: ${cacheLookupError.message}`);
+        }
 
         let vector: number[];
 
@@ -49,10 +52,13 @@ export const embeddingProcessor = async (job: Job<EmbeddingJobData>) => {
             vector = response.data[0].embedding;
 
             // Save to Shared Cache
-            await supabase
+            const { error: sharedUpdateError } = await supabase
                 .from('shared_links')
                 .update({ vector })
                 .eq('id', urlHash);
+            if (sharedUpdateError) {
+                throw new Error(`Failed to persist shared vector for ${url}: ${sharedUpdateError.message}`);
+            }
         }
 
         // 3. Update Status
@@ -61,10 +67,13 @@ export const embeddingProcessor = async (job: Job<EmbeddingJobData>) => {
             return;
         }
 
-        await supabase
+        const { error: bookmarkStatusError } = await supabase
             .from('bookmarks')
             .update({ status: 'embedded' })
             .eq('id', bookmarkId);
+        if (bookmarkStatusError) {
+            throw new Error(`Failed to mark bookmark ${bookmarkId} as embedded: ${bookmarkStatusError.message}`);
+        }
 
     } catch (err) {
         console.error(`Failed to embed ${bookmarkId}`, err);

@@ -48,10 +48,18 @@ export const enrichmentProcessor = async (job: Job<EnrichmentJobData>) => {
     }
 
     // Update DB
-    await supabase
+    const { error: enrichmentUpdateError } = await supabase
         .from('bookmarks')
         .update({ description, status: 'enriched' })
         .eq('id', bookmarkId);
+    if (enrichmentUpdateError) {
+        console.error(`[ENRICHMENT] Failed to update bookmark ${bookmarkId}:`, enrichmentUpdateError);
+        await supabase
+            .from('bookmarks')
+            .update({ status: 'error' })
+            .eq('id', bookmarkId);
+        return;
+    }
 
     if (isUserCancelled(userId)) {
         console.log(`[ENRICHMENT] Cancelled before embedding enqueue for user ${userId}`);
@@ -59,10 +67,14 @@ export const enrichmentProcessor = async (job: Job<EnrichmentJobData>) => {
     }
 
     // Add to Embedding Queue
-    await queues.embedding.add('embed', {
-        userId,
-        bookmarkId,
-        text: `${title} ${description} ${url}`,
-        url,
-    });
+    await queues.embedding.add(
+        'embed',
+        {
+            userId,
+            bookmarkId,
+            text: `${title} ${description} ${url}`,
+            url,
+        },
+        { attempts: 3, backoff: { type: 'exponential', delay: 1000 } }
+    );
 };

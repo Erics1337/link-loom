@@ -31,10 +31,94 @@ import { supabase } from './db';
 import OpenAI from 'openai';
 import { markUserCancelled, clearUserCancelled } from './lib/cancellation';
 import { normalizeClusteringSettings } from './lib/clusteringSettings';
+import pLimit from 'p-limit';
+import { generateBookmarkRename } from './lib/bookmarkRename';
 
 const DEFAULT_FREE_TIER_LIMIT = 500;
 const parsedFreeTierLimit = Number.parseInt(process.env.FREE_TIER_LIMIT ?? `${DEFAULT_FREE_TIER_LIMIT}`, 10);
 const FREE_TIER_LIMIT = Number.isNaN(parsedFreeTierLimit) ? DEFAULT_FREE_TIER_LIMIT : parsedFreeTierLimit;
+const SUPABASE_PAGE_SIZE = 1000;
+const DEAD_LINK_TIMEOUT_MS = 4500;
+const DEAD_LINK_STATUSES = new Set([404, 410, 451]);
+const FALLBACK_TO_GET_STATUSES = new Set([405, 501]);
+const DEAD_LINK_NETWORK_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED']);
+
+const fetchAllPages = async <T>(
+    fetchPage: (from: number, to: number) => any
+) => {
+    const allRows: T[] = [];
+    let from = 0;
+
+    while (true) {
+        const to = from + SUPABASE_PAGE_SIZE - 1;
+        const { data, error } = await fetchPage(from, to);
+
+        if (error) throw error;
+
+        const rows = data ?? [];
+        allRows.push(...rows);
+
+        if (rows.length < SUPABASE_PAGE_SIZE) break;
+        from += SUPABASE_PAGE_SIZE;
+    }
+
+    return allRows;
+};
+
+const fetchWithTimeout = async (url: string, method: 'HEAD' | 'GET') => {
+    const controller = new AbortController();
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<Response>((_, reject) => {
+        timeoutId = setTimeout(() => {
+            controller.abort();
+            reject(new Error(`Request timed out after ${DEAD_LINK_TIMEOUT_MS}ms`));
+        }, DEAD_LINK_TIMEOUT_MS);
+    });
+    try {
+        const headers = method === 'GET' ? { Range: 'bytes=0-0' } : undefined;
+        const requestPromise = fetch(url, {
+            method,
+            redirect: 'follow',
+            signal: controller.signal,
+            headers
+        });
+
+        return await Promise.race([requestPromise, timeoutPromise]);
+    } catch (error) {
+        controller.abort();
+        throw error;
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
+};
+
+const isDeadBookmarkUrl = async (rawUrl: string) => {
+    let url: URL;
+    try {
+        url = new URL(rawUrl);
+    } catch {
+        return true;
+    }
+
+    if (!['http:', 'https:'].includes(url.protocol)) {
+        return false;
+    }
+
+    try {
+        const headResponse = await fetchWithTimeout(url.toString(), 'HEAD');
+        if (FALLBACK_TO_GET_STATUSES.has(headResponse.status)) {
+            const getResponse = await fetchWithTimeout(url.toString(), 'GET');
+            return DEAD_LINK_STATUSES.has(getResponse.status);
+        }
+        return DEAD_LINK_STATUSES.has(headResponse.status);
+    } catch (error: any) {
+        const code = error?.cause?.code ?? error?.code;
+        if (code && DEAD_LINK_NETWORK_CODES.has(String(code))) {
+            return true;
+        }
+        return false;
+    }
+};
 
 const startWorkers = () => {
     createWorker('ingest', ingestProcessor);
@@ -66,7 +150,7 @@ const start = async () => {
             const { userId, bookmarks, clusteringSettings: rawClusteringSettings } = req.body;
             const clusteringSettings = normalizeClusteringSettings(rawClusteringSettings);
             console.log(
-                `[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId} (density=${clusteringSettings.folderDensity}, tone=${clusteringSettings.namingTone}, mode=${clusteringSettings.organizationMode})`
+                `[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId} (density=${clusteringSettings.folderDensity}, tone=${clusteringSettings.namingTone}, mode=${clusteringSettings.organizationMode}, emoji=${clusteringSettings.useEmojiNames})`
             );
             clearUserCancelled(userId);
 
@@ -274,6 +358,12 @@ const start = async () => {
                 `[STATUS] User ${userId}: total=${totalCount}, pending=${pendingRawCount ?? 0}, enriched=${enrichedCount ?? 0}, embedded=${embeddedCount ?? 0}, errored=${erroredCount ?? 0}, assigned=${distinctAssignedCount}, clusters=${clusterCount}, ingesting=${isIngesting}, ingestProcessed=${ingestProcessed}/${ingestTotal}, clusteringActive=${isClusteringActive}`
             );
 
+            const isDone =
+                processingCount === 0 &&
+                (clusterCount ?? 0) > 0 &&
+                !isClusteringActive &&
+                remainingToAssign === 0;
+
             return {
                 pending: processingCount,
                 pendingRaw: pendingRawCount ?? 0,
@@ -289,7 +379,7 @@ const start = async () => {
                 ingestProcessed,
                 ingestTotal,
                 isClusteringActive,
-                isDone: processingCount === 0 && (clusterCount ?? 0) > 0 && !isClusteringActive,
+                isDone,
                 isPremium, // Return premium status
             };
         });
@@ -297,32 +387,186 @@ const start = async () => {
         fastify.get('/structure/:userId', async (req: any, reply) => {
             const { userId } = req.params;
 
-            // Fetch clusters
-            const { data: userClusters } = await supabase
-                .from('clusters')
-                .select('*')
-                .eq('user_id', userId);
+            try {
+                const userClusters = await fetchAllPages<any>((from, to) =>
+                    supabase
+                        .from('clusters')
+                        .select('*')
+                        .eq('user_id', userId)
+                        .order('id', { ascending: true })
+                        .range(from, to)
+                );
 
-            // Fetch assignments with cluster info and chrome_id for Apply Changes
-            const { data: assignments } = await supabase
-                .from('cluster_assignments')
-                .select(`
-                    cluster_id,
-                    bookmark_id,
-                    clusters!inner (user_id),
-                    bookmarks (title, url, chrome_id)
-                `)
-                .eq('clusters.user_id', userId);
+                const assignments = await fetchAllPages<any>((from, to) =>
+                    supabase
+                        .from('cluster_assignments')
+                        .select(`
+                            cluster_id,
+                            bookmark_id,
+                            clusters!inner (user_id),
+                            bookmarks (title, ai_title, description, url, chrome_id)
+                        `)
+                        .eq('clusters.user_id', userId)
+                        .order('cluster_id', { ascending: true })
+                        .order('bookmark_id', { ascending: true })
+                        .range(from, to)
+                );
 
-            return { clusters: userClusters ?? [], assignments: assignments ?? [] };
+                return { clusters: userClusters, assignments };
+            } catch (error) {
+                console.error('[STRUCTURE] Failed to load paged structure', error);
+                return reply.code(500).send({ error: 'Failed to load structure' });
+            }
+        });
+
+        fastify.post('/dead-links/check', async (req: any, reply) => {
+            const rawBookmarks = Array.isArray(req.body?.bookmarks) ? req.body.bookmarks : [];
+            const bookmarks = rawBookmarks
+                .map((item: any) => ({
+                    chromeId: typeof item?.chromeId === 'string' ? item.chromeId : '',
+                    url: typeof item?.url === 'string' ? item.url : ''
+                }))
+                .filter((item: any) => item.chromeId && item.url);
+
+            if (bookmarks.length === 0) {
+                return { scanned: 0, dead: 0, deadChromeIds: [] };
+            }
+
+            // Check each unique URL once, then fan out to matching bookmark IDs.
+            const chromeIdsByUrl = new Map<string, string[]>();
+            for (const bookmark of bookmarks) {
+                const key = bookmark.url.trim();
+                if (!key) continue;
+                const existing = chromeIdsByUrl.get(key);
+                if (existing) {
+                    existing.push(bookmark.chromeId);
+                } else {
+                    chromeIdsByUrl.set(key, [bookmark.chromeId]);
+                }
+            }
+
+            const deadUrlSet = new Set<string>();
+            const deadLinkCheckLimit = pLimit(25);
+
+            await Promise.all(
+                Array.from(chromeIdsByUrl.keys()).map((url) =>
+                    deadLinkCheckLimit(async () => {
+                        const isDead = await isDeadBookmarkUrl(url);
+                        if (isDead) deadUrlSet.add(url);
+                    })
+                )
+            );
+
+            const deadChromeIds = Array.from(deadUrlSet).flatMap((url) => chromeIdsByUrl.get(url) ?? []);
+            return {
+                scanned: chromeIdsByUrl.size,
+                dead: deadChromeIds.length,
+                deadChromeIds
+            };
+        });
+
+        fastify.post('/auto-rename/:userId', async (req: any, reply) => {
+            const { userId } = req.params;
+            const clusteringSettings = normalizeClusteringSettings(req.body?.clusteringSettings);
+
+            let assignments: any[] = [];
+            try {
+                assignments = await fetchAllPages<any>((from, to) =>
+                    supabase
+                        .from('cluster_assignments')
+                        .select(`
+                            bookmark_id,
+                            clusters!inner (user_id, name),
+                            bookmarks!inner (id, title, ai_title, description, url)
+                        `)
+                        .eq('clusters.user_id', userId)
+                        .order('bookmark_id', { ascending: true })
+                        .range(from, to)
+                );
+            } catch (assignmentError) {
+                console.error('[AUTO_RENAME] Failed to load assignments', assignmentError);
+                return reply.code(500).send({ error: 'Failed to load bookmarks for rename' });
+            }
+
+            const contextByBookmarkId = new Map<string, any>();
+            for (const assignment of assignments ?? []) {
+                const bookmark = Array.isArray(assignment.bookmarks)
+                    ? assignment.bookmarks[0]
+                    : assignment.bookmarks;
+                const cluster = Array.isArray(assignment.clusters)
+                    ? assignment.clusters[0]
+                    : assignment.clusters;
+                if (!bookmark?.id) continue;
+
+                contextByBookmarkId.set(bookmark.id, {
+                    bookmarkId: bookmark.id,
+                    currentTitle: bookmark.title,
+                    currentAiTitle: bookmark.ai_title,
+                    description: bookmark.description,
+                    url: bookmark.url,
+                    clusterName: cluster?.name ?? null,
+                });
+            }
+
+            const contexts = Array.from(contextByBookmarkId.values());
+            if (contexts.length === 0) {
+                return { renamed: 0, scanned: 0, updates: [] };
+            }
+
+            const renameLimit = pLimit(6);
+            const updates: Array<{ bookmark_id: string; ai_title: string }> = [];
+            const updateErrors: string[] = [];
+
+            await Promise.all(
+                contexts.map((context) =>
+                    renameLimit(async () => {
+                        const suggestedTitle = await generateBookmarkRename({
+                            currentTitle: context.currentTitle,
+                            description: context.description,
+                            url: context.url,
+                            clusterName: context.clusterName,
+                            namingTone: clusteringSettings.namingTone,
+                            useEmojiNames: clusteringSettings.useEmojiNames,
+                        });
+
+                        const currentTitle = (context.currentTitle || '').trim();
+                        const currentAiTitle = (context.currentAiTitle || '').trim();
+                        const normalizedSuggestion = (suggestedTitle || '').trim();
+
+                        if (!normalizedSuggestion) return;
+                        if (normalizedSuggestion === currentAiTitle) return;
+                        if (normalizedSuggestion === currentTitle && !currentAiTitle) return;
+
+                        const { error: updateError } = await supabase
+                            .from('bookmarks')
+                            .update({ ai_title: normalizedSuggestion })
+                            .eq('id', context.bookmarkId);
+
+                        if (updateError) {
+                            updateErrors.push(context.bookmarkId);
+                            return;
+                        }
+
+                        updates.push({ bookmark_id: context.bookmarkId, ai_title: normalizedSuggestion });
+                    })
+                )
+            );
+
+            return {
+                renamed: updates.length,
+                scanned: contexts.length,
+                failed: updateErrors.length,
+                updates,
+            };
         });
 
         // Manual trigger for clustering (for recovery)
         fastify.post('/trigger-clustering/:userId', async (req: any, reply) => {
             const { userId } = req.params;
+            const clusteringSettings = normalizeClusteringSettings(req.body?.clusteringSettings);
             clearUserCancelled(userId);
             console.log(`[MANUAL] Triggering clustering for user ${userId}`);
-            await queues.clustering.add('cluster', { userId }, { 
+            await queues.clustering.add('cluster', { userId, clusteringSettings }, {
                 jobId: `cluster-${userId}-manual-${Date.now()}`
             });
             return { status: 'clustering_queued' };
