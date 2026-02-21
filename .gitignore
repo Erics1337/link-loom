@@ -12,3 +12,12 @@ backend/dist
 .next
 
 .env.local
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+tfplan
+*.tfplan
+infra/terraform/terraform.tfvars

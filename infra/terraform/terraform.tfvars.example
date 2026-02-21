@@ -1,0 +1,33 @@
+project_name = "link-loom-prod"
+aws_region   = "us-east-1"
+
+# If true, set certificate_arn to an ACM cert in the same region.
+enable_https    = false
+certificate_arn = null
+
+# If backend_image is empty, Terraform uses ECR repo + image_tag.
+backend_image       = ""
+image_tag           = "v1"
+build_backend_image = true
+
+task_cpu      = 1024
+task_memory   = 2048
+desired_count = 1
+
+redis_node_type = "cache.t4g.small"
+
+free_tier_limit                   = 500
+cluster_name_concurrency          = 4
+cluster_name_max_retries          = 5
+cluster_name_base_backoff_ms      = 400
+cluster_name_min_bookmarks_for_ai = 12
+
+# Required app secrets.
+supabase_url              = "https://YOUR_PROJECT.supabase.co"
+supabase_service_role_key = "YOUR_SUPABASE_SERVICE_ROLE_KEY"
+openai_api_key            = "YOUR_OPENAI_API_KEY"
+
+resource_tags = {
+  Environment = "prod"
+  App         = "link-loom"
+}

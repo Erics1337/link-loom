@@ -1,0 +1,17 @@
+.git
+.gitignore
+.vscode
+.pnpm-store
+.turbo
+node_modules
+**/node_modules
+**/.turbo
+
+apps/backend/dist
+apps/backend/*.log
+apps/backend/.env
+apps/backend/.env.local
+apps/backend/.env.production
+
+apps/extension/dist
+apps/web/.next
