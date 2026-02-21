@@ -7,9 +7,9 @@ Link Loom is an intelligent bookmark organization tool that uses AI to cluster a
 - **AI-Powered Clustering**: Automatically analyzes your bookmarks and groups them by topic using K-Means clustering and OpenAI embeddings.
 - **Smart Organization**: Creates a logical folder structure for your links.
 - **Chrome Extension**: A user-friendly browser extension to manage the weaving process.
-    - **Visual Progress**: Real-time feedback on the organization process.
-    - **Preview**: View the proposed structure before applying changes.
-    - **Dark/Light Mode**: Premium design with frosted glass effects.
+  - **Visual Progress**: Real-time feedback on the organization process.
+  - **Preview**: View the proposed structure before applying changes.
+  - **Dark/Light Mode**: Premium design with frosted glass effects.
 - **Modern Stack**: Built with a robust monorepo architecture.
 
 ## 🛠️ Tech Stack
@@ -17,11 +17,13 @@ Link Loom is an intelligent bookmark organization tool that uses AI to cluster a
 This project is a monorepo managed by [Turborepo](https://turbo.build/repo) and [pnpm](https://pnpm.io/).
 
 ### Apps
+
 - **`apps/extension`**: Chrome Extension built with React, Vite, and CRXJS.
 - **`apps/backend`**: Fastify API for bookmark ingestion, embedding (OpenAI), and clustering (ml-kmeans). Uses Supabase (Postgres) for storage and BullMQ/Redis for job queues.
 - **`apps/web`**: Next.js application (Marketing/Dashboard).
 
 ### Packages
+
 - **`packages/ui`**: Shared UI components.
 - **`packages/tsconfig`**: Shared TypeScript configurations.
 - **`packages/shared`**: Shared utilities and types.
@@ -37,21 +39,23 @@ This project is a monorepo managed by [Turborepo](https://turbo.build/repo) and 
 ## 🏁 Getting Started
 
 1.  **Clone the repository**
+
     ```bash
     git clone <repo-url>
     cd link-loom
     ```
 
 2.  **Install dependencies**
+
     ```bash
     pnpm install
     ```
 
 3.  **Environment Setup**
     - Copy `.env.example` to `.env` in `apps/backend` and configure your keys:
-        - `DATABASE_URL` (Supabase)
-        - `OPENAI_API_KEY`
-        - `REDIS_URL`
+      - `DATABASE_URL` (Supabase)
+      - `OPENAI_API_KEY`
+      - `REDIS_URL`
 
 4.  **Start Infrastructure**
     - Ensure Docker is running.
@@ -59,23 +63,40 @@ This project is a monorepo managed by [Turborepo](https://turbo.build/repo) and 
     - Start Redis (if not using Supabase's or external): `docker-compose up -d` (if applicable)
 
 5.  **Run Development Server**
+
     ```bash
     pnpm dev
     ```
+
     This command starts all applications in parallel using Turbo.
+
+6.  **Stripe Local Development**
+    To test premium features locally, you need to forward Stripe webhooks to your local environment.
+    - Install the [Stripe CLI](https://docs.stripe.com/stripe-cli).
+    - Log in to your Stripe account:
+      ```bash
+      stripe login
+      ```
+    - Start forwarding webhook events to your local Next.js API:
+      ```bash
+      stripe listen --forward-to localhost:3000/api/webhooks/stripe
+      ```
+    - Copy the generated webhook secret (`whsec_...`) and add it to your `apps/web/.env.local` as `STRIPE_WEBHOOK_SECRET`.
 
 ## 🧩 Extension Development
 
 To load the extension in Chrome:
 
 1.  Run the build or dev command:
+
     ```bash
     # For watching changes
     pnpm dev
-    
+
     # OR build once
     pnpm build
     ```
+
 2.  Open Chrome and navigate to `chrome://extensions/`.
 3.  Enable **Developer mode** (top right).
 4.  Click **Load unpacked**.
