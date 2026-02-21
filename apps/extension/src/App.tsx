@@ -133,7 +133,7 @@ const App = () => {
                  <div className="flex flex-col items-center justify-center h-full p-6 text-center">
                     <h1 className="text-2xl font-bold mb-4 text-red-500">Device Limit Reached</h1>
                     <p className="text-secondary mb-8">{errorMsg || 'You have exceeded the maximum number of devices.'}</p>
-                    <a href="http://localhost:3000/dashboard/devices" target="_blank" rel="noreferrer" className="btn btn-primary">
+                    <a href={`${WEB_APP_URL}/dashboard/devices`} target="_blank" rel="noreferrer" className="btn btn-primary">
                         Manage Devices
                     </a>
                 </div>
@@ -293,7 +293,7 @@ const App = () => {
                         </p>
                         {isLimitError && (
                             <a
-                                href="http://localhost:3000/dashboard/billing"
+                                href={`${WEB_APP_URL}/dashboard/billing`}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="btn btn-primary mb-3"

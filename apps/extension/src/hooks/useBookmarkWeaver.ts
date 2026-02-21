@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { BookmarkNode } from '../components/BookmarkTree';
 import { ClusteringSettings, normalizeClusteringSettings } from '../lib/clusteringSettings';
 
-const BACKEND_URL = 'http://localhost:3333';
+const BACKEND_URL = ((import.meta.env.VITE_BACKEND_URL as string | undefined) || 'http://localhost:3333').replace(/\/$/, '');
 const BACKEND_UNAVAILABLE_MESSAGE = `Cannot reach Link Loom backend at ${BACKEND_URL}. Start the backend dev server and try again.`;
 const DEAD_LINK_SCAN_REQUEST_TIMEOUT_MS = 60000;
 const AUTO_RENAME_REQUEST_TIMEOUT_MS = 120000;
