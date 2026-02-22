@@ -24,9 +24,9 @@
     "host_permissions": [
         "http://127.0.0.1:54321/*",
         "http://localhost:3000/*",
-        "http://localhost:3333/*",
-        "https://*.elb.amazonaws.com/*",
-        "https://*.supabase.co/*"
+        "https://otmhunugbmpcllxmmtby.supabase.co/*",
+        "https://linkloom.org/*",
+        "https://*.linkloom.org/*"
     ],
     "background": {
         "service_worker": "src/background.ts",
