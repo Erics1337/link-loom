@@ -184,14 +184,119 @@ export default function Home() {
                         </div>
                     </div>
                 </section>
+
+                {/* Business / Billing Information (public for payment processor review) */}
+                <section id="business-info" className="py-24 sm:py-32 bg-black/50 border-y border-white/10">
+                    <div className="mx-auto max-w-7xl px-6 lg:px-8">
+                        <div className="mx-auto max-w-3xl">
+                            <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
+                                Business and Billing Information
+                            </h2>
+                            <p className="mt-6 text-lg leading-8 text-gray-400">
+                                Link Loom is a software-only product (Chrome extension + web app) for AI-powered bookmark
+                                organization, semantic search, tagging, and cleanup. Payments are processed through Stripe
+                                for digital access to premium features only.
+                            </p>
+                        </div>
+
+                        <div className="mx-auto mt-12 grid max-w-5xl grid-cols-1 gap-6 md:grid-cols-2">
+                            <div className="rounded-2xl border border-white/10 bg-gray-900/70 p-6">
+                                <h3 className="text-lg font-semibold text-white">Products and Target Customers</h3>
+                                <p className="mt-3 text-sm leading-6 text-gray-300">
+                                    Link Loom is a productivity SaaS for individual end users and professionals who want to
+                                    organize and search browser bookmarks more effectively.
+                                </p>
+                                <p className="mt-3 text-sm leading-6 text-gray-300">
+                                    We sell digital access to premium software features such as unlimited bookmarks,
+                                    advanced AI organization, and priority support.
+                                </p>
+                            </div>
+
+                            <div className="rounded-2xl border border-white/10 bg-gray-900/70 p-6">
+                                <h3 className="text-lg font-semibold text-white">Pricing (USD)</h3>
+                                <p className="mt-3 text-sm leading-6 text-gray-300">
+                                    Free plan available (up to 500 bookmarks).
+                                </p>
+                                <p className="mt-2 text-sm leading-6 text-gray-300">
+                                    Pro Membership: <span className="font-semibold text-white">$10/month</span>.
+                                </p>
+                                <p className="mt-2 text-sm leading-6 text-gray-300">
+                                    Additional plan offers (including one-time promotions) may be shown in-app or at
+                                    checkout. Stripe provides secure payment processing, receipts, and invoices.
+                                </p>
+                            </div>
+
+                            <div className="rounded-2xl border border-white/10 bg-gray-900/70 p-6">
+                                <h3 className="text-lg font-semibold text-white">Delivery and Fulfillment</h3>
+                                <p className="mt-3 text-sm leading-6 text-gray-300">
+                                    Delivery is digital and immediate after successful payment. Customers receive access to
+                                    premium features through their Link Loom account.
+                                </p>
+                                <p className="mt-2 text-sm leading-6 text-gray-300">
+                                    We do not sell or ship physical goods. No inventory or shipping is involved.
+                                </p>
+                            </div>
+
+                            <div className="rounded-2xl border border-white/10 bg-gray-900/70 p-6">
+                                <h3 className="text-lg font-semibold text-white">Support and Contact</h3>
+                                <p className="mt-3 text-sm leading-6 text-gray-300">
+                                    Email support: <a className="text-blue-400 hover:text-blue-300" href="mailto:support@linkloom.org">support@linkloom.org</a>
+                                </p>
+                                <p className="mt-2 text-sm leading-6 text-gray-300">
+                                    For billing issues, cancellation requests, and refund questions, contact support and
+                                    include the email associated with your account.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="mx-auto mt-10 max-w-5xl rounded-2xl border border-white/10 bg-gray-900/50 p-6">
+                            <h3 className="text-lg font-semibold text-white">Policies</h3>
+                            <p className="mt-3 text-sm leading-6 text-gray-300">
+                                Review our public policies for terms of use, privacy practices, and refund/cancellation
+                                details.
+                            </p>
+                            <div className="mt-4 flex flex-wrap gap-3">
+                                <Link
+                                    href="/terms"
+                                    className="rounded-md border border-white/15 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10"
+                                >
+                                    Terms of Service
+                                </Link>
+                                <Link
+                                    href="/privacy"
+                                    className="rounded-md border border-white/15 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10"
+                                >
+                                    Privacy Policy
+                                </Link>
+                                <Link
+                                    href="/refund-policy"
+                                    className="rounded-md border border-white/15 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10"
+                                >
+                                    Refund and Cancellation Policy
+                                </Link>
+                            </div>
+                        </div>
+                    </div>
+                </section>
             </main>
 
             {/* Footer */}
             <footer className="border-t border-white/10 py-12 px-6 lg:px-8">
-                <div className="mx-auto max-w-7xl flex justify-between items-center">
+                <div className="mx-auto max-w-7xl flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center">
                     <p className="text-gray-500 text-sm">© 2024 Link Loom. All rights reserved.</p>
-                    <div className="flex gap-4">
-                        {/* Social links could go here */}
+                    <div className="flex flex-wrap gap-4 text-sm">
+                        <a href="mailto:support@linkloom.org" className="text-gray-400 hover:text-white transition-colors">
+                            support@linkloom.org
+                        </a>
+                        <Link href="/terms" className="text-gray-400 hover:text-white transition-colors">
+                            Terms
+                        </Link>
+                        <Link href="/privacy" className="text-gray-400 hover:text-white transition-colors">
+                            Privacy
+                        </Link>
+                        <Link href="/refund-policy" className="text-gray-400 hover:text-white transition-colors">
+                            Refunds
+                        </Link>
                     </div>
                 </div>
             </footer>
