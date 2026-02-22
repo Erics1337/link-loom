@@ -13,6 +13,8 @@ backend/dist
 
 .env.local
 
+linkloom-extension.zip
+
 # Terraform
 .terraform/
 *.tfstate
