@@ -1,5 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
-import { Link as LinkIcon, Search, Plus, Bookmark, FolderTree } from 'lucide-react'
+import { Link as LinkIcon, Search, Bookmark, FolderTree } from 'lucide-react'
+import { AddLinkModal } from '@/components/AddLinkModal'
 
 // Helper to format relative time
 function formatRelativeTime(dateString: string): string {
@@ -89,10 +90,7 @@ export default async function Dashboard() {
                             className="bg-gray-800 border border-gray-700 rounded-full pl-10 pr-4 py-1.5 text-sm focus:outline-none focus:border-blue-500 w-64 transition-colors"
                         />
                     </div>
-                    <button className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 transition-colors">
-                        <Plus className="w-4 h-4" />
-                        Add Link
-                    </button>
+                    <AddLinkModal />
                 </div>
             </header>
 

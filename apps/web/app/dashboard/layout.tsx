@@ -44,7 +44,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                         <LayoutDashboard className="w-5 h-5" />
                         Dashboard
                     </a>
-                    <a href="#" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors">
+                    <a href="/dashboard/links" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors">
                         <LinkIcon className="w-5 h-5" />
                         My Links
                     </a>
@@ -52,7 +52,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                         <Monitor className="w-5 h-5" />
                         Devices
                     </a>
-                    <a href="#" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors">
+                    <a href="/dashboard/settings" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors">
                         <Settings className="w-5 h-5" />
                         Settings
                     </a>
