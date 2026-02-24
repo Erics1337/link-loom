@@ -23,3 +23,8 @@ terraform.tfvars
 tfplan
 *.tfplan
 infra/terraform/terraform.tfvars
+
+# Testing
+playwright-report/
+test-results/
+.playwright/

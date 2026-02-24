@@ -120,6 +120,35 @@ link-loom/
 └── package.json    # Root Config
 ```
 
+## 🧪 Testing
+
+Link Loom uses a combination of Vitest (for backend unit tests) and Playwright (for frontend E2E tests).
+
+### Backend Tests
+
+The backend uses Vitest to test the AI background workers (ingestion, enrichment, embedding, and clustering queues).
+
+```bash
+cd apps/backend
+pnpm run test
+```
+
+### Web E2E Tests
+
+The web application uses Playwright to perform end-to-end tests on critical user paths like the marketing pages.
+
+```bash
+cd apps/web
+pnpm run test:e2e
+```
+
+To run the Playwright tests in interactive UI mode:
+
+```bash
+cd apps/web
+pnpm run test:e2e:ui
+```
+
 ## 📜 Scripts
 
 - `pnpm build`: Build all apps and packages.

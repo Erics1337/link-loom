@@ -6,7 +6,9 @@
         "dev": "next dev",
         "build": "next build",
         "start": "next start",
-        "lint": "next lint"
+        "lint": "next lint",
+        "test:e2e": "playwright test",
+        "test:e2e:ui": "playwright test --ui"
     },
     "dependencies": {
         "@stripe/stripe-js": "^8.5.3",
@@ -23,8 +25,9 @@
     },
     "devDependencies": {
         "@link-loom/tsconfig": "workspace:*",
+        "@playwright/test": "^1.58.2",
         "@tailwindcss/postcss": "^4.1.17",
-        "@types/node": "^20.8.10",
+        "@types/node": "^20.19.25",
         "@types/react": "^18.2.15",
         "@types/react-dom": "^18.2.7",
         "autoprefixer": "^10.4.22",
