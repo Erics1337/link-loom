@@ -13,7 +13,7 @@ backend/dist
 
 .env.local
 
-linkloom-extension.zip
+*.zip
 
 # Terraform
 .terraform/
