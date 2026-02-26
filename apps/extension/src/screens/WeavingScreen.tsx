@@ -1,6 +1,7 @@
 import React from 'react';
 import { ProgressBar } from '../components/ProgressBar';
 import { PopOutButton } from '../components/PopOutButton';
+import { useVersion } from '../hooks/useVersion';
 
 interface WeavingScreenProps {
     progress: number;
@@ -15,10 +16,11 @@ export const WeavingScreen: React.FC<WeavingScreenProps> = ({
     statusDetail,
     onCancel
 }) => {
+    const version = useVersion();
     return (
         <div className="flex flex-col items-center justify-center h-full p-6 text-center relative">
             <div className="absolute top-4 right-4 flex items-center gap-2">
-                <span className="text-secondary text-xs">v 0.1</span>
+                <span className="text-secondary text-xs">v {version}</span>
                 <PopOutButton />
             </div>
 

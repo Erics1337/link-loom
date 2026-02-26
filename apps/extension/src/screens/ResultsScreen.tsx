@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BookmarkTree, BookmarkNode } from '../components/BookmarkTree';
 import { PopOutButton } from '../components/PopOutButton';
+import { useVersion } from '../hooks/useVersion';
 
 interface ResultsScreenProps {
     clusters: BookmarkNode[];
@@ -34,6 +35,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     onApply,
     onBack
 }) => {
+    const version = useVersion();
     const [expandAll, setExpandAll] = useState(false);
     const totalBookmarks = React.useMemo(() => {
         const countLeaves = (nodes: BookmarkNode[]): number =>
@@ -59,7 +61,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                     </p>
                 </div>
                 <div className="flex items-center gap-2">
-                    <span className="badge">v 0.1</span>
+                    <span className="badge">v {version}</span>
                     <PopOutButton />
                 </div>
             </div>
