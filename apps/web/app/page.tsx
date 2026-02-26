@@ -42,7 +42,7 @@ export default function Home() {
                                         src="/logo.png"
                                         height="1000"
                                         width="1000"
-                                        className="h-60 w-auto object-contain rounded-xl group-hover/card:shadow-xl"
+                                        className="h-60 w-auto object-contain transition-all duration-300 group-hover/card:drop-shadow-2xl"
                                         alt="Link Loom Logo"
                                     />
                                 </CardItem>
