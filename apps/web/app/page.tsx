@@ -284,19 +284,41 @@ export default function Home() {
             <footer className="border-t border-white/10 py-12 px-6 lg:px-8">
                 <div className="mx-auto max-w-7xl flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center">
                     <p className="text-gray-500 text-sm">© 2024 Link Loom. All rights reserved.</p>
-                    <div className="flex flex-wrap gap-4 text-sm">
-                        <a href="mailto:support@linkloom.org" className="text-gray-400 hover:text-white transition-colors">
-                            support@linkloom.org
-                        </a>
-                        <Link href="/terms" className="text-gray-400 hover:text-white transition-colors">
-                            Terms
-                        </Link>
-                        <Link href="/privacy" className="text-gray-400 hover:text-white transition-colors">
-                            Privacy
-                        </Link>
-                        <Link href="/refund-policy" className="text-gray-400 hover:text-white transition-colors">
-                            Refunds
-                        </Link>
+                    <div className="flex flex-col gap-3 sm:items-end">
+                        <div className="flex flex-wrap gap-4 text-sm">
+                            <a href="mailto:support@linkloom.org" className="text-gray-400 hover:text-white transition-colors">
+                                support@linkloom.org
+                            </a>
+                            <Link href="/terms" className="text-gray-400 hover:text-white transition-colors">
+                                Terms
+                            </Link>
+                            <Link href="/privacy" className="text-gray-400 hover:text-white transition-colors">
+                                Privacy
+                            </Link>
+                            <Link href="/refund-policy" className="text-gray-400 hover:text-white transition-colors">
+                                Refunds
+                            </Link>
+                        </div>
+                        <div className="inline-flex items-center gap-2 rounded-md bg-white/90 px-4 py-2 text-slate-500">
+                            <span className="text-sm leading-none">Made with</span>
+                            <span className="text-xl leading-none text-red-500" aria-hidden="true">&#10084;</span>
+                            <span className="text-sm leading-none">by</span>
+                            <Image
+                                src="/crest-logo.png"
+                                alt="Crest Code Logo"
+                                width={20}
+                                height={20}
+                                className="h-5 w-5 object-contain"
+                            />
+                            <a
+                                href="https://crestcodecreative.com"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm leading-none underline text-slate-600 hover:text-slate-800 transition-colors"
+                            >
+                                Crest Code
+                            </a>
+                        </div>
                     </div>
                 </div>
             </footer>

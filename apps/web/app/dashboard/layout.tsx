@@ -1,6 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
-import { LayoutDashboard, Link as LinkIcon, Settings, CreditCard, LogOut, Monitor } from 'lucide-react'
+import { LayoutDashboard, Link as LinkIcon, Settings, CreditCard, LogOut, Monitor, History } from 'lucide-react'
 import Image from 'next/image'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -47,6 +47,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
                     <a href="/dashboard/links" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors">
                         <LinkIcon className="w-5 h-5" />
                         My Links
+                    </a>
+                    <a href="/dashboard/backups" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors">
+                        <History className="w-5 h-5" />
+                        Structure Backups
                     </a>
                     <a href="/dashboard/devices" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors">
                         <Monitor className="w-5 h-5" />
