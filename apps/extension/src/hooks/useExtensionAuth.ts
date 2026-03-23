@@ -139,7 +139,7 @@ export const useExtensionAuth = () => {
         const payload = await response.json();
 
         if (!response.ok) {
-            throw new Error(payload.error_description || payload.msg || 'Invalid email or password.');
+            throw new Error(payload.message || payload.error_description || payload.msg || 'Invalid email or password.');
         }
 
         const nextSession: StoredSession = {
@@ -179,7 +179,7 @@ export const useExtensionAuth = () => {
 
         const payload = await response.json();
         if (!response.ok) {
-            throw new Error(payload.msg || payload.error_description || 'Failed to create account.');
+            throw new Error(payload.message || payload.msg || payload.error_description || 'Failed to create account.');
         }
 
         const createdUser = payload.user as { id?: string; email?: string } | undefined;

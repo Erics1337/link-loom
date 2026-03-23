@@ -3,7 +3,7 @@ import { Settings } from 'lucide-react';
 import { PopOutButton } from '../components/PopOutButton';
 import { useVersion } from '../hooks/useVersion';
 
-const WEB_APP_URL = (import.meta.env.VITE_WEB_APP_URL as string | undefined) || 'http://localhost:3000';
+const WEB_APP_URL = (import.meta.env.VITE_WEB_APP_URL as string | undefined) || 'https://linkloom.org';
 
 interface StartScreenProps {
     onStart: () => void;
@@ -14,6 +14,8 @@ interface StartScreenProps {
     isLoggedIn: boolean;
     isPremium: boolean;
     accountEmail?: string | null;
+    hasCachedResults: boolean;
+    onResume: () => void;
 }
 
 export const StartScreen: React.FC<StartScreenProps> = ({
@@ -24,7 +26,9 @@ export const StartScreen: React.FC<StartScreenProps> = ({
     onSignOut,
     isLoggedIn,
     isPremium,
-    accountEmail
+    accountEmail,
+    hasCachedResults,
+    onResume
 }) => {
     const version = useVersion();
     const onUpgrade = () => {
@@ -47,21 +51,31 @@ export const StartScreen: React.FC<StartScreenProps> = ({
                     Organize your bookmarks<br />with AI clustering.
                 </p>
 
-                <div className="flex items-center gap-2 w-full justify-center" style={{ maxWidth: '280px' }}>
-                    <button
-                        onClick={onStart}
-                        className="btn btn-primary flex-1 py-3 text-[15px] font-medium transition-transform active:scale-95 shadow-lg"
-                    >
-                        Organize Bookmarks
-                    </button>
-                    
-                    <button
-                        onClick={onOpenSettings}
-                        className="btn-icon h-[46px] w-[46px] flex items-center justify-center flex-shrink-0"
-                        title="Clustering Settings"
-                    >
-                        <Settings size={20} />
-                    </button>
+                <div className="flex flex-col items-center gap-2 w-full justify-center" style={{ maxWidth: '280px' }}>
+                    <div className="flex items-center gap-2 w-full">
+                        <button
+                            onClick={onStart}
+                            className="btn btn-primary flex-1 py-3 text-[15px] font-medium transition-transform active:scale-95 shadow-lg"
+                        >
+                            Organize Bookmarks
+                        </button>
+                        
+                        <button
+                            onClick={onOpenSettings}
+                            className="btn-icon h-[46px] w-[46px] flex items-center justify-center flex-shrink-0"
+                            title="Clustering Settings"
+                        >
+                            <Settings size={20} />
+                        </button>
+                    </div>
+                    {hasCachedResults && (
+                        <button
+                            onClick={onResume}
+                            className="btn btn-secondary w-full py-2.5 text-[15px] font-medium transition-transform active:scale-95 shadow-sm mt-1"
+                        >
+                            Resume Recent Analysis
+                        </button>
+                    )}
                 </div>
             </div>
 

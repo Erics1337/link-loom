@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Link Loom",
-    "version": "1.0.1",
+    "version": "1.0.3",
     "icons": {
         "16": "icons/icon-16.png",
         "32": "icons/icon-32.png",
@@ -22,11 +22,10 @@
         "storage"
     ],
     "host_permissions": [
-        "http://127.0.0.1:54321/*",
-        "http://localhost:3000/*",
         "https://otmhunugbmpcllxmmtby.supabase.co/*",
         "https://linkloom.org/*",
-        "https://*.linkloom.org/*"
+        "https://*.linkloom.org/*",
+        "http://link-loom-prod-alb-1191851194.us-east-1.elb.amazonaws.com/*"
     ],
     "background": {
         "service_worker": "src/background.ts",

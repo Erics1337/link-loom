@@ -1,8 +1,10 @@
 
 import { useState, useEffect } from 'react';
 
-const BACKEND_URL = ((import.meta.env.VITE_BACKEND_URL as string | undefined) || 'http://localhost:3333').replace(/\/$/, '');
-const BACKEND_UNAVAILABLE_MESSAGE = `Cannot reach Link Loom backend at ${BACKEND_URL}.`;
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+const BACKEND_UNAVAILABLE_MESSAGE = BACKEND_URL
+    ? `Cannot reach Link Loom backend at ${BACKEND_URL}.`
+    : 'Link Loom backend is not configured. Please reinstall the extension.';
 
 export type DeviceAuthStatus = 'checking' | 'authorized' | 'limit_reached' | 'error';
 

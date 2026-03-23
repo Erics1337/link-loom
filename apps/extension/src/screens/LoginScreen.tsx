@@ -105,21 +105,35 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
                 {mode === 'sign-up' && (
                     <div className="flex flex-col gap-2">
-                        <label className="text-xs text-secondary">Choose a plan</label>
-                        <button
-                            type="button"
+                        <label className="text-xs text-secondary mb-1">Choose a plan</label>
+                        <div
                             onClick={() => setPlan('free')}
-                            className={`btn ${plan === 'free' ? 'btn-primary' : 'btn-secondary'}`}
+                            className="flex items-center gap-3 p-3 rounded-md border cursor-pointer transition-colors"
+                            style={{
+                                borderColor: plan === 'free' ? 'var(--primary-color)' : 'rgba(255,255,255,0.1)',
+                                backgroundColor: plan === 'free' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255,255,255,0.02)'
+                            }}
                         >
-                            Free Plan: Up to 500 bookmarks
-                        </button>
-                        <button
-                            type="button"
+                            <input type="radio" checked={plan === 'free'} readOnly className="cursor-pointer" />
+                            <div className="flex flex-col">
+                                <span className="text-sm font-medium">Free Plan</span>
+                                <span className="text-xs text-secondary">Up to 500 bookmarks</span>
+                            </div>
+                        </div>
+                        <div
                             onClick={() => setPlan('paid')}
-                            className={`btn ${plan === 'paid' ? 'btn-primary' : 'btn-secondary'}`}
+                            className="flex items-center gap-3 p-3 rounded-md border cursor-pointer transition-colors"
+                            style={{
+                                borderColor: plan === 'paid' ? 'var(--primary-color)' : 'rgba(255,255,255,0.1)',
+                                backgroundColor: plan === 'paid' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(255,255,255,0.02)'
+                            }}
                         >
-                            Pro Subscription: Unlimited bookmarks
-                        </button>
+                            <input type="radio" checked={plan === 'paid'} readOnly className="cursor-pointer" />
+                            <div className="flex flex-col">
+                                <span className="text-sm font-medium">Pro Subscription</span>
+                                <span className="text-xs text-secondary">Unlimited bookmarks</span>
+                            </div>
+                        </div>
                     </div>
                 )}
 

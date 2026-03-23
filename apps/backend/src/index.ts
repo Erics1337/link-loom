@@ -38,9 +38,9 @@ const DEFAULT_FREE_TIER_LIMIT = 500;
 const parsedFreeTierLimit = Number.parseInt(process.env.FREE_TIER_LIMIT ?? `${DEFAULT_FREE_TIER_LIMIT}`, 10);
 const FREE_TIER_LIMIT = Number.isNaN(parsedFreeTierLimit) ? DEFAULT_FREE_TIER_LIMIT : parsedFreeTierLimit;
 const SUPABASE_PAGE_SIZE = 1000;
-const DEAD_LINK_TIMEOUT_MS = 4500;
+const DEAD_LINK_TIMEOUT_MS = 3000;
+const DEAD_LINK_SCAN_DEADLINE_MS = 30_000;
 const DEAD_LINK_STATUSES = new Set([404, 410, 451]);
-const FALLBACK_TO_GET_STATUSES = new Set([405, 501]);
 const DEAD_LINK_NETWORK_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED']);
 
 const fetchAllPages = async <T>(
@@ -105,12 +105,10 @@ const isDeadBookmarkUrl = async (rawUrl: string) => {
     }
 
     try {
-        const headResponse = await fetchWithTimeout(url.toString(), 'HEAD');
-        if (FALLBACK_TO_GET_STATUSES.has(headResponse.status)) {
-            const getResponse = await fetchWithTimeout(url.toString(), 'GET');
-            return DEAD_LINK_STATUSES.has(getResponse.status);
-        }
-        return DEAD_LINK_STATUSES.has(headResponse.status);
+        const response = await fetchWithTimeout(url.toString(), 'HEAD');
+        // Any response (even 405 "method not allowed") means the server is alive.
+        // Only certain statuses indicate the *page* is gone.
+        return DEAD_LINK_STATUSES.has(response.status);
     } catch (error: any) {
         const code = error?.cause?.code ?? error?.code;
         if (code && DEAD_LINK_NETWORK_CODES.has(String(code))) {
@@ -170,25 +168,36 @@ const start = async () => {
             const isPremium = user?.is_premium ?? false;
 
             if (!isPremium) {
-                // Count existing bookmarks
-                const { count: existingCount } = await supabase
-                    .from('bookmarks')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('user_id', userId);
+                const incomingCount = bookmarks?.length ?? 0;
 
-                const totalAfterIngest = (existingCount ?? 0) + (bookmarks?.length ?? 0);
+                if (incomingCount > FREE_TIER_LIMIT) {
+                    // Count existing so we can give the user an informative message
+                    const { count: existingCount } = await supabase
+                        .from('bookmarks')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('user_id', userId);
 
-                if (totalAfterIngest > FREE_TIER_LIMIT) {
-                    console.log(`[INGEST] User ${userId} exceeded free tier limit: ${totalAfterIngest}/${FREE_TIER_LIMIT}`);
+                    const currentCount = existingCount ?? 0;
+                    console.log(`[INGEST] User ${userId} exceeded free tier limit: incoming ${incomingCount} > ${FREE_TIER_LIMIT}`);
                     return reply.code(402).send({
                         error: 'Bookmark limit exceeded',
-                        message: `Free tier allows up to ${FREE_TIER_LIMIT} bookmarks stored in Link Loom. You currently have ${existingCount ?? 0} stored, and this Chrome import contains ${bookmarks?.length ?? 0}.`,
+                        message: `Free tier allows up to ${FREE_TIER_LIMIT} bookmarks stored in Link Loom. You currently have ${currentCount} stored, and this Chrome import contains ${incomingCount}.`,
                         limit: FREE_TIER_LIMIT,
-                        current: existingCount ?? 0,
-                        attempted: bookmarks?.length ?? 0,
+                        current: currentCount,
+                        attempted: incomingCount,
                         upgradeUrl: '/dashboard/billing'
                     });
                 }
+            }
+
+            // Clear previous bookmarks so old ones don't artificially inflate the progress total
+            const { error: deleteBookmarksError } = await supabase
+                .from('bookmarks')
+                .delete()
+                .eq('user_id', userId);
+            
+            if (deleteBookmarksError) {
+                console.warn(`[INGEST] Warning: Failed to clear old bookmarks for user ${userId}`, deleteBookmarksError);
             }
 
             // Clear previous clusters to prevent race condition where /status reports "Done" due to old data
@@ -429,10 +438,10 @@ const start = async () => {
                 .filter((item: any) => item.chromeId && item.url);
 
             if (bookmarks.length === 0) {
-                return { scanned: 0, dead: 0, deadChromeIds: [] };
+                return { scanned: 0, dead: 0, skipped: 0, deadChromeIds: [] };
             }
 
-            // Check each unique URL once, then fan out to matching bookmark IDs.
+            // Deduplicate: check each unique URL once, then fan out to matching bookmark IDs.
             const chromeIdsByUrl = new Map<string, string[]>();
             for (const bookmark of bookmarks) {
                 const key = bookmark.url.trim();
@@ -445,22 +454,43 @@ const start = async () => {
                 }
             }
 
-            const deadUrlSet = new Set<string>();
-            const deadLinkCheckLimit = pLimit(25);
+            const uniqueUrls = Array.from(chromeIdsByUrl.keys());
+            console.log(`[DEAD_LINKS] Checking ${uniqueUrls.length} unique URLs (from ${bookmarks.length} bookmarks)`);
 
-            await Promise.all(
-                Array.from(chromeIdsByUrl.keys()).map((url) =>
-                    deadLinkCheckLimit(async () => {
+            const deadUrlSet = new Set<string>();
+            const deadLinkCheckLimit = pLimit(50);
+            let deadlinePassed = false;
+            let scannedCount = 0;
+
+            // Set a hard deadline so we return partial results in a reasonable time.
+            const deadlineTimer = setTimeout(() => {
+                deadlinePassed = true;
+            }, DEAD_LINK_SCAN_DEADLINE_MS);
+
+            const promises = uniqueUrls.map((url) =>
+                deadLinkCheckLimit(async () => {
+                    // Skip URLs that haven't started checking yet if deadline passed.
+                    if (deadlinePassed) return;
+                    try {
                         const isDead = await isDeadBookmarkUrl(url);
                         if (isDead) deadUrlSet.add(url);
-                    })
-                )
+                    } catch {
+                        // Swallow per-URL errors
+                    }
+                    scannedCount++;
+                })
             );
 
+            await Promise.all(promises);
+            clearTimeout(deadlineTimer);
+
+            const skipped = uniqueUrls.length - scannedCount;
             const deadChromeIds = Array.from(deadUrlSet).flatMap((url) => chromeIdsByUrl.get(url) ?? []);
+            console.log(`[DEAD_LINKS] Done: scanned=${scannedCount}, dead=${deadChromeIds.length}, skipped=${skipped}`);
             return {
-                scanned: chromeIdsByUrl.size,
+                scanned: scannedCount,
                 dead: deadChromeIds.length,
+                skipped,
                 deadChromeIds
             };
         });
@@ -621,6 +651,97 @@ const start = async () => {
             }
 
             return { status: 'cancelled', jobsRemoved: removedCount, failedToRemove, clearAllQueues };
+        });
+
+        fastify.get('/backups/:userId', async (req: any, reply) => {
+            const { userId } = req.params;
+            try {
+                // Fetch snapshots with counts
+                const { data: snapshots, error } = await supabase
+                    .from('structure_snapshots')
+                    .select(`
+                        id,
+                        name,
+                        created_at,
+                        snapshot_clusters (
+                            id,
+                            snapshot_assignments (count)
+                        )
+                    `)
+                    .eq('user_id', userId)
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+
+                // Format to match expected extension type
+                const formatted = (snapshots || []).map((s: any) => {
+                    const folders = s.snapshot_clusters?.length || 0;
+                    const bookmarks = s.snapshot_clusters?.reduce((acc: number, cluster: any) => {
+                        return acc + (cluster.snapshot_assignments?.[0]?.count || 0);
+                    }, 0) || 0;
+
+                    return {
+                        id: s.id,
+                        name: s.name,
+                        createdAt: s.created_at,
+                        summary: { folders, bookmarks }
+                    };
+                });
+
+                return { backups: formatted };
+            } catch (err: any) {
+                console.error('[BACKUPS] Fetch error:', err);
+                return reply.code(500).send({ error: 'Failed to load backups' });
+            }
+        });
+
+        fastify.post('/backups/:userId', async (req: any, reply) => {
+            const { userId } = req.params;
+            const { name } = req.body;
+            try {
+                const { data: snapshotId, error } = await supabase.rpc('create_structure_snapshot', {
+                    p_user_id: userId,
+                    p_snapshot_name: name || `Backup ${new Date().toLocaleDateString()}`
+                });
+
+                if (error) throw error;
+                return { status: 'created', snapshotId };
+            } catch (err: any) {
+                console.error('[BACKUPS] Create error:', err);
+                return reply.code(500).send({ error: 'Failed to create backup' });
+            }
+        });
+
+        fastify.post('/backups/:userId/:snapshotId/restore', async (req: any, reply) => {
+            const { userId, snapshotId } = req.params;
+            try {
+                const { error } = await supabase.rpc('restore_structure_snapshot', {
+                    p_user_id: userId,
+                    p_snapshot_id: snapshotId
+                });
+
+                if (error) throw error;
+                return { status: 'restored' };
+            } catch (err: any) {
+                console.error('[BACKUPS] Restore error:', err);
+                return reply.code(500).send({ error: 'Failed to restore backup' });
+            }
+        });
+
+        fastify.delete('/backups/:userId/:snapshotId', async (req: any, reply) => {
+            const { snapshotId } = req.params;
+            try {
+                const { error } = await supabase
+                    .from('structure_snapshots')
+                    .delete()
+                    .eq('id', snapshotId);
+
+                if (error) throw error;
+                return { status: 'deleted' };
+            } catch (err: any) {
+                console.error('[BACKUPS] Delete error:', err);
+                return reply.code(500).send({ error: 'Failed to delete backup' });
+            }
         });
 
         fastify.post('/search', async (req: any, reply) => {

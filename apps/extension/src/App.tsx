@@ -13,7 +13,7 @@ import { useExtensionAuth } from './hooks/useExtensionAuth';
 import { useTheme } from './hooks/useTheme';
 import './styles/global.css';
 
-const WEB_APP_URL = (import.meta.env.VITE_WEB_APP_URL as string | undefined) || 'http://localhost:3000';
+const WEB_APP_URL = (import.meta.env.VITE_WEB_APP_URL as string | undefined) || 'https://linkloom.org';
 const STRIPE_PRO_PRICE_ID = import.meta.env.VITE_STRIPE_PRICE_ID_PRO as string | undefined;
 
 const App = () => {
@@ -21,6 +21,11 @@ const App = () => {
     const { settings: clusteringSettings, updateSettings: updateClusteringSettings } = useClusteringSettings();
     const {
         status,
+        weavingPhase,
+        limitExceededInfo,
+        hasCachedResults,
+        resumeWeavingSession,
+        continueWithLimitedBookmarks,
         progress,
         clusters,
         stats,
@@ -35,6 +40,7 @@ const App = () => {
         isAutoRenaming,
         deleteAllDuplicates,
         deleteAllDeadLinks,
+        scanDeadLinks,
         isDeletingDuplicates,
         isDeletingDeadLinks,
         isScanningDeadLinks,
@@ -187,6 +193,8 @@ const App = () => {
                         isLoggedIn={Boolean(authUser)}
                         isPremium={Boolean(authUser && isPremium)}
                         accountEmail={authUser?.email}
+                        hasCachedResults={hasCachedResults}
+                        onResume={resumeWeavingSession}
                     />
                 );
             case 'weaving':
@@ -198,7 +206,12 @@ const App = () => {
                 const safeEmbedded = Math.min(progress.embedded || 0, totalBookmarks);
                 const safeAssigned = Math.min(progress.assigned || 0, totalBookmarks);
 
-                if (progress.isIngesting && progress.assigned === 0 && progress.clusters === 0) {
+                // Backup phase — show before any processing starts
+                if (weavingPhase === 'backup') {
+                    progressPercent = 3;
+                    statusMessage = "Saving a backup of your bookmarks...";
+                    statusDetail = "A local backup is being saved before organizing begins.";
+                } else if (progress.isIngesting && progress.assigned === 0 && progress.clusters === 0) {
                     const ingestTotal = Math.max(progress.ingestTotal || progress.total || 0, 1);
                     const ingestProcessed = Math.min(progress.ingestProcessed || 0, ingestTotal);
                     progressPercent = Math.max(8, Math.min((ingestProcessed / ingestTotal) * 45, 45));
@@ -266,6 +279,7 @@ const App = () => {
                         onOpenSettings={() => setView('settings')}
                         onDeleteDuplicates={deleteAllDuplicates}
                         onDeleteDeadLinks={deleteAllDeadLinks}
+                        onScanDeadLinks={scanDeadLinks}
                         isDeletingDuplicates={isDeletingDuplicates}
                         isDeletingDeadLinks={isDeletingDeadLinks}
                         isScanningDeadLinks={isScanningDeadLinks}
@@ -303,6 +317,44 @@ const App = () => {
                         )}
                         <button onClick={() => setStatus('idle')} className="btn">
                             Try Again
+                        </button>
+                    </div>
+                );
+            }
+            case 'limit_exceeded': {
+                const info = limitExceededInfo;
+                const limit = info?.limit ?? 500;
+                const total = info?.total ?? 0;
+                const extra = total - limit;
+                return (
+                    <div className="flex flex-col items-center justify-center h-full p-6 text-center">
+                        <div className="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center mb-4">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400">
+                                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                                <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                            </svg>
+                        </div>
+                        <h1 className="text-xl font-bold mb-2">Too many bookmarks</h1>
+                        <p className="text-secondary text-sm mb-6 max-w-[280px]">
+                            You have <strong className="text-white">{total.toLocaleString()}</strong> bookmarks, but the free tier supports up to <strong className="text-white">{limit.toLocaleString()}</strong>.
+                            Only the first <strong className="text-white">{limit.toLocaleString()}</strong> bookmarks will be organized right now. The remaining <strong className="text-white">{extra.toLocaleString()}</strong> won&apos;t be touched.
+                        </p>
+                        <button
+                            onClick={continueWithLimitedBookmarks}
+                            className="btn btn-primary w-full mb-3"
+                        >
+                            Organize first {limit.toLocaleString()} bookmarks
+                        </button>
+                        <a
+                            href={`${WEB_APP_URL}/dashboard/billing`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn w-full mb-3"
+                        >
+                            Upgrade to Pro — unlimited bookmarks
+                        </a>
+                        <button onClick={() => setStatus('idle')} className="text-sm text-secondary hover:text-white transition-colors">
+                            Cancel
                         </button>
                     </div>
                 );

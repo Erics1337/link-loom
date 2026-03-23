@@ -14,6 +14,7 @@ interface ResultsScreenProps {
     onOpenSettings: () => void;
     onDeleteDuplicates: () => Promise<void> | void;
     onDeleteDeadLinks: () => Promise<void> | void;
+    onScanDeadLinks: () => Promise<string[]> | void;
     isDeletingDuplicates: boolean;
     isDeletingDeadLinks: boolean;
     isScanningDeadLinks: boolean;
@@ -29,6 +30,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     onOpenSettings,
     onDeleteDuplicates,
     onDeleteDeadLinks,
+    onScanDeadLinks,
     isDeletingDuplicates,
     isDeletingDeadLinks,
     isScanningDeadLinks,
@@ -37,14 +39,32 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 }) => {
     const version = useVersion();
     const [expandAll, setExpandAll] = useState(false);
-    const totalBookmarks = React.useMemo(() => {
-        const countLeaves = (nodes: BookmarkNode[]): number =>
-            nodes.reduce((sum, node) => {
+    const { organizedCount, totalBookmarks } = React.useMemo(() => {
+        let orgCount = 0;
+        let totalCount = 0;
+        let foundSeparator = false;
+
+        const countLeaves = (nodes: BookmarkNode[]): number => {
+            return nodes.reduce((sum, node) => {
+                if (node.isSeparator) return sum;
                 if (!node.children || node.children.length === 0) return sum + (node.url ? 1 : 0);
                 return sum + countLeaves(node.children);
             }, 0);
+        };
 
-        return countLeaves(clusters);
+        for (const node of clusters) {
+            if (node.isSeparator) {
+                foundSeparator = true;
+                continue;
+            }
+            const leaves = countLeaves([node]);
+            totalCount += leaves;
+            if (!foundSeparator) {
+                orgCount += leaves;
+            }
+        }
+
+        return { organizedCount: orgCount, totalBookmarks: totalCount };
     }, [clusters]);
 
     return (
@@ -98,25 +118,31 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
             <div className="flex flex-col gap-2">
                 <div className="stat-row">
                     <span className="text-secondary text-sm">Total bookmarks</span>
-                    <span className="badge-count">{totalBookmarks}</span>
+                    <span className="badge-count">
+                        {organizedCount < totalBookmarks ? `${organizedCount} organized (${totalBookmarks} total)` : totalBookmarks}
+                    </span>
                 </div>
                 <div className="stat-row">
                     <span className="text-secondary text-sm">Dead links</span>
                     <div className="flex items-center gap-2">
                         <span className="badge-count">{stats.deadLinks}</span>
-                        <button
-                            className="text-btn-danger"
-                            onClick={() => void onDeleteDeadLinks()}
-                            disabled={isDeletingDeadLinks || isScanningDeadLinks}
-                        >
-                            {isScanningDeadLinks
-                                ? 'Scanning...'
-                                : isDeletingDeadLinks
-                                    ? 'Deleting...'
-                                    : stats.deadLinks > 0
-                                        ? 'Delete all'
-                                        : 'Scan'}
-                        </button>
+                        {stats.deadLinks > 0 ? (
+                            <button
+                                className="text-btn-danger"
+                                onClick={() => void onDeleteDeadLinks()}
+                                disabled={isDeletingDeadLinks}
+                            >
+                                {isDeletingDeadLinks ? 'Deleting...' : 'Delete all'}
+                            </button>
+                        ) : (
+                            <button
+                                className="text-btn-danger"
+                                onClick={() => void onScanDeadLinks()}
+                                disabled={isScanningDeadLinks}
+                            >
+                                {isScanningDeadLinks ? 'Scanning...' : 'Scan'}
+                            </button>
+                        )}
                     </div>
                 </div>
                 <div className="stat-row">

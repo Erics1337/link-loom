@@ -7,6 +7,7 @@ export interface BookmarkNode {
     children?: BookmarkNode[];
     parentId?: string | null;
     icon?: string; // Optional icon URL or class
+    isSeparator?: boolean;
 }
 
 interface BookmarkTreeProps {
@@ -63,6 +64,16 @@ const TreeNode: React.FC<{ node: BookmarkNode; defaultExpanded: boolean; depth: 
     React.useEffect(() => {
         setIsExpanded(defaultExpanded);
     }, [defaultExpanded]);
+
+    if (node.isSeparator) {
+        return (
+            <div className="flex items-center gap-2 my-4 px-2 select-none opacity-80">
+                <div className="h-px bg-white/20 flex-1"></div>
+                <span className="text-xs font-semibold text-secondary uppercase tracking-widest">{node.title}</span>
+                <div className="h-px bg-white/20 flex-1"></div>
+            </div>
+        );
+    }
 
     const hasChildren = node.children && node.children.length > 0;
     const leftPadding = 6 + Math.min(depth, MAX_VISIBLE_DEPTH) * INDENT_STEP_PX;
