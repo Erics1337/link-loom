@@ -2,26 +2,34 @@ import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import { LayoutDashboard, Link as LinkIcon, Settings, CreditCard, LogOut, Monitor, History } from 'lucide-react'
 import Image from 'next/image'
+import { unstable_noStore as noStore } from 'next/cache'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+    noStore()
+
     const supabase = createClient()
 
     const {
-        data: { session },
-    } = await supabase.auth.getSession()
+        data: { user },
+    } = await supabase.auth.getUser()
 
-    if (!session) {
+    if (!user) {
         redirect('/login')
     }
 
     // Get user premium status
     const { data: userRecord } = await supabase
         .from('users')
-        .select('is_premium')
-        .eq('id', session.user.id)
+        .select('is_premium,subscription_status')
+        .eq('id', user.id)
         .single()
 
     const isPremium = userRecord?.is_premium ?? false
+    const planLabel = isPremium
+        ? userRecord?.subscription_status === 'lifetime'
+            ? 'Pro Lifetime'
+            : 'Pro Plan'
+        : 'Free Plan'
 
     return (
         <div className="min-h-screen bg-gray-900 text-white flex">
@@ -71,8 +79,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
                     <div className="flex items-center gap-3 px-4 py-3 mb-2">
                         <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500" />
                         <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-white truncate">{session.user.email}</p>
-                            <p className={`text-xs truncate ${isPremium ? 'text-green-400' : 'text-gray-500'}`}>{isPremium ? 'Pro Plan' : 'Free Plan'}</p>
+                            <p className="text-sm font-medium text-white truncate">{user.email}</p>
+                            <p className={`text-xs truncate ${isPremium ? 'text-green-400' : 'text-gray-500'}`}>{planLabel}</p>
                         </div>
                     </div>
                     <form action="/auth/signout" method="post">

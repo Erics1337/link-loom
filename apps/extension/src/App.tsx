@@ -91,10 +91,21 @@ const App = () => {
         setView('backups');
     };
 
-    const startPaidCheckout = async (userIdForCheckout: string, email?: string | null) => {
+    const startPaidCheckout = async (
+        userIdForCheckout: string,
+        email?: string | null,
+        accessToken?: string
+    ) => {
+        if (!accessToken) {
+            throw new Error('Sign in again before starting Pro checkout.');
+        }
+
         const response = await fetch(`${WEB_APP_URL}/api/create-checkout-session`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`
+            },
             body: JSON.stringify({
                 userId: userIdForCheckout,
                 email: email || undefined
@@ -120,7 +131,7 @@ const App = () => {
             if (!result.authenticated || !result.userId) {
                 throw new Error('Confirm your email first, then sign in and start Pro checkout.');
             }
-            await startPaidCheckout(result.userId, result.email || email);
+            await startPaidCheckout(result.userId, result.email || email, result.accessToken);
         }
 
         if (result.authenticated) {

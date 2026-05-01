@@ -88,6 +88,9 @@ This project is a monorepo managed by [Turborepo](https://turbo.build/repo) and 
 
 7.  **Stripe Local Development**
     To test premium features locally, you need to forward Stripe webhooks to your local environment.
+    - Set `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID_PRO`, `STRIPE_WEBHOOK_SECRET`, and `NEXT_PUBLIC_SITE_URL=http://localhost:3000` in `apps/web/.env.local`.
+    - Match Stripe modes: `sk_test_...` must use a test-mode `price_...`; `sk_live_...` must use a live-mode `price_...`.
+    - Use `STRIPE_CHECKOUT_MODE=payment` for the one-time lifetime Pro plan. Use `subscription` only with a recurring Stripe Price.
     - Install the [Stripe CLI](https://docs.stripe.com/stripe-cli).
     - Log in to your Stripe account:
       ```bash
@@ -98,6 +101,8 @@ This project is a monorepo managed by [Turborepo](https://turbo.build/repo) and 
       stripe listen --forward-to localhost:3000/api/webhooks/stripe
       ```
     - Copy the generated webhook secret (`whsec_...`) and add it to your `apps/web/.env.local` as `STRIPE_WEBHOOK_SECRET`.
+    - In the web app, test upgrades from `http://localhost:3000/dashboard/billing`. The dashboard uses `/api/checkout` and the current Supabase web session; the extension signup flow uses `/api/create-checkout-session` with its Supabase bearer token.
+    - In Stripe test mode, complete Checkout with card `4242 4242 4242 4242`, any future expiry, any CVC, and any ZIP.
 
 ## 🧩 Extension Development
 
@@ -106,12 +111,17 @@ To load the extension in Chrome:
 1.  Run the build or dev command:
 
     ```bash
-    # For watching changes
+    # For popup/web development
     pnpm dev
 
-    # OR build once
+    # Build the Chrome extension against local Supabase/web/backend envs
+    pnpm --filter extension build:local
+
+    # OR build the production extension bundle
     pnpm build
     ```
+
+    `apps/extension/.env.local` is for local development, while `apps/extension/.env.production` is used by the normal production build. If the unpacked extension should log into local Supabase users, load a bundle built with `pnpm --filter extension build:local`.
 
 2.  Open Chrome and navigate to `chrome://extensions/`.
 3.  Enable **Developer mode** (top right).

@@ -1,26 +1,36 @@
 import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
-import { createProCheckoutSession, getProPriceId } from '@/utils/stripe/checkout'
+import { getProPriceId } from '@/utils/stripe/checkout'
+import { startProCheckoutForUser } from '@/utils/stripe/pro'
 
 export async function POST(request: Request) {
   if (!getProPriceId()) {
-    return new NextResponse('Missing STRIPE_PRICE_ID_PRO', { status: 500 })
+    return NextResponse.json({ error: 'Missing STRIPE_PRICE_ID_PRO' }, { status: 500 })
   }
 
   const supabase = createClient()
   const {
-    data: { session },
-  } = await supabase.auth.getSession()
+    data: { user },
+    error,
+  } = await supabase.auth.getUser()
 
-  if (!session) {
-    return new NextResponse('Unauthorized', { status: 401 })
+  if (error || !user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const checkoutSession = await createProCheckoutSession({
-    userId: session.user.id,
-    email: session.user.email,
-    origin: new URL(request.url).origin,
-  })
+  try {
+    const result = await startProCheckoutForUser({
+      userId: user.id,
+      email: user.email,
+      origin: new URL(request.url).origin,
+    })
 
-  return NextResponse.json({ url: checkoutSession.url })
+    return NextResponse.json(result)
+  } catch (checkoutError) {
+    console.error('[Stripe Checkout] Error:', checkoutError)
+    return NextResponse.json(
+      { error: checkoutError instanceof Error ? checkoutError.message : 'Failed to start checkout' },
+      { status: 500 }
+    )
+  }
 }

@@ -22,6 +22,7 @@ export type ExtensionAuthStatus = 'loading' | 'authenticated' | 'unauthenticated
 export type ExtensionSignUpResult = {
     userId?: string;
     email?: string | null;
+    accessToken?: string;
     authenticated: boolean;
     requiresEmailConfirmation: boolean;
 };
@@ -203,6 +204,7 @@ export const useExtensionAuth = () => {
             return {
                 userId: nextSession.user.id,
                 email: nextSession.user.email,
+                accessToken: nextSession.accessToken,
                 authenticated: true,
                 requiresEmailConfirmation: false
             } as ExtensionSignUpResult;
