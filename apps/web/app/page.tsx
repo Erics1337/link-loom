@@ -15,6 +15,7 @@ export default function Home() {
                                 src="/logo.png"
                                 alt="Link Loom Logo"
                                 fill
+                                sizes="32px"
                                 className="object-contain"
                             />
                         </div>
@@ -60,7 +61,7 @@ export default function Home() {
                                     <div className="mt-10 flex items-center justify-center gap-x-6">
                                         <Link
                                             href="/login"
-                                            className="rounded-full bg-blue-600 px-8 py-3.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 transition-all hover:scale-105"
+                                            className="rounded-full bg-blue-600 px-8 py-3.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 transition-all hover:scale-110"
                                         >
                                             Get Started for Free
                                         </Link>
@@ -164,10 +165,10 @@ export default function Home() {
                             <div className="-mt-2 p-2 lg:mt-0 lg:w-full lg:max-w-md lg:flex-shrink-0">
                                 <div className="rounded-2xl bg-gray-900 py-10 text-center ring-1 ring-inset ring-white/10 lg:flex lg:flex-col lg:justify-center lg:py-16">
                                     <div className="mx-auto max-w-xs px-8">
-                                        <p className="text-base font-semibold text-gray-400">Monthly</p>
+                                        <p className="text-base font-semibold text-gray-400">Lifetime</p>
                                         <p className="mt-6 flex items-baseline justify-center gap-x-2">
-                                            <span className="text-5xl font-bold tracking-tight text-white">$10</span>
-                                            <span className="text-sm font-semibold leading-6 text-gray-400">/month</span>
+                                            <span className="text-5xl font-bold tracking-tight text-white">$29</span>
+                                            <span className="text-sm font-semibold leading-6 text-gray-400">one time</span>
                                         </p>
                                         <Link
                                             href="/login"
@@ -218,11 +219,11 @@ export default function Home() {
                                     Free plan available (up to 500 bookmarks).
                                 </p>
                                 <p className="mt-2 text-sm leading-6 text-gray-300">
-                                    Pro Membership: <span className="font-semibold text-white">$10/month</span>.
+                                    Pro Membership: <span className="font-semibold text-white">$29 one-time payment</span>.
                                 </p>
                                 <p className="mt-2 text-sm leading-6 text-gray-300">
-                                    Additional plan offers (including one-time promotions) may be shown in-app or at
-                                    checkout. Stripe provides secure payment processing, receipts, and invoices.
+                                    Additional plan offers may be shown in-app or at checkout. Stripe provides secure
+                                    payment processing, receipts, and invoices.
                                 </p>
                             </div>
 

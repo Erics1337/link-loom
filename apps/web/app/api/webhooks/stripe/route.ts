@@ -26,11 +26,13 @@ export async function POST(request: Request) {
     return new NextResponse(`Webhook Error: ${error.message}`, { status: 400 })
   }
 
-  const session = event.data.object as Stripe.Checkout.Session
-
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object as Stripe.Checkout.Session
     const userId = session.metadata?.userId || session.client_reference_id
+
+    if (!userId) {
+      return new NextResponse('Missing checkout user reference', { status: 400 })
+    }
 
     if (session.mode === 'subscription' && session.subscription) {
       const subscription = await stripe.subscriptions.retrieve(session.subscription as string)
@@ -50,10 +52,10 @@ export async function POST(request: Request) {
         .update({
           is_premium: true,
           subscription_status: 'lifetime',
-          stripe_customer_id: session.customer as string || undefined,
+          stripe_customer_id: (session.customer as string | null) ?? undefined,
           subscription_id: session.id // Use session ID as reference
         })
-        .eq('id', userId!)
+        .eq('id', userId)
     }
   }
 
@@ -65,7 +67,7 @@ export async function POST(request: Request) {
     await supabase
       .from('users')
       .update({
-        is_premium: subscription.status === 'active',
+        is_premium: ['active', 'trialing'].includes(subscription.status),
         subscription_status: subscription.status,
       })
       .eq('stripe_customer_id', subscription.customer as string)

@@ -3,7 +3,7 @@ import { ingestProcessor } from '../ingest';
 import { supabase } from '../../db';
 import { queues } from '../../lib/queue';
 import { isUserCancelled } from '../../lib/cancellation';
-import { Job } from 'bullmq';
+import { QueueJob } from '../../lib/queue';
 
 vi.mock('../../db', () => ({
     supabase: {
@@ -48,7 +48,7 @@ describe('Ingest Worker', () => {
     const createMockJob = (data: any) => ({
         data,
         updateProgress: vi.fn(),
-    } as unknown as Job);
+    } as unknown as QueueJob<any>);
 
     it('should correctly process a cache MISS and enqueue to enrichment', async () => {
         const job = createMockJob({

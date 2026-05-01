@@ -7,6 +7,7 @@ const WEB_APP_URL = (import.meta.env.VITE_WEB_APP_URL as string | undefined) || 
 
 interface StartScreenProps {
     onStart: () => void;
+    onImportStructure: (file: File) => Promise<void>;
     onOpenSettings: () => void;
     onOpenLogin: () => void;
     onOpenBackups: () => void;
@@ -15,11 +16,17 @@ interface StartScreenProps {
     isPremium: boolean;
     accountEmail?: string | null;
     hasCachedResults: boolean;
+    isImportingStructure: boolean;
+    importStructureMessage?: {
+        kind: 'success' | 'error';
+        text: string;
+    } | null;
     onResume: () => void;
 }
 
 export const StartScreen: React.FC<StartScreenProps> = ({
     onStart,
+    onImportStructure,
     onOpenSettings,
     onOpenLogin,
     onOpenBackups,
@@ -28,11 +35,26 @@ export const StartScreen: React.FC<StartScreenProps> = ({
     isPremium,
     accountEmail,
     hasCachedResults,
+    isImportingStructure,
+    importStructureMessage,
     onResume
 }) => {
     const version = useVersion();
+    const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
     const onUpgrade = () => {
         window.open(`${WEB_APP_URL}/dashboard/billing`, '_blank', 'noopener,noreferrer');
+    };
+
+    const handleImportClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleImportChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file) return;
+        await onImportStructure(file);
     };
 
     return (
@@ -52,6 +74,13 @@ export const StartScreen: React.FC<StartScreenProps> = ({
                 </p>
 
                 <div className="flex flex-col items-center gap-2 w-full justify-center" style={{ maxWidth: '280px' }}>
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".html,text/html"
+                        style={{ display: 'none' }}
+                        onChange={(event) => void handleImportChange(event)}
+                    />
                     <div className="flex items-center gap-2 w-full">
                         <button
                             onClick={onStart}
@@ -75,6 +104,36 @@ export const StartScreen: React.FC<StartScreenProps> = ({
                         >
                             Resume Recent Analysis
                         </button>
+                    )}
+                    <button
+                        onClick={handleImportClick}
+                        className="btn btn-secondary w-full py-2.5 text-[15px] font-medium transition-transform active:scale-95 shadow-sm mt-1"
+                        disabled={isImportingStructure}
+                    >
+                        {isImportingStructure ? 'Loading Structure...' : 'Import Structure'}
+                    </button>
+                    {importStructureMessage && (
+                        <div
+                            className="card w-full text-left mt-1"
+                            style={{
+                                borderColor:
+                                    importStructureMessage.kind === 'error'
+                                        ? 'rgba(239, 68, 68, 0.3)'
+                                        : 'rgba(34, 197, 94, 0.3)',
+                            }}
+                        >
+                            <p
+                                className="text-xs"
+                                style={{
+                                    color:
+                                        importStructureMessage.kind === 'error'
+                                            ? '#fca5a5'
+                                            : '#86efac',
+                                }}
+                            >
+                                {importStructureMessage.text}
+                            </p>
+                        </div>
                     )}
                 </div>
             </div>

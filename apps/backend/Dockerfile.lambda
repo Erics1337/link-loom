@@ -1,0 +1,23 @@
+FROM node:20-bookworm-slim AS build
+
+WORKDIR /app
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY apps/backend/package.json apps/backend/package.json
+COPY packages/tsconfig/package.json packages/tsconfig/package.json
+RUN pnpm install --frozen-lockfile
+
+COPY apps/backend ./apps/backend
+COPY packages/tsconfig ./packages/tsconfig
+RUN pnpm --filter backend build
+RUN pnpm deploy --filter backend --prod /out
+
+FROM public.ecr.aws/lambda/nodejs:20
+
+WORKDIR ${LAMBDA_TASK_ROOT}
+COPY --from=build /out/node_modules ./node_modules
+COPY --from=build /out/dist ./dist
+COPY --from=build /out/package.json ./package.json
+
+CMD ["dist/lambda/api.handler"]

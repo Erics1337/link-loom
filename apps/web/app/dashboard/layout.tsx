@@ -33,6 +33,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
                             src="/logo.png"
                             alt="Link Loom Logo"
                             fill
+                            sizes="32px"
                             className="object-contain"
                         />
                     </div>

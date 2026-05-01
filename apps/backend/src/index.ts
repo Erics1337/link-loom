@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import * as dotenv from 'dotenv';
 
+dotenv.config({ path: '.env.local' });
 dotenv.config();
 
 const fastify = Fastify({
@@ -15,6 +16,8 @@ const fastify = Fastify({
         },
     }
 });
+
+let appReady = false;
 
 fastify.get('/health', async (request, reply) => {
     return { status: 'ok' };
@@ -63,6 +66,34 @@ const fetchAllPages = async <T>(
     }
 
     return allRows;
+};
+
+const getUserPremiumStatus = async (userId: string) => {
+    if (!userId) return false;
+
+    const { data: user, error } = await supabase
+        .from('users')
+        .select('is_premium')
+        .eq('id', userId)
+        .maybeSingle();
+
+    if (error) {
+        console.error(`[BILLING] Failed to load premium status for user ${userId}`, error);
+    }
+
+    return user?.is_premium ?? false;
+};
+
+const requirePremium = async (userId: string, reply: any) => {
+    const isPremium = await getUserPremiumStatus(userId);
+    if (isPremium) return true;
+
+    reply.code(402).send({
+        error: 'Premium required',
+        message: 'This feature requires Link Loom Pro.',
+        upgradeUrl: '/dashboard/billing'
+    });
+    return false;
 };
 
 const fetchWithTimeout = async (url: string, method: 'HEAD' | 'GET') => {
@@ -123,7 +154,7 @@ const startWorkers = () => {
     createWorker('enrichment', enrichmentProcessor, { concurrency: 50 });
     createWorker('embedding', embeddingProcessor, { concurrency: 20 });
     createWorker('clustering', clusteringProcessor);
-    console.log('Workers started with optimized concurrency (Enrichment: 50, Embedding: 20)');
+    console.log('Inline queue workers registered');
 };
 
 const ensureUserExists = async (userId: string) => {
@@ -134,13 +165,18 @@ const ensureUserExists = async (userId: string) => {
     return error;
 };
 
-const start = async () => {
+export const buildApp = async () => {
+    if (appReady) return fastify;
+    appReady = true;
+
     try {
         await fastify.register(cors, {
             origin: true
         });
 
-        startWorkers();
+        if ((process.env.QUEUE_DRIVER ?? 'inline') !== 'sqs') {
+            startWorkers();
+        }
         console.log(`[CONFIG] FREE_TIER_LIMIT=${FREE_TIER_LIMIT}`);
 
         // API Routes
@@ -159,13 +195,7 @@ const start = async () => {
             }
 
             // Premium Tier Enforcement - Check if user is over limit
-            const { data: user } = await supabase
-                .from('users')
-                .select('is_premium')
-                .eq('id', userId)
-                .maybeSingle();
-
-            const isPremium = user?.is_premium ?? false;
+            const isPremium = await getUserPremiumStatus(userId);
 
             if (!isPremium) {
                 const incomingCount = bookmarks?.length ?? 0;
@@ -342,26 +372,10 @@ const start = async () => {
             const processingCount = (pendingRawCount ?? 0) + (enrichedCount ?? 0);
             const remainingToAssign = Math.max((embeddedCount ?? 0) - distinctAssignedCount, 0);
 
-            // Ingest progress for current user (helps frontend show realistic progress when cache hits dominate).
-            const ingestJobs = await queues.ingest.getJobs(['active', 'waiting', 'delayed']);
-            const userIngestJob = ingestJobs.find((job: any) => job.data?.userId === userId);
-            const isIngesting = Boolean(userIngestJob);
-            let ingestProcessed = 0;
-            let ingestTotal = totalCount ?? 0;
-
-            if (userIngestJob) {
-                const progress = userIngestJob.progress as any;
-                if (typeof progress === 'number') {
-                    ingestProcessed = progress;
-                } else if (progress && typeof progress === 'object') {
-                    ingestProcessed = Number(progress.processed) || 0;
-                    ingestTotal = Number(progress.total) || ingestTotal;
-                }
-            }
-
-            // Check actual queue status to ensure we don't say "Done" while clustering is still running
-            const clusteringCounts = await queues.clustering.getJobCounts('active', 'waiting', 'delayed');
-            const isClusteringActive = clusteringCounts.active > 0 || clusteringCounts.waiting > 0 || clusteringCounts.delayed > 0;
+            const isIngesting = (pendingRawCount ?? 0) > 0;
+            const ingestProcessed = Math.max((totalCount ?? 0) - (pendingRawCount ?? 0), 0);
+            const ingestTotal = totalCount ?? 0;
+            const isClusteringActive = processingCount === 0 && (embeddedCount ?? 0) > 0 && (clusterCount ?? 0) === 0;
 
             console.log(
                 `[STATUS] User ${userId}: total=${totalCount}, pending=${pendingRawCount ?? 0}, enriched=${enrichedCount ?? 0}, embedded=${embeddedCount ?? 0}, errored=${erroredCount ?? 0}, assigned=${distinctAssignedCount}, clusters=${clusterCount}, ingesting=${isIngesting}, ingestProcessed=${ingestProcessed}/${ingestTotal}, clusteringActive=${isClusteringActive}`
@@ -429,6 +443,10 @@ const start = async () => {
         });
 
         fastify.post('/dead-links/check', async (req: any, reply) => {
+            const userId = typeof req.body?.userId === 'string' ? req.body.userId : '';
+            const hasPremium = await requirePremium(userId, reply);
+            if (!hasPremium) return reply;
+
             const rawBookmarks = Array.isArray(req.body?.bookmarks) ? req.body.bookmarks : [];
             const bookmarks = rawBookmarks
                 .map((item: any) => ({
@@ -498,6 +516,8 @@ const start = async () => {
         fastify.post('/auto-rename/:userId', async (req: any, reply) => {
             const { userId } = req.params;
             const clusteringSettings = normalizeClusteringSettings(req.body?.clusteringSettings);
+            const hasPremium = await requirePremium(userId, reply);
+            if (!hasPremium) return reply;
 
             let assignments: any[] = [];
             try {
@@ -608,37 +628,8 @@ const start = async () => {
             console.log(`[CANCEL] Request received for user ${userId} (clearAllQueues=${clearAllQueues})`);
             markUserCancelled(userId);
 
-            // 1. Clear Jobs from Queues
-            const queueNames = ['ingest', 'enrichment', 'embedding', 'clustering'] as const;
-            let removedCount = 0;
-            let failedToRemove = 0;
-            const jobStates = ['waiting', 'active', 'delayed', 'paused', 'prioritized', 'waiting-children', 'completed', 'failed'] as any;
-
-            for (const name of queueNames) {
-                const queue = queues[name];
-                const jobs = await queue.getJobs(jobStates);
-                
-                for (const job of jobs) {
-                    const belongsToUser = job.data?.userId === userId;
-                    if (clearAllQueues || belongsToUser) {
-                        try {
-                            await job.remove();
-                            removedCount++;
-                        } catch (e) {
-                            console.error(`[CANCEL] Failed to remove job ${job.id} from ${name}`, e);
-                            failedToRemove++;
-                        }
-                    }
-                }
-
-                if (clearAllQueues) {
-                    await queue.clean(0, 10000, 'completed');
-                    await queue.clean(0, 10000, 'failed');
-                }
-            }
-            console.log(`[CANCEL] Removed ${removedCount} jobs for user ${userId} (failed=${failedToRemove})`);
-
-            // 2. Reset in-flight bookmarks so /status no longer reports the user as processing.
+            // SQS messages already in flight cannot be selectively removed cheaply.
+            // Reset DB state; processors also check the in-memory flag in local dev.
             const { error: updateError } = await supabase
                 .from('bookmarks')
                 .update({ status: 'idle' })
@@ -650,7 +641,7 @@ const start = async () => {
                 return reply.code(500).send({ error: 'Failed to reset status' });
             }
 
-            return { status: 'cancelled', jobsRemoved: removedCount, failedToRemove, clearAllQueues };
+            return { status: 'cancelled', jobsRemoved: 0, failedToRemove: 0, clearAllQueues };
         });
 
         fastify.get('/backups/:userId', async (req: any, reply) => {
@@ -766,6 +757,17 @@ const start = async () => {
             return { results: results ?? [] };
         });
 
+        return fastify;
+    } catch (err) {
+        fastify.log.error(err);
+        appReady = false;
+        throw err;
+    }
+};
+
+const start = async () => {
+    try {
+        await buildApp();
         await fastify.listen({ port: 3333, host: '0.0.0.0' });
     } catch (err) {
         fastify.log.error(err);
@@ -773,4 +775,6 @@ const start = async () => {
     }
 };
 
-start();
+if (require.main === module) {
+    start();
+}

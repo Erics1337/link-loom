@@ -2,26 +2,26 @@ project_id = "link-loom"
 
 [api]
 enabled = true
-port = 54321
+port = 54421
 schemas = ["public", "storage", "graphql_public"]
 extra_search_path = ["public", "extensions"]
 max_rows = 1000
 
 [db]
-port = 54322
-shadow_port = 54320
+port = 54422
+shadow_port = 54420
 major_version = 15
 
 [studio]
 enabled = true
-port = 54323
-api_url = "http://127.0.0.1:54321"
+port = 54423
+api_url = "http://127.0.0.1:54421"
 
 [inbucket]
 enabled = true
-port = 54324
-smtp_port = 54325
-pop3_port = 54326
+port = 54424
+smtp_port = 54425
+pop3_port = 54426
 
 [storage]
 enabled = true
@@ -30,9 +30,13 @@ file_size_limit = "50MiB"
 [auth]
 enabled = true
 site_url = "http://localhost:3000"
-additional_redirect_urls = ["https://localhost:3000"]
+additional_redirect_urls = ["http://localhost:3000/auth/callback", "http://127.0.0.1:3000/auth/callback"]
 jwt_expiry = 3600
 enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
 
 [edge_runtime]
 enabled = true
@@ -41,8 +45,8 @@ inspector_port = 8083
 
 [analytics]
 enabled = false
-port = 54327
-vector_port = 54328
+port = 54427
+vector_port = 54428
 
 # Redis Service Configuration
 # Note: Supabase CLI doesn't natively support adding arbitrary containers via this config.

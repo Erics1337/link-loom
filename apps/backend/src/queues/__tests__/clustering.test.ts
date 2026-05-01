@@ -3,7 +3,7 @@ import { clusteringProcessor } from '../clustering';
 import { supabase } from '../../db';
 import { queues } from '../../lib/queue';
 import { isUserCancelled } from '../../lib/cancellation';
-import { Job } from 'bullmq';
+import { QueueJob } from '../../lib/queue';
 
 vi.mock('../../db', () => ({
     supabase: {
@@ -33,9 +33,6 @@ vi.mock('openai', () => {
 
 vi.mock('../../lib/queue', () => ({
     queues: {
-        ingest: { getJobs: vi.fn().mockResolvedValue([]) },
-        enrichment: { getJobs: vi.fn().mockResolvedValue([]) },
-        embedding: { getJobs: vi.fn().mockResolvedValue([]) },
         clustering: { add: vi.fn() }
     }
 }));
@@ -66,7 +63,7 @@ describe('Clustering Worker', () => {
 
     const createMockJob = (data: any) => ({
         data,
-    } as unknown as Job);
+    } as unknown as QueueJob<any>);
 
     it('should defer if there are still pending inflight bookmarks', async () => {
         const job = createMockJob({ userId: 'user-1' });
@@ -78,10 +75,6 @@ describe('Clustering Worker', () => {
             if (table === 'bookmarks') return mockBookmarksChain;
             return {};
         });
-
-        // hasPipelineJobsForUser will run, returning true since we mocked getJobs above... wait, we mocked getJobs to return [] (false).
-        // Let's explicitly mock getJobs to return jobs just in case
-        queues.ingest.getJobs = vi.fn().mockResolvedValue([{ data: { userId: 'user-1' } }]);
 
         await clusteringProcessor(job);
 

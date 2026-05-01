@@ -46,7 +46,7 @@ Chrome Extension (React popup)
   |
   | POST /ingest, GET /status, GET /structure, POST /cancel, POST /trigger-clustering
   v
-Backend (Fastify + BullMQ + Redis)
+Backend (Fastify API + SQS/Lambda workers in production)
   |
   +--> Ingest Worker
   +--> Enrichment Worker (scrape title/description)
@@ -271,7 +271,7 @@ Also, extension/web app currently do not have dedicated README files in this rep
 
 ## 11. Operational Notes
 
-- Queue engine: BullMQ + Redis.
+- Queue engine: local inline queue for development; SQS-triggered Lambda workers in production.
 - Worker concurrency defaults:
   - enrichment: 50
   - embedding: 20
@@ -290,4 +290,3 @@ For future updates, use this order:
 2. DB migrations in `supabase/migrations`
 3. This `apps/backend/ARCHITECTURE.md`
 4. Other docs (`README.md`, `agent_prompt.md`) after verification
-

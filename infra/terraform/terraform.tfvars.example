@@ -1,20 +1,18 @@
 project_name = "link-loom-prod"
 aws_region   = "us-east-1"
 
-# If true, set certificate_arn to an ACM cert in the same region.
-enable_https    = false
-certificate_arn = null
-
-# If backend_image is empty, Terraform uses ECR repo + image_tag.
+# If backend_image is empty, Terraform builds apps/backend/Dockerfile.lambda,
+# pushes it to ECR, and uses image_tag for all Lambda functions.
 backend_image       = ""
 image_tag           = "v1"
 build_backend_image = true
 
-task_cpu      = 1024
-task_memory   = 2048
-desired_count = 1
-
-redis_node_type = "cache.t4g.small"
+api_memory_mb              = 512
+api_timeout_seconds        = 30
+worker_memory_mb           = 1024
+worker_timeout_seconds     = 120
+clustering_memory_mb       = 2048
+clustering_timeout_seconds = 900
 
 free_tier_limit                   = 500
 cluster_name_concurrency          = 4

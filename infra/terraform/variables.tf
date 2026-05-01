@@ -10,26 +10,8 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
-variable "alb_ingress_cidrs" {
-  description = "CIDR ranges allowed to hit the ALB listener(s)."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
-}
-
-variable "enable_https" {
-  description = "Enable HTTPS listener on the ALB."
-  type        = bool
-  default     = false
-}
-
-variable "certificate_arn" {
-  description = "ACM certificate ARN for HTTPS listener. Required when enable_https=true."
-  type        = string
-  default     = null
-}
-
 variable "backend_image" {
-  description = "Optional prebuilt image URI. If empty, Terraform expects ECR image at repository_url:image_tag."
+  description = "Optional prebuilt Lambda container image URI. If empty, Terraform builds and pushes the backend image."
   type        = string
   default     = ""
 }
@@ -41,33 +23,45 @@ variable "image_tag" {
 }
 
 variable "build_backend_image" {
-  description = "Build and push backend Docker image to ECR during terraform apply."
+  description = "Build and push backend Lambda Docker image to ECR during terraform apply."
   type        = bool
   default     = true
 }
 
-variable "task_cpu" {
-  description = "Fargate task CPU units."
+variable "api_memory_mb" {
+  description = "Memory for the API Lambda."
+  type        = number
+  default     = 512
+}
+
+variable "api_timeout_seconds" {
+  description = "Timeout for the API Lambda."
+  type        = number
+  default     = 30
+}
+
+variable "worker_memory_mb" {
+  description = "Memory for ingest/enrichment/embedding worker Lambdas."
   type        = number
   default     = 1024
 }
 
-variable "task_memory" {
-  description = "Fargate task memory in MiB."
+variable "worker_timeout_seconds" {
+  description = "Timeout for ingest/enrichment/embedding worker Lambdas."
+  type        = number
+  default     = 120
+}
+
+variable "clustering_memory_mb" {
+  description = "Memory for the clustering worker Lambda."
   type        = number
   default     = 2048
 }
 
-variable "desired_count" {
-  description = "Number of ECS tasks to run."
+variable "clustering_timeout_seconds" {
+  description = "Timeout for the clustering worker Lambda."
   type        = number
-  default     = 1
-}
-
-variable "redis_node_type" {
-  description = "ElastiCache Redis node type."
-  type        = string
-  default     = "cache.t4g.small"
+  default     = 900
 }
 
 variable "free_tier_limit" {

@@ -79,7 +79,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 <p className="text-xs text-secondary">
                     {mode === 'sign-in'
                         ? 'Sign in to manage backups and sync your account plan.'
-                        : 'Create a free account (up to 500 bookmarks) or upgrade to Pro subscription.'}
+                        : 'Create a free account (up to 500 bookmarks) or upgrade to Pro.'}
                 </p>
 
                 <label className="text-xs text-secondary">Email</label>
@@ -130,8 +130,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                         >
                             <input type="radio" checked={plan === 'paid'} readOnly className="cursor-pointer" />
                             <div className="flex flex-col">
-                                <span className="text-sm font-medium">Pro Subscription</span>
-                                <span className="text-xs text-secondary">Unlimited bookmarks</span>
+                                <span className="text-sm font-medium">Pro Lifetime</span>
+                                <span className="text-xs text-secondary">Unlimited bookmarks and Pro tools</span>
                             </div>
                         </div>
                     </div>

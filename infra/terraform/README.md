@@ -1,48 +1,56 @@
 # Link Loom AWS Terraform
 
-This Terraform stack deploys the backend API/workers to AWS with:
+This Terraform stack deploys the backend API/workers to AWS with a serverless, pay-per-use shape:
 
-- ECR repository for backend image
-- ECS Fargate cluster/service
-- Application Load Balancer (public endpoint)
-- ElastiCache Redis (BullMQ backend)
-- IAM roles and CloudWatch log group
-- Secrets Manager secret for backend runtime env
+- ECR repository for one shared Lambda container image
+- API Gateway HTTP API for the backend API
+- Lambda function for the API
+- SQS queues for ingest, enrichment, embedding, and clustering
+- Lambda workers triggered by SQS
+- IAM roles and CloudWatch logs
 
 ## What It Assumes
 
 - You already have a hosted Supabase project.
 - You have AWS CLI credentials configured for the target account.
 - Terraform and Docker are installed locally.
-- Deployment uses the account's **default VPC** and its subnets.
+- Lambdas do not run in a VPC by default, avoiding NAT Gateway and always-on networking cost.
 
-## Required Inputs
+## Environment
 
-Copy the example vars file and fill real values:
+Terraform variables come from the existing production env files:
+
+- `apps/backend/.env.production`
+- `apps/web/.env.production`
+- `apps/extension/.env.production`
+
+The root Makefile maps those app env vars into Terraform's `TF_VAR_*` variables. Inspect the mapping without printing secrets:
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars
+make tf-env-print
 ```
 
-Required secret values:
+Required source values:
 
-- `supabase_url`
-- `supabase_service_role_key`
-- `openai_api_key`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `OPENAI_API_KEY`
 
 ## Deploy
 
 ```bash
-terraform init
-terraform plan
-terraform apply
+make tf-init
+make tf-check
+make tf-plan
+make deploy
+make smoke-prod
 ```
 
 If `build_backend_image = true`, `terraform apply` will:
 
-1. Build `apps/backend/Dockerfile`
+1. Build `apps/backend/Dockerfile.lambda`
 2. Push the image to ECR using `image_tag`
-3. Deploy/update ECS service with that image
+3. Deploy/update the API and worker Lambda functions with that image
 
 ## Outputs To Use In Extension
 
@@ -50,7 +58,6 @@ After apply:
 
 ```bash
 terraform output api_base_url
-terraform output alb_dns_name
 ```
 
 Use `api_base_url` as:
@@ -63,7 +70,6 @@ If you deploy the web app separately, also set:
 
 ## Notes
 
-- ALB is HTTP-only by default (`enable_https = false`).
-- To enable HTTPS:
-  - set `enable_https = true`
-  - set `certificate_arn` to an ACM cert in the same region.
+- There is no Redis/ElastiCache in this stack.
+- SQS replaces BullMQ as the production queue.
+- API Gateway's default endpoint is HTTPS.

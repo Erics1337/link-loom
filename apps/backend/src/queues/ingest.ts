@@ -1,11 +1,10 @@
-import { Job } from 'bullmq';
-import { queues } from '../lib/queue';
+import { QueueJob, queues } from '../lib/queue';
 import { supabase } from '../db';
 import { createHash } from 'crypto';
 import { isUserCancelled } from '../lib/cancellation';
 import { ClusteringSettings, normalizeClusteringSettings } from '../lib/clusteringSettings';
 
-interface IngestJobData {
+export interface IngestJobData {
     userId: string;
     bookmarks: {
         id: string; // Chrome ID
@@ -15,7 +14,7 @@ interface IngestJobData {
     clusteringSettings?: ClusteringSettings;
 }
 
-export const ingestProcessor = async (job: Job<IngestJobData>) => {
+export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
     const { userId, bookmarks: rawBookmarks } = job.data;
     const clusteringSettings = normalizeClusteringSettings(job.data.clusteringSettings);
     console.log(`[INGEST WORKER] Starting: ${rawBookmarks.length} bookmarks for user ${userId}`);

@@ -29,6 +29,11 @@ export default function BillingPage() {
   }, [supabase]);
 
   const handleCheckout = async () => {
+    if (!user) {
+      router.push('/login');
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await fetch('/api/create-checkout-session', {
@@ -36,15 +41,16 @@ export default function BillingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: user.id,
-          successUrl: `${window.location.origin}/dashboard/billing?success=true`,
-          cancelUrl: `${window.location.origin}/dashboard/billing?canceled=true`,
         }),
       });
-      const { url } = await res.json();
+      const { url, error } = await res.json();
+      if (!res.ok || !url) {
+        throw new Error(error || 'Failed to start checkout');
+      }
       window.location.href = url;
     } catch (error) {
       console.error('Checkout error:', error);
-      alert('Failed to start checkout');
+      alert(error instanceof Error ? error.message : 'Failed to start checkout');
     } finally {
       setLoading(false);
     }
@@ -61,7 +67,7 @@ export default function BillingPage() {
         {searchParams.get('success') && (
           <div className="bg-green-500/10 border border-green-500/20 text-green-400 p-4 rounded-xl flex items-center gap-3">
             <div className="w-2 h-2 rounded-full bg-green-500" />
-            Payment successful! Your lifetime license is active.
+            Payment successful. Your Pro access is active.
           </div>
         )}
          {searchParams.get('canceled') && (
@@ -77,11 +83,11 @@ export default function BillingPage() {
             <div>
               <p className="text-gray-400 text-sm mb-1">Status</p>
               <p className="text-3xl font-bold text-white">
-                {profile?.is_premium ? 'Lifetime License' : 'Free Tier'}
+                {profile?.is_premium ? 'Pro Lifetime' : 'Free Tier'}
               </p>
               {profile?.is_premium && (
                   <p className="mt-2 text-green-400 text-sm flex items-center gap-2">
-                       ✓ You have access to all premium features forever.
+                       You have access to all premium features.
                   </p>
               )}
             </div>
@@ -91,7 +97,7 @@ export default function BillingPage() {
                 disabled={loading}
                 className="bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 px-8 rounded-lg transition disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-blue-500/20"
               >
-                {loading ? 'Processing...' : 'Upgrade to Lifetime ($29)'}
+                {loading ? 'Processing...' : 'Upgrade to Pro ($29)'}
               </button>
             )}
           </div>

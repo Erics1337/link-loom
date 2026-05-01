@@ -1,4 +1,4 @@
-import { Job } from 'bullmq';
+import { QueueJob } from '../lib/queue';
 import { supabase } from '../db';
 import { kmeans } from 'ml-kmeans';
 import OpenAI from 'openai';
@@ -23,7 +23,7 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
-interface ClusteringJobData {
+export interface ClusteringJobData {
     userId: string;
     clusteringSettings?: ClusteringSettings;
 }
@@ -124,18 +124,6 @@ const getJoinedSharedVector = (joined: unknown): unknown => {
     }
 
     return null;
-};
-
-const hasPipelineJobsForUser = async (userId: string): Promise<boolean> => {
-    const jobStates = ['active', 'waiting', 'delayed'] as any;
-    const [ingestJobs, enrichmentJobs, embeddingJobs] = await Promise.all([
-        queues.ingest.getJobs(jobStates),
-        queues.enrichment.getJobs(jobStates),
-        queues.embedding.getJobs(jobStates),
-    ]);
-
-    const belongsToUser = (job: any) => job.data?.userId === userId;
-    return ingestJobs.some(belongsToUser) || enrichmentJobs.some(belongsToUser) || embeddingJobs.some(belongsToUser);
 };
 
 const recoverStalePipelineState = async (userId: string) => {
@@ -287,6 +275,29 @@ const chooseSplitK = (count: number, profile: ClusteringDensityProfile): number 
     return Math.max(2, Math.min(profile.maxChildren, estimated, count));
 };
 
+const computeDistance = (a: number[], b: number[]): number => {
+    let sum = 0;
+    for (let i = 0; i < a.length; i++) {
+        const diff = a[i] - b[i];
+        sum += diff * diff;
+    }
+    return sum;
+};
+
+const computeCentroid = (vecs: number[][]): number[] => {
+    if (vecs.length === 0) return [];
+    if (vecs.length === 1) return vecs[0];
+    
+    const dimensions = vecs[0].length;
+    const centroid = new Array(dimensions).fill(0);
+    for (const vec of vecs) {
+        for (let i = 0; i < dimensions; i++) {
+            centroid[i] += vec[i];
+        }
+    }
+    return centroid.map(v => v / vecs.length);
+};
+
 const rebalanceSmallGroups = (groups: ClusterGroup[], minChildSize: number): ClusterGroup[] => {
     if (groups.length <= 1) return groups;
 
@@ -297,17 +308,27 @@ const rebalanceSmallGroups = (groups: ClusterGroup[], minChildSize: number): Clu
         return groups;
     }
 
-    const sortLargeGroups = () => {
-        largeGroups.sort((a, b) => b.ids.length - a.ids.length);
-    };
-
-    sortLargeGroups();
+    const largeGroupCentroids = largeGroups.map(g => computeCentroid(g.vecs));
 
     for (const small of smallGroups) {
-        const target = largeGroups[0];
-        target.ids.push(...small.ids);
-        target.vecs.push(...small.vecs);
-        sortLargeGroups();
+        for (let i = 0; i < small.ids.length; i++) {
+            const id = small.ids[i];
+            const vec = small.vecs[i];
+            
+            let closestIdx = 0;
+            let minDistance = Infinity;
+            
+            for (let j = 0; j < largeGroups.length; j++) {
+                const distance = computeDistance(vec, largeGroupCentroids[j]);
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    closestIdx = j;
+                }
+            }
+            
+            largeGroups[closestIdx].ids.push(id);
+            largeGroups[closestIdx].vecs.push(vec);
+        }
     }
 
     return largeGroups;
@@ -503,6 +524,7 @@ async function generateClusterName(bookmarkIds: string[], settings: ClusteringSe
         '- Keep it concise (max 5 words).',
         '- Avoid generic names like "New Folder" or "Miscellaneous".',
         '- The result must be easy to scan and find later.',
+        '- If the bookmarks cover diverse topics, prioritize naming the most dominant topic rather than trying to combine disparate words.',
         'Bookmarks:',
         ...contextLines,
     ].join('\n');
@@ -640,7 +662,7 @@ async function recursiveCluster(
     }
 }
 
-export const clusteringProcessor = async (job: Job<ClusteringJobData>) => {
+export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
     const { userId } = job.data;
     const settings = normalizeClusteringSettings(job.data.clusteringSettings);
     log(
@@ -659,21 +681,6 @@ export const clusteringProcessor = async (job: Job<ClusteringJobData>) => {
         .eq('user_id', userId)
         .in('status', ['pending', 'enriched']);
     let inflightCount = initialInflightCount ?? 0;
-
-    if (inflightCount > 0) {
-        const hasPipelineJobs = await hasPipelineJobsForUser(userId);
-
-        if (!hasPipelineJobs) {
-            log(`[CLUSTERING] No active pipeline jobs for user ${userId}; attempting stale-state recovery`);
-            await recoverStalePipelineState(userId);
-            const { count: recoveredInflightCount } = await supabase
-                .from('bookmarks')
-                .select('*', { count: 'exact', head: true })
-                .eq('user_id', userId)
-                .in('status', ['pending', 'enriched']);
-            inflightCount = recoveredInflightCount ?? inflightCount;
-        }
-    }
 
     if (inflightCount > 0) {
         log(`[CLUSTERING] Deferring user ${userId}; ${inflightCount} bookmarks still pending enrichment/embedding`);

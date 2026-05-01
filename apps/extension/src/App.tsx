@@ -5,17 +5,27 @@ import { ResultsScreen } from './screens/ResultsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { LoginScreen, SignUpPlan } from './screens/LoginScreen';
 import { BackupsScreen } from './screens/BackupsScreen';
+import { ImportStructureScreen } from './screens/ImportStructureScreen';
 import { Layout } from './components/Layout';
 import { BookmarkBackupSnapshot, useBookmarkWeaver } from './hooks/useBookmarkWeaver';
 import { useDeviceAuth } from './hooks/useDeviceAuth';
 import { useClusteringSettings } from './hooks/useClusteringSettings';
 import { useExtensionAuth } from './hooks/useExtensionAuth';
 import { useTheme } from './hooks/useTheme';
+import { BookmarkNode } from './components/BookmarkTree';
+import {
+    ApplyParsedBookmarkExportOptions,
+    BookmarkImportSummary,
+    ParsedBookmarkExport,
+    applyParsedBookmarkExport,
+    getBookmarkRootAvailability,
+    parseBookmarkExportFile,
+    parsedBookmarkExportToPreviewNodes,
+    summarizeBookmarkExport,
+} from './lib/bookmarkImport';
 import './styles/global.css';
 
 const WEB_APP_URL = (import.meta.env.VITE_WEB_APP_URL as string | undefined) || 'https://linkloom.org';
-const STRIPE_PRO_PRICE_ID = import.meta.env.VITE_STRIPE_PRICE_ID_PRO as string | undefined;
-
 const App = () => {
     const { user: authUser, errorMessage: authErrorMessage, signIn, signUp, signOut } = useExtensionAuth();
     const { settings: clusteringSettings, updateSettings: updateClusteringSettings } = useClusteringSettings();
@@ -48,8 +58,24 @@ const App = () => {
         setStatus,
         errorMessage
     } = useBookmarkWeaver(authUser?.id, clusteringSettings);
-    const [view, setView] = useState<'main' | 'settings' | 'login' | 'backups'>('main');
+    const [view, setView] = useState<'main' | 'settings' | 'login' | 'backups' | 'import-preview'>('main');
     const [backups, setBackups] = useState<BookmarkBackupSnapshot[]>([]);
+    const [isImportingStructure, setIsImportingStructure] = useState(false);
+    const [isApplyingImportedStructure, setIsApplyingImportedStructure] = useState(false);
+    const [importStructureMessage, setImportStructureMessage] = useState<{
+        kind: 'success' | 'error';
+        text: string;
+    } | null>(null);
+    const [importPreviewMessage, setImportPreviewMessage] = useState<{
+        kind: 'success' | 'error';
+        text: string;
+    } | null>(null);
+    const [importPreview, setImportPreview] = useState<{
+        fileName: string;
+        parsedExport: ParsedBookmarkExport;
+        summary: BookmarkImportSummary;
+        nodes: BookmarkNode[];
+    } | null>(null);
     useTheme();
 
     const { authStatus, errorMsg } = useDeviceAuth(authUser?.id || '');
@@ -66,20 +92,12 @@ const App = () => {
     };
 
     const startPaidCheckout = async (userIdForCheckout: string, email?: string | null) => {
-        if (!STRIPE_PRO_PRICE_ID) {
-            throw new Error('Pro checkout is not configured. Set VITE_STRIPE_PRICE_ID_PRO.');
-        }
-
         const response = await fetch(`${WEB_APP_URL}/api/create-checkout-session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 userId: userIdForCheckout,
-                email: email || undefined,
-                mode: 'subscription',
-                priceId: STRIPE_PRO_PRICE_ID,
-                successUrl: `${WEB_APP_URL}/dashboard/billing?success=true`,
-                cancelUrl: `${WEB_APP_URL}/dashboard/billing?canceled=true`
+                email: email || undefined
             })
         });
 
@@ -132,6 +150,97 @@ const App = () => {
         setBackups(list);
     };
 
+    const handleImportStructure = async (file: File) => {
+        setIsImportingStructure(true);
+        setImportStructureMessage(null);
+        try {
+            const parsedExport = await parseBookmarkExportFile(file);
+            const summary = summarizeBookmarkExport(parsedExport);
+            setImportPreview({
+                fileName: file.name,
+                parsedExport,
+                summary,
+                nodes: parsedBookmarkExportToPreviewNodes(parsedExport) as BookmarkNode[],
+            });
+            setImportPreviewMessage(null);
+            setView('import-preview');
+        } catch (error) {
+            setImportStructureMessage({
+                kind: 'error',
+                text: error instanceof Error ? error.message : 'Failed to load bookmark export.',
+            });
+        } finally {
+            setIsImportingStructure(false);
+        }
+    };
+
+    const handleApplyImportedStructure = async () => {
+        if (!importPreview) return;
+
+        if (typeof chrome === 'undefined' || !chrome.bookmarks) {
+            setImportPreviewMessage({
+                kind: 'error',
+                text: 'Chrome bookmark APIs are not available in this environment.',
+            });
+            return;
+        }
+
+        setIsApplyingImportedStructure(true);
+        setImportPreviewMessage(null);
+
+        try {
+            const applyOptions: ApplyParsedBookmarkExportOptions = {
+                mobileRootStrategy: 'require_mobile_root',
+            };
+
+            if (importPreview.summary.importedRoots.includes('Mobile Bookmarks')) {
+                const rootAvailability = await getBookmarkRootAvailability();
+                if (!rootAvailability['Mobile Bookmarks']) {
+                    const useOtherBookmarksFallback = window.confirm(
+                        'This Chrome profile does not currently expose the Mobile Bookmarks top-level folder. Press OK to place the imported Mobile Bookmarks folder inside Other Bookmarks, or Cancel to sign into Chrome first and try again.'
+                    );
+
+                    if (!useOtherBookmarksFallback) {
+                        setImportPreviewMessage({
+                            kind: 'error',
+                            text: 'Sign into Chrome first if you want Mobile Bookmarks restored to its own top-level folder.',
+                        });
+                        return;
+                    }
+
+                    applyOptions.mobileRootStrategy = 'fallback_to_other_bookmarks';
+                }
+            }
+
+            const rootLabel = importPreview.summary.importedRoots.join(', ');
+            const confirmed = window.confirm(
+                `Apply "${importPreview.fileName}" to ${rootLabel}? This will replace the current contents inside those Chrome bookmark roots.`
+            );
+
+            if (!confirmed) {
+                return;
+            }
+
+            const appliedSummary = await applyParsedBookmarkExport(importPreview.parsedExport, applyOptions);
+            setImportPreview(null);
+            setView('main');
+            setImportStructureMessage({
+                kind: 'success',
+                text:
+                    applyOptions.mobileRootStrategy === 'fallback_to_other_bookmarks'
+                        ? `Applied ${importPreview.fileName}. Mobile Bookmarks was placed inside Other Bookmarks because this Chrome profile does not currently expose the Mobile Bookmarks top-level folder.`
+                        : `Applied ${importPreview.fileName} to ${appliedSummary.importedRoots.join(', ')}. Restored ${appliedSummary.bookmarkCount} bookmarks across ${appliedSummary.folderCount} folders.`,
+            });
+        } catch (error) {
+            setImportPreviewMessage({
+                kind: 'error',
+                text: error instanceof Error ? error.message : 'Failed to apply imported structure.',
+            });
+        } finally {
+            setIsApplyingImportedStructure(false);
+        }
+    };
+
     const renderContent = () => {
         // 1. Check Device Limit (Blocking)
         if (authStatus === 'limit_reached') {
@@ -180,12 +289,32 @@ const App = () => {
             );
         }
 
+        if (view === 'import-preview' && importPreview) {
+            return (
+                <ImportStructureScreen
+                    fileName={importPreview.fileName}
+                    nodes={importPreview.nodes}
+                    bookmarkCount={importPreview.summary.bookmarkCount}
+                    folderCount={importPreview.summary.folderCount}
+                    onApply={handleApplyImportedStructure}
+                    onBack={() => {
+                        setImportPreview(null);
+                        setImportPreviewMessage(null);
+                        setView('main');
+                    }}
+                    isApplying={isApplyingImportedStructure}
+                    message={importPreviewMessage}
+                />
+            );
+        }
+
         // 3. Main App Flow
         switch (status) {
             case 'idle':
                 return (
                     <StartScreen
                         onStart={handleStartOrganizing}
+                        onImportStructure={handleImportStructure}
                         onOpenSettings={() => setView('settings')}
                         onOpenLogin={() => setView('login')}
                         onOpenBackups={handleOpenBackups}
@@ -194,6 +323,8 @@ const App = () => {
                         isPremium={Boolean(authUser && isPremium)}
                         accountEmail={authUser?.email}
                         hasCachedResults={hasCachedResults}
+                        isImportingStructure={isImportingStructure}
+                        importStructureMessage={importStructureMessage}
                         onResume={resumeWeavingSession}
                     />
                 );
@@ -268,12 +399,12 @@ const App = () => {
                     />
                 );
             case 'ready':
-                // Here we can show a "Premium Only" banner if they used a premium feature, 
-                // but for now we just show the results.
                 return (
                     <ResultsScreen
                         clusters={clusters}
                         stats={stats}
+                        isPremium={Boolean(authUser && isPremium)}
+                        onUpgrade={() => window.open(`${WEB_APP_URL}/dashboard/billing`, '_blank', 'noopener,noreferrer')}
                         onAutoRename={autoRenameBookmarks}
                         isAutoRenaming={isAutoRenaming}
                         onOpenSettings={() => setView('settings')}

@@ -1,17 +1,16 @@
-import { Job } from 'bullmq';
-import { queues } from '../lib/queue';
+import { QueueJob, queues } from '../lib/queue';
 import { supabase } from '../db';
 import { isUserCancelled } from '../lib/cancellation';
 
 import * as cheerio from 'cheerio';
 
-interface EnrichmentJobData {
+export interface EnrichmentJobData {
     userId: string;
     bookmarkId: string;
     url: string;
 }
 
-export const enrichmentProcessor = async (job: Job<EnrichmentJobData>) => {
+export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
     const { userId, bookmarkId, url } = job.data;
     console.log(`Enriching bookmark ${bookmarkId}: ${url}`);
 

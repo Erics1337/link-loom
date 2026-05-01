@@ -1,4 +1,4 @@
-import { Job } from 'bullmq';
+import { QueueJob } from '../lib/queue';
 import { supabase } from '../db';
 import OpenAI from 'openai';
 import { createHash } from 'crypto';
@@ -8,14 +8,14 @@ const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
-interface EmbeddingJobData {
+export interface EmbeddingJobData {
     userId: string;
     bookmarkId: string;
     text: string;
     url: string;
 }
 
-export const embeddingProcessor = async (job: Job<EmbeddingJobData>) => {
+export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
     const { userId, bookmarkId, text, url } = job.data;
     console.log(`Processing bookmark ${bookmarkId}`);
 

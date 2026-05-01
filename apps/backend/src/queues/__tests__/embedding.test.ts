@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { embeddingProcessor } from '../embedding';
 import { supabase } from '../../db';
 import { isUserCancelled } from '../../lib/cancellation';
-import { Job } from 'bullmq';
+import { QueueJob } from '../../lib/queue';
 
 vi.mock('../../db', () => ({
     supabase: {
@@ -46,7 +46,7 @@ describe('Embedding Worker', () => {
 
     const createMockJob = (data: any) => ({
         data,
-    } as unknown as Job);
+    } as unknown as QueueJob<any>);
 
     it('should correctly process a cache MISS, call OpenAI, and cache the result', async () => {
         const job = createMockJob({

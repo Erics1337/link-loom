@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { BookmarkRootTitle } from '../lib/bookmarkImport';
 
 export interface BookmarkNode {
     id: string;
@@ -8,6 +9,12 @@ export interface BookmarkNode {
     parentId?: string | null;
     icon?: string; // Optional icon URL or class
     isSeparator?: boolean;
+    nodeType?: 'root' | 'folder' | 'bookmark';
+    rootTitle?: BookmarkRootTitle;
+    chromeId?: string;
+    originalTitle?: string;
+    isOverflow?: boolean;
+    badgeLabel?: string;
 }
 
 interface BookmarkTreeProps {
@@ -75,7 +82,8 @@ const TreeNode: React.FC<{ node: BookmarkNode; defaultExpanded: boolean; depth: 
         );
     }
 
-    const hasChildren = node.children && node.children.length > 0;
+    const isContainer = node.nodeType === 'root' || node.nodeType === 'folder' || Boolean(node.children);
+    const hasChildren = Boolean(node.children && node.children.length > 0);
     const leftPadding = 6 + Math.min(depth, MAX_VISIBLE_DEPTH) * INDENT_STEP_PX;
 
     const toggle = () => {
@@ -85,7 +93,7 @@ const TreeNode: React.FC<{ node: BookmarkNode; defaultExpanded: boolean; depth: 
     return (
         <div className="select-none">
             <div
-                className={`tree-node ${hasChildren ? 'tree-folder' : 'tree-link'}`}
+                className={`tree-node ${isContainer ? 'tree-folder' : 'tree-link'}`}
                 style={{ paddingLeft: `${leftPadding}px` }}
                 onClick={hasChildren ? toggle : undefined}
             >
@@ -97,16 +105,22 @@ const TreeNode: React.FC<{ node: BookmarkNode; defaultExpanded: boolean; depth: 
                     <span className="tree-chevron tree-chevron-spacer" />
                 )}
 
-                <span className={`tree-node-icon ${hasChildren ? 'text-primary' : 'text-secondary'}`}>
-                    {hasChildren ? <FolderIcon /> : <FileIcon />}
+                <span className={`tree-node-icon ${isContainer ? 'text-primary' : 'text-secondary'}`}>
+                    {isContainer ? <FolderIcon /> : <FileIcon />}
                 </span>
 
-                <div className={`tree-node-content ${hasChildren ? 'tree-folder-content' : 'tree-link-content'}`}>
-                    <span className={`tree-title ${hasChildren ? 'tree-folder-title' : 'tree-link-title'}`}>
+                <div className={`tree-node-content ${isContainer ? 'tree-folder-content' : 'tree-link-content'}`}>
+                    <span className={`tree-title ${isContainer ? 'tree-folder-title' : 'tree-link-title'}`}>
                         {cleanTitle(node.title)}
                     </span>
 
-                    {!hasChildren && node.url && (
+                    {node.badgeLabel && (
+                        <span className={`tree-badge ${node.isOverflow ? 'tree-badge-warning' : ''}`}>
+                            {node.badgeLabel}
+                        </span>
+                    )}
+
+                    {!isContainer && node.url && (
                         <span className="tree-url-inline">
                             {formatHost(node.url)}
                         </span>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { BookmarkNode } from '../components/BookmarkTree';
 import { ClusteringSettings, normalizeClusteringSettings } from '../lib/clusteringSettings';
+import { BookmarkRootTitle, ROOT_IDS, ROOT_TITLES } from '../lib/bookmarkImport';
 
 const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 const BACKEND_UNAVAILABLE_MESSAGE = BACKEND_URL
@@ -11,7 +12,9 @@ const AUTO_RENAME_REQUEST_TIMEOUT_MS = 120000;
 const STRUCTURE_REQUEST_TIMEOUT_MS = 45000;
 const STRUCTURE_VERSIONS_STORAGE_KEY = 'bookmarkStructureVersions';
 const PRE_ORGANIZE_BACKUP_KEY = 'preOrganizeBackup';
+const OVERFLOW_BOOKMARKS_STORAGE_KEY = 'bookmarkWeaverOverflowBookmarks';
 const MAX_STRUCTURE_VERSIONS = 20;
+const DEFAULT_ROOT_TITLE: BookmarkRootTitle = 'Other Bookmarks';
 export type AppStatus = 'idle' | 'weaving' | 'ready' | 'done' | 'error' | 'limit_exceeded';
 export type WeavingPhase = 'backup' | 'ingest' | null;
 
@@ -46,6 +49,19 @@ type StructureAssignment = {
     bookmarkId: string;
     chromeId: string;
     url: string;
+    rootTitle: BookmarkRootTitle;
+};
+
+type ScannedBookmark = {
+    id: string;
+    url: string;
+    title: string;
+};
+
+type BookmarkRootSnapshot = {
+    bookmarkRoots: Record<string, BookmarkRootTitle>;
+    preferredRoots: Record<string, BookmarkRootTitle>;
+    availableRoots: BookmarkRootTitle[];
 };
 
 const normalizeBookmarkUrl = (url: string) => {
@@ -92,20 +108,26 @@ const collectDuplicateChromeIds = (assignments: StructureAssignment[]) => {
     return duplicateChromeIds;
 };
 
-const pruneBookmarksFromTree = (nodes: BookmarkNode[], bookmarkIdsToRemove: Set<string>): BookmarkNode[] => {
+const getBookmarkChromeId = (node: BookmarkNode) => {
+    if (node.chromeId) return node.chromeId;
+    if (node.url) return node.id;
+    return undefined;
+};
+
+const pruneBookmarksFromTree = (nodes: BookmarkNode[], bookmarkChromeIdsToRemove: Set<string>): BookmarkNode[] => {
     const nextNodes: BookmarkNode[] = [];
 
     nodes.forEach((node) => {
-        const hasChildren = Array.isArray(node.children) && node.children.length > 0;
-        if (!hasChildren) {
-            if (!bookmarkIdsToRemove.has(node.id)) {
+        const isContainer = node.nodeType === 'root' || node.nodeType === 'folder' || Array.isArray(node.children);
+        if (!isContainer) {
+            if (!bookmarkChromeIdsToRemove.has(getBookmarkChromeId(node) || node.id)) {
                 nextNodes.push(node);
             }
             return;
         }
 
-        const nextChildren = pruneBookmarksFromTree(node.children!, bookmarkIdsToRemove);
-        if (nextChildren.length === 0) {
+        const nextChildren = pruneBookmarksFromTree(node.children || [], bookmarkChromeIdsToRemove);
+        if (nextChildren.length === 0 && node.nodeType !== 'root') {
             return;
         }
 
@@ -155,16 +177,28 @@ const createEmptyProgress = (): WeavingProgress => ({
     isClusteringActive: false
 });
 
+const countBookmarksInTree = (nodes: BookmarkNode[]): number =>
+    nodes.reduce((sum, node) => {
+        if (!node.children || node.children.length === 0) {
+            return sum + (node.url ? 1 : 0);
+        }
+        return sum + countBookmarksInTree(node.children);
+    }, 0);
+
 const summarizeStructure = (nodes: BookmarkNode[]) => {
     let folders = 0;
     let bookmarks = 0;
 
     const walk = (branch: BookmarkNode[]) => {
         branch.forEach((node) => {
-            const hasChildren = Boolean(node.children?.length);
-            if (hasChildren) {
-                folders += 1;
-                walk(node.children!);
+            const isContainer = node.nodeType === 'root' || node.nodeType === 'folder' || Boolean(node.children);
+            if (isContainer) {
+                if (node.nodeType !== 'root') {
+                    folders += 1;
+                }
+                if (node.children?.length) {
+                    walk(node.children);
+                }
             } else if (node.url) {
                 bookmarks += 1;
             }
@@ -173,6 +207,108 @@ const summarizeStructure = (nodes: BookmarkNode[]) => {
 
     walk(nodes);
     return { folders, bookmarks };
+};
+
+const isBookmarkRootTitle = (value: string): value is BookmarkRootTitle =>
+    ROOT_TITLES.includes(value as BookmarkRootTitle);
+
+const IMPORTED_FOLDER_PATTERN = /^Imported(?: \(\d+\))?$/;
+
+const inferPreferredRootFromAncestors = (
+    ancestorTitles: string[],
+    actualRoot: BookmarkRootTitle
+): BookmarkRootTitle => {
+    const inferredRoot = ancestorTitles.find(isBookmarkRootTitle);
+    if (!inferredRoot || inferredRoot === actualRoot) {
+        return actualRoot;
+    }
+
+    const hasImportedAncestor = ancestorTitles.some((title) => IMPORTED_FOLDER_PATTERN.test(title));
+    const isDirectImportedRoot = ancestorTitles[0] === inferredRoot;
+
+    if (hasImportedAncestor || isDirectImportedRoot) {
+        return inferredRoot;
+    }
+
+    return actualRoot;
+};
+
+const buildBookmarkRootSnapshot = (tree: any[]): BookmarkRootSnapshot => {
+    const bookmarkRoots: Record<string, BookmarkRootTitle> = {};
+    const preferredRoots: Record<string, BookmarkRootTitle> = {};
+    const availableRoots: BookmarkRootTitle[] = [];
+    const topLevelNodes = Array.isArray(tree?.[0]?.children) ? tree[0].children : [];
+
+    topLevelNodes.forEach((node: any) => {
+        const rootTitle =
+            ROOT_TITLES.find((candidate) => node.id === ROOT_IDS[candidate] || node.title === candidate) ??
+            (typeof node.title === 'string' && isBookmarkRootTitle(node.title) ? node.title : null);
+
+        if (!rootTitle) {
+            return;
+        }
+
+        availableRoots.push(rootTitle);
+
+        const visit = (entry: any, ancestorTitles: string[] = []) => {
+            if (entry.url) {
+                bookmarkRoots[entry.id] = rootTitle;
+                preferredRoots[entry.id] = inferPreferredRootFromAncestors(ancestorTitles, rootTitle);
+            }
+            if (Array.isArray(entry.children)) {
+                const nextAncestorTitles = entry?.title ? [...ancestorTitles, String(entry.title)] : ancestorTitles;
+                entry.children.forEach((child: any) =>
+                    visit(child, nextAncestorTitles)
+                );
+            }
+        };
+
+        node.children?.forEach((child: any) => visit(child, []));
+    });
+
+    return {
+        bookmarkRoots,
+        preferredRoots,
+        availableRoots,
+    };
+};
+
+const getOverflowStorageKey = (userId: string) => `${OVERFLOW_BOOKMARKS_STORAGE_KEY}:${userId}`;
+
+const persistOverflowBookmarks = async (userId: string, overflowBookmarks: ScannedBookmark[]) => {
+    if (typeof chrome === 'undefined' || !chrome.storage?.local || !userId) return;
+    await chrome.storage.local.set({ [getOverflowStorageKey(userId)]: overflowBookmarks });
+};
+
+const loadPersistedOverflowBookmarks = async (userId: string) => {
+    if (typeof chrome === 'undefined' || !chrome.storage?.local || !userId) {
+        return [] as ScannedBookmark[];
+    }
+
+    const storageResult = await chrome.storage.local.get([getOverflowStorageKey(userId)]);
+    const stored = storageResult[getOverflowStorageKey(userId)];
+    return Array.isArray(stored) ? (stored as ScannedBookmark[]) : [];
+};
+
+const clearPersistedOverflowBookmarks = async (userId: string) => {
+    if (typeof chrome === 'undefined' || !chrome.storage?.local || !userId) return;
+    await chrome.storage.local.remove(getOverflowStorageKey(userId));
+};
+
+const resolvePreviewRoot = (
+    chromeId: string,
+    availableRoots: BookmarkRootTitle[],
+    actualRootMap: Record<string, BookmarkRootTitle>,
+    preferredRootMap: Record<string, BookmarkRootTitle>
+): BookmarkRootTitle => {
+    const actualRoot = actualRootMap[chromeId] ?? DEFAULT_ROOT_TITLE;
+    const preferredRoot = preferredRootMap[chromeId] ?? actualRoot;
+
+    if (preferredRoot === 'Mobile Bookmarks' && !availableRoots.includes('Mobile Bookmarks')) {
+        return 'Other Bookmarks';
+    }
+
+    return preferredRoot;
 };
 
 
@@ -184,8 +320,8 @@ export const useBookmarkWeaver = (
     const [hasCachedResults, setHasCachedResults] = useState(false);
     const [weavingPhase, setWeavingPhase] = useState<WeavingPhase>(null);
     const [limitExceededInfo, setLimitExceededInfo] = useState<LimitExceededInfo | null>(null);
-    const pendingBookmarksRef = useRef<any[]>([]);
-    const overflowBookmarksRef = useRef<any[]>([]);
+    const pendingBookmarksRef = useRef<ScannedBookmark[]>([]);
+    const overflowBookmarksRef = useRef<ScannedBookmark[]>([]);
     const [progress, setProgress] = useState<WeavingProgress>(createEmptyProgress());
     const [userId, setUserId] = useState<string>('');
     const [clusters, setClusters] = useState<BookmarkNode[]>([]);
@@ -200,9 +336,36 @@ export const useBookmarkWeaver = (
     const deadLinkChromeIdsRef = useRef<string[]>([]);
     const deadLinkScanTokenRef = useRef(0);
     const originalTreeRef = useRef<any[]>([]);
+    const bookmarkRootMapRef = useRef<Record<string, BookmarkRootTitle>>({});
+    const bookmarkPreferredRootMapRef = useRef<Record<string, BookmarkRootTitle>>({});
+    const availableRootsRef = useRef<BookmarkRootTitle[]>([]);
 
     const [isPremium, setIsPremium] = useState(false);
     const effectiveClusteringSettings = normalizeClusteringSettings(clusteringSettings);
+
+    const loadCurrentBookmarkTreeSnapshot = useCallback(async () => {
+        if (typeof chrome === 'undefined' || !chrome.bookmarks) {
+            return [] as any[];
+        }
+
+        const tree = await chrome.bookmarks.getTree();
+        originalTreeRef.current = tree;
+        const snapshot = buildBookmarkRootSnapshot(tree);
+        bookmarkRootMapRef.current = snapshot.bookmarkRoots;
+        bookmarkPreferredRootMapRef.current = snapshot.preferredRoots;
+        availableRootsRef.current = snapshot.availableRoots;
+        return tree;
+    }, []);
+
+    const ensureCurrentBookmarkTreeSnapshot = useCallback(async () => {
+        if (
+            originalTreeRef.current.length === 0 ||
+            availableRootsRef.current.length === 0 ||
+            Object.keys(bookmarkRootMapRef.current).length === 0
+        ) {
+            await loadCurrentBookmarkTreeSnapshot();
+        }
+    }, [loadCurrentBookmarkTreeSnapshot]);
 
     useEffect(() => {
         let cancelled = false;
@@ -355,6 +518,11 @@ export const useBookmarkWeaver = (
         deadLinkScanTokenRef.current += 1;
         clusterRecoveryTriggered.current = false;
         overflowBookmarksRef.current = []; // Clear any previous overflow
+        pendingBookmarksRef.current = [];
+
+        if (userId) {
+            await clearPersistedOverflowBookmarks(userId);
+        }
 
         // Mock for local dev
         if (typeof chrome === 'undefined' || !chrome.bookmarks) {
@@ -408,8 +576,7 @@ export const useBookmarkWeaver = (
 
         try {
             // 1. Get Bookmarks
-            const tree = await chrome.bookmarks.getTree();
-            originalTreeRef.current = tree;
+            const tree = await loadCurrentBookmarkTreeSnapshot();
 
             // 1a. Save a local backup before doing anything
             const backup = {
@@ -422,7 +589,7 @@ export const useBookmarkWeaver = (
                 console.log('[WEAVING] Pre-organize backup saved to chrome.storage.local');
             }
 
-            const bookmarks: any[] = [];
+            const bookmarks: ScannedBookmark[] = [];
             const traverse = (node: any) => {
                 if (node.url) {
                     bookmarks.push({ id: node.id, url: node.url, title: node.title });
@@ -512,6 +679,9 @@ export const useBookmarkWeaver = (
         const slicedBookmarks = allBookmarks.slice(0, limit);
         // Store the remaining bookmarks so they appear in the result preview
         overflowBookmarksRef.current = allBookmarks.slice(limit);
+        if (userId) {
+            await persistOverflowBookmarks(userId, overflowBookmarksRef.current);
+        }
         pendingBookmarksRef.current = [];
         setLimitExceededInfo(null);
         setStatus('weaving');
@@ -571,17 +741,8 @@ export const useBookmarkWeaver = (
         if (removedChromeIds.size === 0) return;
         deadLinkScanTokenRef.current += 1;
 
-        const removedBookmarkIds = new Set(
-            structureAssignments
-                .filter((assignment) => removedChromeIds.has(assignment.chromeId))
-                .map((assignment) => assignment.bookmarkId)
-        );
-
-        if (removedBookmarkIds.size > 0) {
-            setClusters((prev) => pruneBookmarksFromTree(prev, removedBookmarkIds));
-        }
-
         const nextAssignments = structureAssignments.filter((assignment) => !removedChromeIds.has(assignment.chromeId));
+        setClusters((prev) => pruneBookmarksFromTree(prev, removedChromeIds));
         setStructureAssignments(nextAssignments);
 
         deadLinkChromeIdsRef.current = deadLinkChromeIdsRef.current.filter((chromeId) => !removedChromeIds.has(chromeId));
@@ -596,6 +757,11 @@ export const useBookmarkWeaver = (
     }, [structureAssignments]);
 
     const scanDeadLinks = useCallback(async (assignmentsOverride?: StructureAssignment[]) => {
+        if (!isPremium) {
+            setErrorMessage('Dead-link scanning requires Link Loom Pro.');
+            return [] as string[];
+        }
+
         const assignmentsToScan = assignmentsOverride ?? structureAssignments;
         const scanToken = deadLinkScanTokenRef.current + 1;
         deadLinkScanTokenRef.current = scanToken;
@@ -615,6 +781,7 @@ export const useBookmarkWeaver = (
                 headers: { 'Content-Type': 'application/json' },
                 signal: controller.signal,
                 body: JSON.stringify({
+                    userId,
                     bookmarks: assignmentsToScan.map((assignment) => ({
                         chromeId: assignment.chromeId,
                         url: assignment.url
@@ -665,108 +832,179 @@ export const useBookmarkWeaver = (
                 setIsScanningDeadLinks(false);
             }
         }
-    }, [structureAssignments]);
+    }, [isPremium, structureAssignments, userId]);
 
     const fetchResults = async (idOverride?: string, silent = false) => {
         const targetId = idOverride || userId;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), STRUCTURE_REQUEST_TIMEOUT_MS);
         try {
+            await ensureCurrentBookmarkTreeSnapshot();
+            if (overflowBookmarksRef.current.length === 0 && targetId) {
+                overflowBookmarksRef.current = await loadPersistedOverflowBookmarks(targetId);
+            }
+
             const res = await fetch(`${BACKEND_URL}/structure/${targetId}`, { signal: controller.signal });
             if (!res.ok) {
                 throw new Error(`Structure fetch failed: ${res.status}`);
             }
             const data = await res.json();
 
-            const clusterMap = new Map<string, BookmarkNode>();
+            const clusterDefinitions = new Map<string, { id: string; name: string; parentId: string | null }>();
+            const childClusterIds = new Map<string | null, string[]>();
             const assignmentSummaries: StructureAssignment[] = [];
-            
-            // 1. Create Cluster Nodes
-            data.clusters.forEach((c: any) => {
-                clusterMap.set(c.id, {
-                    id: c.id,
-                    title: c.name,
-                    children: [],
-                    parentId: c.parent_id
+            const bookmarksByRootAndCluster = new Map<BookmarkRootTitle, Map<string, BookmarkNode[]>>();
+            const availableRoots = availableRootsRef.current;
+
+            data.clusters.forEach((cluster: any) => {
+                clusterDefinitions.set(cluster.id, {
+                    id: cluster.id,
+                    name: cluster.name,
+                    parentId: cluster.parent_id ?? null,
                 });
+                const parentKey = cluster.parent_id ?? null;
+                const siblings = childClusterIds.get(parentKey);
+                if (siblings) {
+                    siblings.push(cluster.id);
+                } else {
+                    childClusterIds.set(parentKey, [cluster.id]);
+                }
             });
 
-            // 2. Add Bookmarks to Clusters
             data.assignments.forEach((a: any) => {
-                const cluster = clusterMap.get(a.cluster_id);
-                if (cluster && cluster.children && a.bookmarks) {
-                    cluster.children.push({
-                        id: a.bookmark_id,
-                        title: a.bookmarks.ai_title || a.bookmarks.title,
-                        url: a.bookmarks.url
-                    });
-                }
                 const rawUrl = a.bookmarks?.url;
                 const chromeId = a.bookmarks?.chrome_id;
                 if (typeof rawUrl === 'string' && typeof chromeId === 'string' && rawUrl && chromeId) {
+                    const rootTitle = resolvePreviewRoot(
+                        chromeId,
+                        availableRoots,
+                        bookmarkRootMapRef.current,
+                        bookmarkPreferredRootMapRef.current
+                    );
                     assignmentSummaries.push({
                         bookmarkId: a.bookmark_id,
                         chromeId,
-                        url: rawUrl
+                        url: rawUrl,
+                        rootTitle,
                     });
+
+                    const rootAssignments = bookmarksByRootAndCluster.get(rootTitle) ?? new Map<string, BookmarkNode[]>();
+                    const clusterBookmarks = rootAssignments.get(a.cluster_id) ?? [];
+                    clusterBookmarks.push({
+                        id: `bookmark-${a.bookmark_id}`,
+                        title: a.bookmarks.ai_title || a.bookmarks.title,
+                        originalTitle: a.bookmarks.title,
+                        url: rawUrl,
+                        chromeId,
+                        nodeType: 'bookmark',
+                        rootTitle,
+                    });
+                    rootAssignments.set(a.cluster_id, clusterBookmarks);
+                    bookmarksByRootAndCluster.set(rootTitle, rootAssignments);
                 }
             });
             const duplicateCount = countDuplicateAssignments(assignmentSummaries);
 
-            // 3. Build Tree (Clusters into Clusters)
-            const rootNodes: BookmarkNode[] = [];
-            
-            clusterMap.forEach((node) => {
-                const parentId = node.parentId;
-                if (parentId && clusterMap.has(parentId)) {
-                    const parent = clusterMap.get(parentId);
-                    if (parent && parent.children) {
-                        parent.children.push(node);
-                    }
-                } else {
-                    rootNodes.push(node);
+            const buildClusterNodeForRoot = (clusterId: string, rootTitle: BookmarkRootTitle): BookmarkNode | null => {
+                const cluster = clusterDefinitions.get(clusterId);
+                if (!cluster) return null;
+
+                const childFolders = (childClusterIds.get(clusterId) || [])
+                    .map((childId) => buildClusterNodeForRoot(childId, rootTitle))
+                    .filter((node): node is BookmarkNode => Boolean(node));
+                const directBookmarks = bookmarksByRootAndCluster.get(rootTitle)?.get(clusterId) || [];
+
+                if (childFolders.length === 0 && directBookmarks.length === 0) {
+                    return null;
                 }
-            });
 
-            // 4. Append overflow bookmarks in their original structures
-            const overflow = overflowBookmarksRef.current;
-            if (overflow.length > 0) {
-                const overflowIds = new Set(overflow.map((b: any) => b.id));
-                
-                const buildOverflowTree = (nodes: any[]): BookmarkNode[] => {
-                    const result: BookmarkNode[] = [];
-                    for (const node of nodes) {
-                        if (node.url) {
-                            if (overflowIds.has(node.id)) {
-                                result.push({ id: node.id, title: node.title, url: node.url });
-                            }
-                        } else if (node.children) {
-                            const filteredChildren = buildOverflowTree(node.children);
-                            if (filteredChildren.length > 0) {
-                                result.push({
-                                    id: node.id,
-                                    title: node.title,
-                                    children: filteredChildren
-                                });
-                            }
-                        }
-                    }
-                    return result;
+                return {
+                    id: `cluster-${rootTitle}-${clusterId}`,
+                    title: cluster.name,
+                    children: [...childFolders, ...directBookmarks],
+                    parentId: cluster.parentId,
+                    nodeType: 'folder',
+                    rootTitle,
                 };
+            };
 
-                const unorganizedNodes = buildOverflowTree(originalTreeRef.current);
-                
-                // Add a UI demarcation element
+            const overflowIds = new Set(overflowBookmarksRef.current.map((bookmark) => bookmark.id));
+            const buildOverflowTree = (nodes: any[]): BookmarkNode[] => {
+                const result: BookmarkNode[] = [];
+
+                for (const node of nodes) {
+                    if (node.url) {
+                        if (!overflowIds.has(node.id)) continue;
+                        const rootTitle = bookmarkRootMapRef.current[node.id] ?? DEFAULT_ROOT_TITLE;
+                        result.push({
+                            id: `overflow-bookmark-${node.id}`,
+                            title: node.title,
+                            originalTitle: node.title,
+                            url: node.url,
+                            chromeId: node.id,
+                            nodeType: 'bookmark',
+                            rootTitle,
+                            isOverflow: true,
+                        });
+                        continue;
+                    }
+
+                    if (!Array.isArray(node.children)) continue;
+
+                    const filteredChildren = buildOverflowTree(node.children);
+                    if (filteredChildren.length === 0) continue;
+
+                    result.push({
+                        id: `overflow-folder-${node.id}`,
+                        title: node.title || 'Untitled Folder',
+                        children: filteredChildren,
+                        nodeType: 'folder',
+                        rootTitle: typeof node.title === 'string' && isBookmarkRootTitle(node.title) ? node.title : undefined,
+                        isOverflow: true,
+                    });
+                }
+
+                return result;
+            };
+
+            const overflowNodes = buildOverflowTree(originalTreeRef.current?.[0]?.children || []);
+            const rootNodes: BookmarkNode[] = [];
+            const overflowCount = overflowBookmarksRef.current.length;
+
+            ROOT_TITLES.forEach((rootTitle) => {
+                const clusterChildren = (childClusterIds.get(null) || [])
+                    .map((clusterId) => buildClusterNodeForRoot(clusterId, rootTitle))
+                    .filter((node): node is BookmarkNode => Boolean(node));
+                const rootChildren = [...clusterChildren];
+
+                if (rootTitle === 'Other Bookmarks' && overflowNodes.length > 0) {
+                    rootChildren.push({
+                        id: 'overflow-unorganized-folder',
+                        title: 'Unorganized Bookmarks',
+                        children: overflowNodes,
+                        nodeType: 'folder',
+                        rootTitle,
+                        isOverflow: true,
+                        badgeLabel: 'Unorganized',
+                    });
+                }
+
+                if (rootChildren.length === 0 && !availableRoots.includes(rootTitle)) {
+                    return;
+                }
+
                 rootNodes.push({
-                    id: 'unorganized-separator',
-                    title: '--- Unorganized Bookmarks ---',
-                    isSeparator: true,
-                    children: []
-                } as any);
-
-                // Append the unorganized tree at the top level
-                rootNodes.push(...unorganizedNodes);
-            }
+                    id: `root-${rootTitle}`,
+                    title: rootTitle,
+                    children: rootChildren,
+                    nodeType: 'root',
+                    rootTitle,
+                    badgeLabel:
+                        rootTitle === 'Other Bookmarks' && overflowCount > 0
+                            ? `${overflowCount} extra`
+                            : undefined,
+                });
+            });
 
             setClusters(rootNodes);
             setStructureAssignments(assignmentSummaries);
@@ -799,6 +1037,10 @@ export const useBookmarkWeaver = (
 
     const autoRenameBookmarks = useCallback(async () => {
         if (!userId) return;
+        if (!isPremium) {
+            setErrorMessage('Auto rename requires Link Loom Pro.');
+            return;
+        }
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), AUTO_RENAME_REQUEST_TIMEOUT_MS);
@@ -833,7 +1075,7 @@ export const useBookmarkWeaver = (
             clearTimeout(timeoutId);
             setIsAutoRenaming(false);
         }
-    }, [effectiveClusteringSettings, userId]);
+    }, [effectiveClusteringSettings, isPremium, userId]);
 
     const deleteAllDuplicates = useCallback(async () => {
         if (typeof chrome === 'undefined' || !chrome.bookmarks) return;
@@ -1031,8 +1273,8 @@ export const useBookmarkWeaver = (
         try {
             const confirmed = window.confirm(
                 accountUserId
-                    ? 'Apply changes will move bookmarks into a new Link Loom folder. A backup snapshot will be created first. Continue?'
-                    : 'Apply changes will move bookmarks into a new Link Loom folder. Log in to enable automatic backups. Continue without backup?'
+                    ? 'Apply changes will rewrite the displayed structure directly inside your Chrome bookmark folders. A backup snapshot will be created first. Continue?'
+                    : 'Apply changes will rewrite the displayed structure directly inside your Chrome bookmark folders. Log in to enable automatic backups. Continue without backup?'
             );
             if (!confirmed) return;
 
@@ -1047,99 +1289,139 @@ export const useBookmarkWeaver = (
                 console.log('[ApplyChanges] Skipped backup snapshot because user is not logged in');
             }
 
-            // 1. Fetch structure with chrome_ids from backend
-            const res = await fetch(`${BACKEND_URL}/structure/${userId}`);
-            const data = await res.json();
-            const { clusters: serverClusters, assignments } = data;
+            const rootNodes = clusters.filter(
+                (node): node is BookmarkNode & { rootTitle: BookmarkRootTitle } =>
+                    node.nodeType === 'root' && Boolean(node.rootTitle)
+            );
 
-            if (!serverClusters?.length) {
-                console.warn('[ApplyChanges] No clusters to apply');
+            if (rootNodes.length === 0) {
+                console.warn('[ApplyChanges] No root-aware structure is available to apply');
                 setStatus('done');
                 return;
             }
 
-            // 2. Create a "Link Loom" parent folder at the root of "Other Bookmarks"
-            const otherBookmarksId = '2'; // Chrome's "Other Bookmarks" folder ID
-            const linkLoomFolder = await chrome.bookmarks.create({
-                parentId: otherBookmarksId,
-                title: `Link Loom - ${new Date().toLocaleDateString()}`
-            });
-            console.log('[ApplyChanges] Created Link Loom folder:', linkLoomFolder.id);
-
-            // 3. Build cluster hierarchy map and topological sort
-            const clusterMap = new Map<string, { cluster: any; chromeId?: string }>();
-            serverClusters.forEach((c: any) => {
-                clusterMap.set(c.id, { cluster: c });
-            });
-
-            // Topological sort - parents before children
-            const sortedClusters: any[] = [];
-            const visited = new Set<string>();
-
-            const visit = (clusterId: string) => {
-                if (visited.has(clusterId)) return;
-                const item = clusterMap.get(clusterId);
-                if (!item) return;
-                
-                // Visit parent first
-                if (item.cluster.parent_id && clusterMap.has(item.cluster.parent_id)) {
-                    visit(item.cluster.parent_id);
-                }
-                
-                visited.add(clusterId);
-                sortedClusters.push(item.cluster);
-            };
-
-            serverClusters.forEach((c: any) => visit(c.id));
-
-            // 4. Create folder hierarchy in Chrome
-            for (const cluster of sortedClusters) {
-                const parentChromeId = cluster.parent_id 
-                    ? clusterMap.get(cluster.parent_id)?.chromeId 
-                    : linkLoomFolder.id;
-
-                try {
-                    const folder = await chrome.bookmarks.create({
-                        parentId: parentChromeId || linkLoomFolder.id,
-                        title: cluster.name || 'Unnamed Folder'
-                    });
-                    clusterMap.get(cluster.id)!.chromeId = folder.id;
-                    console.log(`[ApplyChanges] Created folder: ${cluster.name} (${folder.id})`);
-                } catch (err) {
-                    console.error(`[ApplyChanges] Failed to create folder: ${cluster.name}`, err);
-                }
-            }
-
-            // 5. Move bookmarks to their assigned folders
             let movedCount = 0;
             let skippedCount = 0;
+            let folderCreateFailures = 0;
+            const createdFolderIds = new Map<string, string>();
+            const keepIdsByRoot = new Map<BookmarkRootTitle, Set<string>>();
 
-            for (const assignment of assignments) {
-                const chromeId = assignment.bookmarks?.chrome_id;
-                const targetFolderId = clusterMap.get(assignment.cluster_id)?.chromeId;
-                const currentTitle = (assignment.bookmarks?.title || '').trim();
-                const aiTitle = (assignment.bookmarks?.ai_title || '').trim();
+            const createFoldersForNodes = async (
+                nodes: BookmarkNode[],
+                parentId: string,
+                rootKeepIds: Set<string>,
+                isTopLevel = false
+            ) => {
+                for (const node of nodes) {
+                    if (node.url) continue;
 
-                if (!chromeId || !targetFolderId) {
-                    skippedCount++;
-                    continue;
-                }
-
-                try {
-                    if (aiTitle && aiTitle !== currentTitle) {
-                        await chrome.bookmarks.update(chromeId, { title: aiTitle });
+                    try {
+                        const folder = await chrome.bookmarks.create({
+                            parentId,
+                            title: node.title || 'Untitled Folder',
+                        });
+                        createdFolderIds.set(node.id, folder.id);
+                        if (isTopLevel) {
+                            rootKeepIds.add(folder.id);
+                        }
+                        await createFoldersForNodes(node.children || [], folder.id, rootKeepIds);
+                    } catch (error) {
+                        folderCreateFailures += 1;
+                        console.error(`[ApplyChanges] Failed to create folder ${node.title}`, error);
                     }
-                    await chrome.bookmarks.move(chromeId, { parentId: targetFolderId });
-                    movedCount++;
-                } catch (err) {
-                    // Bookmark may have been deleted or moved by user
-                    console.warn(`[ApplyChanges] Failed to move bookmark ${chromeId}:`, err);
-                    skippedCount++;
                 }
+            };
+
+            const applyBookmarksForNodes = async (
+                nodes: BookmarkNode[],
+                parentId: string,
+                rootKeepIds: Set<string>,
+                isTopLevel = false
+            ) => {
+                for (const node of nodes) {
+                    if (node.url) {
+                        const chromeId = getBookmarkChromeId(node);
+                        if (!chromeId) {
+                            skippedCount += 1;
+                            continue;
+                        }
+
+                        try {
+                            const nextTitle = node.title.trim();
+                            const currentTitle = (node.originalTitle || node.title).trim();
+                            if (nextTitle && nextTitle !== currentTitle) {
+                                await chrome.bookmarks.update(chromeId, { title: node.title });
+                            }
+                            await chrome.bookmarks.move(chromeId, { parentId });
+                            if (isTopLevel) {
+                                rootKeepIds.add(chromeId);
+                            }
+                            movedCount += 1;
+                        } catch (error) {
+                            console.warn(`[ApplyChanges] Failed to move bookmark ${chromeId}:`, error);
+                            skippedCount += 1;
+                        }
+                        continue;
+                    }
+
+                    const folderId = createdFolderIds.get(node.id);
+                    if (!folderId) {
+                        skippedCount += countBookmarksInTree(node.children || []);
+                        continue;
+                    }
+
+                    await applyBookmarksForNodes(node.children || [], folderId, rootKeepIds);
+                }
+            };
+
+            const clearRootChildrenExcept = async (rootId: string, keepIds: Set<string>) => {
+                const children = await chrome.bookmarks.getChildren(rootId);
+                for (const child of [...children].reverse()) {
+                    if (keepIds.has(child.id)) continue;
+                    if (child.url) {
+                        await chrome.bookmarks.remove(child.id);
+                    } else {
+                        await chrome.bookmarks.removeTree(child.id);
+                    }
+                }
+            };
+
+            for (const rootNode of rootNodes) {
+                const rootId = ROOT_IDS[rootNode.rootTitle];
+                const keepIds = new Set<string>();
+                keepIdsByRoot.set(rootNode.rootTitle, keepIds);
+                await createFoldersForNodes(rootNode.children || [], rootId, keepIds, true);
             }
 
-            console.log(`[ApplyChanges] Complete! Moved: ${movedCount}, Skipped: ${skippedCount}`);
+            for (const rootNode of rootNodes) {
+                const rootId = ROOT_IDS[rootNode.rootTitle];
+                const keepIds = keepIdsByRoot.get(rootNode.rootTitle) || new Set<string>();
+                await applyBookmarksForNodes(rootNode.children || [], rootId, keepIds, true);
+            }
+
+            if (folderCreateFailures === 0 && skippedCount === 0) {
+                for (const rootNode of rootNodes) {
+                    await clearRootChildrenExcept(
+                        ROOT_IDS[rootNode.rootTitle],
+                        keepIdsByRoot.get(rootNode.rootTitle) || new Set<string>()
+                    );
+                }
+            } else {
+                window.alert(
+                    'Link Loom applied the structure, but some bookmarks could not be moved. Existing folders were left in place to avoid deleting anything unexpectedly.'
+                );
+            }
+
+            if (userId) {
+                await clearPersistedOverflowBookmarks(userId);
+            }
+            overflowBookmarksRef.current = [];
+
+            console.log(
+                `[ApplyChanges] Complete! Moved: ${movedCount}, Skipped: ${skippedCount}, Folder failures: ${folderCreateFailures}`
+            );
             clusterRecoveryTriggered.current = false;
+            setErrorMessage(null);
             setStatus('done');
         } catch (error) {
             if (isFailedFetchError(error)) {
@@ -1156,6 +1438,7 @@ export const useBookmarkWeaver = (
     const cancelWeaving = async () => {
         if (!userId) return;
         try {
+            await clearPersistedOverflowBookmarks(userId);
             await fetch(`${BACKEND_URL}/cancel/${userId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1175,6 +1458,8 @@ export const useBookmarkWeaver = (
             deadLinkChromeIdsRef.current = [];
             deadLinkScanTokenRef.current += 1;
             clusterRecoveryTriggered.current = false;
+            overflowBookmarksRef.current = [];
+            pendingBookmarksRef.current = [];
         }
     };
 

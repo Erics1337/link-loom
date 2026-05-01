@@ -3,7 +3,7 @@ import { enrichmentProcessor } from '../enrichment';
 import { supabase } from '../../db';
 import { queues } from '../../lib/queue';
 import { isUserCancelled } from '../../lib/cancellation';
-import { Job } from 'bullmq';
+import { QueueJob } from '../../lib/queue';
 
 // Mock dependencies
 vi.mock('../../db', () => ({
@@ -42,7 +42,7 @@ describe('Enrichment Worker', () => {
     const createMockJob = (data: any) => ({
         data,
         updateProgress: vi.fn(),
-    } as unknown as Job);
+    } as unknown as QueueJob<any>);
 
     it('should successfully fetch URL, extract metadata, update DB, and enqueue embedding', async () => {
         const mockHtml = `

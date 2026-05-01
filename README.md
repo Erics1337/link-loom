@@ -19,7 +19,7 @@ This project is a monorepo managed by [Turborepo](https://turbo.build/repo) and 
 ### Apps
 
 - **`apps/extension`**: Chrome Extension built with React, Vite, and CRXJS.
-- **`apps/backend`**: Fastify API for bookmark ingestion, embedding (OpenAI), and clustering (ml-kmeans). Uses Supabase (Postgres) for storage and BullMQ/Redis for job queues.
+- **`apps/backend`**: Fastify API for bookmark ingestion, embedding (OpenAI), and clustering (ml-kmeans). Uses Supabase (Postgres) for storage and SQS/Lambda for production queues.
 - **`apps/web`**: Next.js application (Marketing/Dashboard).
 
 ### Packages
@@ -32,7 +32,7 @@ This project is a monorepo managed by [Turborepo](https://turbo.build/repo) and 
 
 - **Node.js** (>= 18)
 - **pnpm** (>= 8)
-- **Docker** (for local Supabase and Redis)
+- **Docker** (for local Supabase)
 - **Supabase CLI**
 - **OpenAI API Key**
 
@@ -52,15 +52,15 @@ This project is a monorepo managed by [Turborepo](https://turbo.build/repo) and 
     ```
 
 3.  **Environment Setup**
-    - Copy `.env.example` to `.env` in `apps/backend` and configure your keys:
-      - `DATABASE_URL` (Supabase)
-      - `OPENAI_API_KEY`
-      - `REDIS_URL`
+    - Copy `.env.example` to `.env.local` in `apps/web`, `apps/backend`, and `apps/extension`.
+    - Use `npx supabase status` after starting Supabase to copy the local API URL, anon key, service role key, and DB URL into those files.
+    - `apps/backend` also needs `OPENAI_API_KEY` for AI processing.
 
 4.  **Start Infrastructure**
     - Ensure Docker is running.
-    - Start Supabase (if local): `npx supabase start`
-    - Start Redis (if not using Supabase's or external): `docker-compose up -d` (if applicable)
+    - Start local Supabase: `npx supabase start`
+    - Bookmark processing runs inline in local development; production should set `QUEUE_DRIVER=sqs` and use SQS-triggered Lambda workers.
+    - For web login/signup work only, Supabase plus `pnpm --filter web dev` is enough.
 
 5.  **Run Development Server**
 
@@ -70,7 +70,23 @@ This project is a monorepo managed by [Turborepo](https://turbo.build/repo) and 
 
     This command starts all applications in parallel using Turbo.
 
-6.  **Stripe Local Development**
+6.  **Production Lambda Deploy**
+    - Production deploys use `apps/*/.env.production` as the source of truth.
+    - The root `Makefile` maps those values into Terraform `TF_VAR_*` variables.
+    - Check the mapping without printing secrets:
+      ```bash
+      make tf-env-print
+      ```
+    - Validate and deploy the Lambda/SQS backend:
+      ```bash
+      make tf-check
+      make tf-plan
+      make deploy
+      make smoke-prod
+      ```
+    - There is no Redis/ElastiCache in production; SQS-triggered Lambda workers process jobs.
+
+7.  **Stripe Local Development**
     To test premium features locally, you need to forward Stripe webhooks to your local environment.
     - Install the [Stripe CLI](https://docs.stripe.com/stripe-cli).
     - Log in to your Stripe account:

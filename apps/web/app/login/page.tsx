@@ -12,33 +12,50 @@ export default function Login() {
     const [password, setPassword] = useState('')
     const [view, setView] = useState<'sign-in' | 'sign-up'>('sign-in')
     const [loading, setLoading] = useState(false)
+    const [message, setMessage] = useState<string | null>(null)
     const router = useRouter()
     const supabase = createClient()
 
     const handleSignUp = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault()
         setLoading(true)
-        await supabase.auth.signUp({
+        setMessage(null)
+
+        const { data, error } = await supabase.auth.signUp({
             email,
             password,
             options: {
                 emailRedirectTo: `${location.origin}/auth/callback`,
             },
         })
+
         setLoading(false)
+
+        if (error) {
+            setMessage(error.message)
+            return
+        }
+
+        if (data.session) {
+            router.push('/dashboard')
+            router.refresh()
+            return
+        }
+
         setView('sign-in')
-        alert('Check your email for the confirmation link!')
+        setMessage('Account created. You can sign in now.')
     }
 
     const handleSignIn = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault()
         setLoading(true)
+        setMessage(null)
         const { error } = await supabase.auth.signInWithPassword({
             email,
             password,
         })
         if (error) {
-            alert(error.message)
+            setMessage(error.message)
             setLoading(false)
         } else {
             router.push('/dashboard')
@@ -55,6 +72,7 @@ export default function Login() {
                             src="/logo.png"
                             alt="Link Loom Logo"
                             fill
+                            sizes="48px"
                             className="object-contain"
                         />
                     </div>
@@ -102,7 +120,8 @@ export default function Login() {
                                 id="password"
                                 name="password"
                                 type="password"
-                                autoComplete="current-password"
+                                autoComplete={view === 'sign-in' ? 'current-password' : 'new-password'}
+                                minLength={6}
                                 required
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
@@ -121,6 +140,12 @@ export default function Login() {
                         </button>
                     </div>
                 </form>
+
+                {message && (
+                    <p className="mt-4 rounded-md bg-white/5 px-3 py-2 text-sm text-gray-200 ring-1 ring-inset ring-white/10">
+                        {message}
+                    </p>
+                )}
 
                 <p className="mt-10 text-center text-sm text-gray-400">
                     {view === 'sign-in' ? 'Not a member?' : 'Already have an account?'}

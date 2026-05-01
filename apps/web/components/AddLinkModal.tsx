@@ -33,6 +33,7 @@ export function AddLinkModal() {
                 .from('bookmarks')
                 .insert({
                     user_id: user.id,
+                    chrome_id: `manual-${crypto.randomUUID()}`,
                     url,
                     title: 'Adding link...', // Placeholder until enriched
                     status: 'pending'

@@ -9,6 +9,8 @@ interface ResultsScreenProps {
         duplicates: number;
         deadLinks: number;
     };
+    isPremium: boolean;
+    onUpgrade: () => void;
     onAutoRename: () => Promise<void> | void;
     isAutoRenaming: boolean;
     onOpenSettings: () => void;
@@ -25,6 +27,8 @@ interface ResultsScreenProps {
 export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     clusters,
     stats,
+    isPremium,
+    onUpgrade,
     onAutoRename,
     isAutoRenaming,
     onOpenSettings,
@@ -39,32 +43,36 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
 }) => {
     const version = useVersion();
     const [expandAll, setExpandAll] = useState(false);
-    const { organizedCount, totalBookmarks } = React.useMemo(() => {
-        let orgCount = 0;
-        let totalCount = 0;
-        let foundSeparator = false;
-
-        const countLeaves = (nodes: BookmarkNode[]): number => {
-            return nodes.reduce((sum, node) => {
-                if (node.isSeparator) return sum;
-                if (!node.children || node.children.length === 0) return sum + (node.url ? 1 : 0);
-                return sum + countLeaves(node.children);
-            }, 0);
-        };
-
-        for (const node of clusters) {
-            if (node.isSeparator) {
-                foundSeparator = true;
-                continue;
-            }
-            const leaves = countLeaves([node]);
-            totalCount += leaves;
-            if (!foundSeparator) {
-                orgCount += leaves;
-            }
+    const requirePro = (action: () => void) => {
+        if (!isPremium) {
+            onUpgrade();
+            return;
         }
+        action();
+    };
+    const { organized, total } = React.useMemo(() => {
+        const countLeaves = (nodes: BookmarkNode[]): { organized: number; total: number } =>
+            nodes.reduce(
+                (sum, node) => {
+                    if (node.isSeparator) return sum;
+                    if (!node.children || node.children.length === 0) {
+                        if (!node.url) return sum;
+                        return {
+                            organized: sum.organized + (node.isOverflow ? 0 : 1),
+                            total: sum.total + 1,
+                        };
+                    }
 
-        return { organizedCount: orgCount, totalBookmarks: totalCount };
+                    const childCounts = countLeaves(node.children);
+                    return {
+                        organized: sum.organized + childCounts.organized,
+                        total: sum.total + childCounts.total,
+                    };
+                },
+                { organized: 0, total: 0 }
+            );
+
+        return countLeaves(clusters);
     }, [clusters]);
 
     return (
@@ -96,10 +104,11 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 </button>
                 <button
                     className="btn btn-secondary flex-1"
-                    onClick={() => void onAutoRename()}
+                    onClick={() => requirePro(() => void onAutoRename())}
                     disabled={isAutoRenaming}
+                    title={isPremium ? 'Auto rename bookmarks' : 'Upgrade to Pro to auto rename bookmarks'}
                 >
-                    {isAutoRenaming ? 'Renaming...' : 'Auto rename'}
+                    {isAutoRenaming ? 'Renaming...' : isPremium ? 'Auto rename' : 'Auto rename Pro'}
                 </button>
                 <button className="btn btn-secondary flex-1" onClick={onOpenSettings}>
                     Settings
@@ -119,7 +128,7 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 <div className="stat-row">
                     <span className="text-secondary text-sm">Total bookmarks</span>
                     <span className="badge-count">
-                        {organizedCount < totalBookmarks ? `${organizedCount} organized (${totalBookmarks} total)` : totalBookmarks}
+                        {organized < total ? `${organized} organized (${total} total)` : total}
                     </span>
                 </div>
                 <div className="stat-row">
@@ -129,18 +138,20 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                         {stats.deadLinks > 0 ? (
                             <button
                                 className="text-btn-danger"
-                                onClick={() => void onDeleteDeadLinks()}
+                                onClick={() => requirePro(() => void onDeleteDeadLinks())}
                                 disabled={isDeletingDeadLinks}
+                                title={isPremium ? 'Delete dead links' : 'Upgrade to Pro to delete dead links'}
                             >
-                                {isDeletingDeadLinks ? 'Deleting...' : 'Delete all'}
+                                {isDeletingDeadLinks ? 'Deleting...' : isPremium ? 'Delete all' : 'Delete all Pro'}
                             </button>
                         ) : (
                             <button
                                 className="text-btn-danger"
-                                onClick={() => void onScanDeadLinks()}
+                                onClick={() => requirePro(() => void onScanDeadLinks())}
                                 disabled={isScanningDeadLinks}
+                                title={isPremium ? 'Scan for dead links' : 'Upgrade to Pro to scan dead links'}
                             >
-                                {isScanningDeadLinks ? 'Scanning...' : 'Scan'}
+                                {isScanningDeadLinks ? 'Scanning...' : isPremium ? 'Scan' : 'Scan Pro'}
                             </button>
                         )}
                     </div>

@@ -1,32 +1,116 @@
-import { Queue, Worker, QueueEvents } from 'bullmq';
-import IORedis from 'ioredis';
+import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 
-const connection = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
-    maxRetriesPerRequest: null,
-    // Add logic to prevent crashing on connection error
-    retryStrategy: (times) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-    }
+export type QueueName = 'ingest' | 'enrichment' | 'embedding' | 'clustering';
+
+export type QueueJob<T = unknown> = {
+    data: T;
+    updateProgress: (progress: unknown) => Promise<void>;
+};
+
+export type QueueProcessor<T = unknown> = (job: QueueJob<T>) => Promise<void>;
+
+type QueueAddOptions = {
+    delay?: number;
+    jobId?: string;
+    attempts?: number;
+    backoff?: unknown;
+};
+
+type QueuedMessage = {
+    queue: QueueName;
+    jobName: string;
+    data: unknown;
+    jobId?: string;
+    attempts?: number;
+};
+
+const queueDriver = process.env.QUEUE_DRIVER ?? (process.env.AWS_LAMBDA_FUNCTION_NAME ? 'sqs' : 'inline');
+const sqs = new SQSClient({});
+const processors = new Map<QueueName, QueueProcessor>();
+
+const queueUrlEnvByName: Record<QueueName, string> = {
+    ingest: 'INGEST_QUEUE_URL',
+    enrichment: 'ENRICHMENT_QUEUE_URL',
+    embedding: 'EMBEDDING_QUEUE_URL',
+    clustering: 'CLUSTERING_QUEUE_URL',
+};
+
+export const createQueueJob = <T>(data: T): QueueJob<T> => ({
+    data,
+    updateProgress: async () => {
+        // SQS/Lambda does not expose mutable job progress. Progress belongs in the DB.
+    },
 });
 
-connection.on('error', (err: any) => {
-    if (err.code === 'ECONNREFUSED') {
-        console.error('\x1b[31m%s\x1b[0m', 'Create Connection Error: Failed to connect to Redis.');
-        console.error('\x1b[33m%s\x1b[0m', 'Make sure Docker is running and the Redis service is started:');
-        console.error('\x1b[36m%s\x1b[0m', '  docker-compose up -d redis');
-    } else {
-        console.error('Redis connection error:', err);
-    }
-});
+class AppQueue<T = unknown> {
+    constructor(private readonly name: QueueName) {}
 
-export const createQueue = (name: string) => new Queue(name, { connection });
-export const createWorker = (name: string, processor: any, options: any = {}) => new Worker(name, processor, { connection, ...options });
-export const createQueueEvents = (name: string) => new QueueEvents(name, { connection });
+    registerProcessor(processor: QueueProcessor<T>) {
+        processors.set(this.name, processor as QueueProcessor);
+    }
+
+    async add(jobName: string, data: T, options: QueueAddOptions = {}) {
+        const jobId = options.jobId ?? `${this.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+        if (queueDriver === 'sqs') {
+            const queueUrl = process.env[queueUrlEnvByName[this.name]];
+            if (!queueUrl) {
+                throw new Error(`Missing ${queueUrlEnvByName[this.name]} for SQS queue ${this.name}`);
+            }
+
+            const body: QueuedMessage = {
+                queue: this.name,
+                jobName,
+                data,
+                jobId,
+                attempts: options.attempts,
+            };
+
+            await sqs.send(new SendMessageCommand({
+                QueueUrl: queueUrl,
+                MessageBody: JSON.stringify(body),
+                DelaySeconds: options.delay ? Math.min(Math.ceil(options.delay / 1000), 900) : undefined,
+            }));
+
+            return { id: jobId, data };
+        }
+
+        const processor = processors.get(this.name);
+        if (!processor) {
+            throw new Error(`No inline processor registered for queue ${this.name}`);
+        }
+
+        const run = () => {
+            processor(createQueueJob(data)).catch((error) => {
+                console.error(`[QUEUE:${this.name}] Inline job failed`, error);
+            });
+        };
+
+        if (options.delay && options.delay > 0) {
+            setTimeout(run, options.delay);
+        } else {
+            queueMicrotask(run);
+        }
+
+        return { id: jobId, data };
+    }
+}
+
+export const createWorker = <T>(name: QueueName, processor: QueueProcessor<T>, _options: unknown = {}) => {
+    queues[name].registerProcessor(processor);
+};
+
+export const parseQueuedMessage = (raw: string): QueuedMessage => {
+    const message = JSON.parse(raw) as QueuedMessage;
+    if (!message.queue || !message.jobName || !('data' in message)) {
+        throw new Error('Invalid queue message');
+    }
+    return message;
+};
 
 export const queues = {
-    ingest: createQueue('ingest'),
-    enrichment: createQueue('enrichment'),
-    embedding: createQueue('embedding'),
-    clustering: createQueue('clustering'),
+    ingest: new AppQueue<any>('ingest'),
+    enrichment: new AppQueue<any>('enrichment'),
+    embedding: new AppQueue<any>('embedding'),
+    clustering: new AppQueue<any>('clustering'),
 };
