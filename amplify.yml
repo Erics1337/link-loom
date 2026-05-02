@@ -7,10 +7,10 @@ applications:
           commands:
             - corepack enable
             - corepack prepare pnpm@8.10.0 --activate
-            - cd ../.. && pnpm install --frozen-lockfile
+            - cd ../.. && NODE_ENV=development pnpm install --frozen-lockfile
         build:
           commands:
-            - cd ../.. && pnpm --filter web build
+            - cd ../.. && pnpm build
       artifacts:
         baseDirectory: .next
         files:
