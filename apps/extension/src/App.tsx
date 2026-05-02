@@ -256,9 +256,12 @@ const App = () => {
         // 1. Check Device Limit (Blocking)
         if (authStatus === 'limit_reached') {
             return (
-                 <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-                    <h1 className="text-2xl font-bold mb-4 text-red-500">Device Limit Reached</h1>
-                    <p className="text-secondary mb-8">{errorMsg || 'You have exceeded the maximum number of devices.'}</p>
+                 <div className="app-shell">
+                    <div className="panel">
+                        <p className="eyebrow">Account limit</p>
+                        <h1 className="screen-title mt-2">Device Limit Reached</h1>
+                        <p className="screen-copy mt-3">{errorMsg || 'You have exceeded the maximum number of devices.'}</p>
+                    </div>
                     <a href={`${WEB_APP_URL}/dashboard/devices`} target="_blank" rel="noreferrer" className="btn btn-primary">
                         Manage Devices
                     </a>
@@ -431,9 +434,12 @@ const App = () => {
                 );
             case 'done':
                 return (
-                    <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-                        <h1 className="text-2xl font-bold mb-4">All Done!</h1>
-                        <p className="text-secondary mb-8">Your bookmarks have been organized.</p>
+                    <div className="app-shell">
+                        <div className="panel">
+                            <p className="eyebrow">Complete</p>
+                            <h1 className="screen-title mt-2">All Done</h1>
+                            <p className="screen-copy mt-3">Your bookmarks have been organized.</p>
+                        </div>
                         <button onClick={() => setStatus('idle')} className="btn btn-primary">
                             Back to Home
                         </button>
@@ -442,17 +448,18 @@ const App = () => {
             case 'error': {
                 const isLimitError = (errorMessage || '').toLowerCase().includes('free tier');
                 return (
-                    <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-                        <h1 className="text-2xl font-bold mb-4 text-red-500">Error</h1>
-                        <p className="text-secondary mb-8">
-                            {errorMessage || 'Something went wrong.'}
-                        </p>
+                    <div className="app-shell">
+                        <div className="panel">
+                            <p className="eyebrow">Error</p>
+                            <h1 className="screen-title mt-2">Something stopped</h1>
+                            <p className="screen-copy mt-3">{errorMessage || 'Something went wrong.'}</p>
+                        </div>
                         {isLimitError && (
                             <a
                                 href={`${WEB_APP_URL}/dashboard/billing`}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="btn btn-primary mb-3"
+                                className="btn btn-primary"
                             >
                                 Upgrade to Pro
                             </a>
@@ -469,21 +476,17 @@ const App = () => {
                 const total = info?.total ?? 0;
                 const extra = total - limit;
                 return (
-                    <div className="flex flex-col items-center justify-center h-full p-6 text-center">
-                        <div className="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center mb-4">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400">
-                                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-                                <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-                            </svg>
+                    <div className="app-shell">
+                        <div className="panel">
+                            <p className="eyebrow">Free tier limit</p>
+                            <h1 className="screen-title mt-2">Too many bookmarks</h1>
+                            <p className="screen-copy mt-3">
+                                You have <strong>{total.toLocaleString()}</strong> bookmarks. Free supports <strong>{limit.toLocaleString()}</strong>. The extra <strong>{extra.toLocaleString()}</strong> will stay untouched.
+                            </p>
                         </div>
-                        <h1 className="text-xl font-bold mb-2">Too many bookmarks</h1>
-                        <p className="text-secondary text-sm mb-6 max-w-[280px]">
-                            You have <strong className="text-white">{total.toLocaleString()}</strong> bookmarks, but the free tier supports up to <strong className="text-white">{limit.toLocaleString()}</strong>.
-                            Only the first <strong className="text-white">{limit.toLocaleString()}</strong> bookmarks will be organized right now. The remaining <strong className="text-white">{extra.toLocaleString()}</strong> won&apos;t be touched.
-                        </p>
                         <button
                             onClick={continueWithLimitedBookmarks}
-                            className="btn btn-primary w-full mb-3"
+                            className="btn btn-primary w-full"
                         >
                             Organize first {limit.toLocaleString()} bookmarks
                         </button>
@@ -491,11 +494,11 @@ const App = () => {
                             href={`${WEB_APP_URL}/dashboard/billing`}
                             target="_blank"
                             rel="noreferrer"
-                            className="btn w-full mb-3"
+                            className="btn w-full"
                         >
                             Upgrade to Pro — unlimited bookmarks
                         </a>
-                        <button onClick={() => setStatus('idle')} className="text-sm text-secondary hover:text-white transition-colors">
+                        <button onClick={() => setStatus('idle')} className="btn btn-ghost">
                             Cancel
                         </button>
                     </div>

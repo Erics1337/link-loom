@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { BookmarkTree, BookmarkNode } from '../components/BookmarkTree';
 import { PopOutButton } from '../components/PopOutButton';
 import { useVersion } from '../hooks/useVersion';
+import { Check, Settings, Sparkles } from 'lucide-react';
 
 interface ResultsScreenProps {
     clusters: BookmarkNode[];
@@ -76,17 +77,14 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     }, [clusters]);
 
     return (
-        <div className="flex flex-col h-full p-2 gap-2">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div>
-                    <div className="flex items-center gap-2">
-                        <img src="/icons/icon-48.png" alt="Logo" className="w-6 h-6" />
-                        <h1 className="text-xl font-bold text-gradient">Link Loom</h1>
+        <div className="app-shell" style={{ gap: 10, padding: 10 }}>
+            <div className="app-header">
+                <div className="brand-lockup">
+                    <img src="/icons/icon-48.png" alt="Link Loom" className="brand-icon" />
+                    <div>
+                        <p className="eyebrow">Review structure</p>
+                        <h1 className="brand-title">Results</h1>
                     </div>
-                    <p className="text-xs text-secondary mt-1">
-                        Organize your bookmarks with AI clustering.
-                    </p>
                 </div>
                 <div className="flex items-center gap-2">
                     <span className="badge">v {version}</span>
@@ -94,37 +92,37 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 </div>
             </div>
 
-            {/* Actions */}
-            <div className="flex gap-2">
+            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr 38px', gap: 8 }}>
                 <button
                     onClick={() => setExpandAll(!expandAll)}
-                    className="btn btn-secondary flex-1"
+                    className="btn btn-secondary"
                 >
                     {expandAll ? 'Collapse all' : 'Expand all'}
                 </button>
                 <button
-                    className="btn btn-secondary flex-1"
+                    className="btn btn-secondary"
                     onClick={() => requirePro(() => void onAutoRename())}
                     disabled={isAutoRenaming}
                     title={isPremium ? 'Auto rename bookmarks' : 'Upgrade to Pro to auto rename bookmarks'}
                 >
-                    {isAutoRenaming ? 'Renaming...' : isPremium ? 'Auto rename' : 'Auto rename Pro'}
+                    {isAutoRenaming ? 'Renaming...' : isPremium ? 'Auto rename' : 'Rename Pro'}
                 </button>
-                <button className="btn btn-secondary flex-1" onClick={onOpenSettings}>
-                    Settings
+                <button className="btn-icon" onClick={onOpenSettings} title="Settings">
+                    <Settings size={17} />
                 </button>
             </div>
 
-            {/* Tree View Card */}
             <div className="card flex-1 min-h-0 overflow-hidden flex flex-col p-0">
-                <div className="p-1 border-b border-white-10 text-xs font-medium text-secondary uppercase tracking-wider">
-                    Proposed Structure
+                <div className="p-2 border-b border-white-10 flex items-center justify-between">
+                    <span className="eyebrow">Proposed Structure</span>
+                    <span className="badge-count">
+                        {organized < total ? `${organized}/${total}` : total}
+                    </span>
                 </div>
                 <BookmarkTree nodes={clusters} defaultExpanded={expandAll} />
             </div>
 
-            {/* Footer Stats & Actions */}
-            <div className="flex flex-col gap-2">
+            <div className="card space-y-1">
                 <div className="stat-row">
                     <span className="text-secondary text-sm">Total bookmarks</span>
                     <span className="badge-count">
@@ -169,19 +167,15 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                         </button>
                     </div>
                 </div>
-                
-                <div className="flex gap-2 mt-1">
-                    <button onClick={onBack} className="btn btn-secondary flex-1">
-                        Back
-                    </button>
-                    <button onClick={onApply} className="btn btn-primary flex-1">
-                        Apply Changes
-                    </button>
-                </div>
-                <p className="text-xs text-secondary">
-                    Backups are managed in the main screen and require login.
-                </p>
             </div>
+
+            <div className="grid" style={{ gridTemplateColumns: '0.7fr 1.3fr', gap: 8 }}>
+                <button onClick={onBack} className="btn btn-secondary">Back</button>
+                <button onClick={onApply} className="btn btn-primary">
+                    <Check size={15} /> Apply Changes
+                </button>
+            </div>
+            {!isPremium && <p className="text-xs text-secondary"><Sparkles size={12} /> Pro unlocks rename and dead-link tools.</p>}
         </div>
     );
 };

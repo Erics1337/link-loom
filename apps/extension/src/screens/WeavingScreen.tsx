@@ -2,6 +2,7 @@ import React from 'react';
 import { ProgressBar } from '../components/ProgressBar';
 import { PopOutButton } from '../components/PopOutButton';
 import { useVersion } from '../hooks/useVersion';
+import { Loader2 } from 'lucide-react';
 
 interface WeavingScreenProps {
     progress: number;
@@ -18,36 +19,44 @@ export const WeavingScreen: React.FC<WeavingScreenProps> = ({
 }) => {
     const version = useVersion();
     return (
-        <div className="flex flex-col items-center justify-center h-full p-6 text-center relative">
-            <div className="absolute top-4 right-4 flex items-center gap-2">
-                <span className="text-secondary text-xs">v {version}</span>
-                <PopOutButton />
+        <div className="app-shell">
+            <div className="app-header">
+                <div className="brand-lockup">
+                    <img src="/icons/icon-48.png" alt="Link Loom" className="brand-icon" />
+                    <div>
+                        <p className="eyebrow">Processing</p>
+                        <h1 className="brand-title">Link Loom</h1>
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="badge">v {version}</span>
+                    <PopOutButton />
+                </div>
             </div>
 
-            <div className="flex items-center justify-center gap-3 mb-2">
-                <img src="/icons/icon-48.png" alt="Logo" className="w-10 h-10" />
-                <h1 className="text-3xl font-bold">Link Loom</h1>
-            </div>
-            <p className="mb-12 text-lg text-secondary">
-                Organize your bookmarks<br />with AI clustering.
-            </p>
+            <section className="panel">
+                <Loader2 size={26} className="text-accent" />
+                <h2 className="screen-title mt-3">Building your map</h2>
+                <p className="screen-copy mt-2">AI is grouping bookmarks, naming folders, and checking structure.</p>
+            </section>
 
-            <div className="w-full mb-8 text-left">
-                <p className="mb-3 text-base font-medium text-white">{statusMessage}</p>
-                {statusDetail && (
-                    <p className="mb-3 text-xs text-secondary">{statusDetail}</p>
-                )}
+            <section className="card space-y-3">
+                <div className="stat-row">
+                    <span className="text-sm font-bold text-primary">Progress</span>
+                    <span className="badge-count">{Math.round(progress)}%</span>
+                </div>
                 <ProgressBar progress={progress} />
+                <div>
+                    <p className="text-sm text-primary font-bold">{statusMessage}</p>
+                    {statusDetail && <p className="text-xs text-secondary mt-1">{statusDetail}</p>}
+                </div>
+            </section>
+
+            <div className="message mt-auto">
+                Runs in background. Reopen popup anytime to check progress.
             </div>
 
-            <p className="text-sm text-secondary opacity-80 max-w-[280px] mb-6">
-                Processing runs in the background. You can minimize or close this popup and reopen it to check progress.
-            </p>
-            
-            <button 
-                onClick={onCancel}
-                className="text-sm text-red-400 hover:text-red-300 transition-colors font-medium border border-red-900/30 bg-red-900/10 px-4 py-2 rounded-md"
-            >
+            <button onClick={onCancel} className="btn btn-secondary text-danger">
                 Cancel Processing
             </button>
         </div>

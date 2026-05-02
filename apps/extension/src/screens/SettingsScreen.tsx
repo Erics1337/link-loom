@@ -45,24 +45,20 @@ const CustomSelect = ({ value, onChange, options }: { value: string, onChange: (
         <div className="relative" ref={selectRef}>
             <button 
                 type="button"
-                className="w-full flex items-center justify-between bg-[#0f172a]/60 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white/90 hover:text-white focus:outline-none focus:border-blue-500/50 transition-colors shadow-inner"
+                className="select-trigger flex items-center justify-between"
                 onClick={() => setIsOpen(!isOpen)}
             >
                 <span>{selected.label}</span>
-                <ChevronDown size={14} className={`text-secondary transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+                <ChevronDown size={14} className="text-secondary" />
             </button>
             
             {isOpen && (
-                <div className="absolute z-50 w-full mt-1 bg-[#0f172a]/95 border border-white/10 rounded-lg shadow-2xl overflow-hidden backdrop-blur-xl">
+                <div className="select-menu">
                     {options.map((option) => (
                         <button
                             key={option.value}
                             type="button"
-                            className={`w-full text-left px-3 py-2.5 text-sm transition-colors ${
-                                option.value === value 
-                                    ? 'bg-blue-500/20 text-blue-400 font-medium' 
-                                    : 'text-white/70 hover:bg-white/10 hover:text-white'
-                            }`}
+                            className={`select-option ${option.value === value ? 'select-option-active' : ''}`}
                             onClick={() => {
                                 onChange(option.value);
                                 setIsOpen(false);
@@ -81,31 +77,27 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, settings
     const { theme, toggleTheme } = useTheme();
 
     return (
-        <div className="flex flex-col h-full bg-primary relative">
-            {/* Header */}
-            <div className="flex items-center px-4 py-4 border-b border-white/5 bg-[#0f172a]/90 backdrop-blur-xl sticky top-0 z-10 shadow-sm">
-                <button 
-                    onClick={onBack} 
-                    className="btn-icon h-[38px] w-[38px] bg-white/5 hover:bg-white/10 flex items-center justify-center flex-shrink-0 mr-3 rounded-xl transition-transform active:scale-95 shadow-sm"
-                    title="Go Back"
-                >
-                    <ArrowLeft size={18} className="text-white/90" />
+        <div className="app-shell">
+            <div className="app-header">
+                <button onClick={onBack} className="btn-icon" title="Go Back">
+                    <ArrowLeft size={18} />
                 </button>
-                <h1 className="text-lg font-semibold text-white/90 tracking-tight">Settings</h1>
+                <div className="flex-1">
+                    <p className="eyebrow">Preferences</p>
+                    <h1 className="screen-title">Settings</h1>
+                </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                
-                {/* Clustering Section */}
+            <div className="app-scroll space-y-4">
                 <section>
                     <div className="flex items-center gap-2 mb-3 px-1">
-                        <FolderTree size={16} className="text-blue-400" />
-                        <h2 className="text-sm font-medium text-white/90">Clustering Behavior</h2>
+                        <FolderTree size={16} className="text-accent" />
+                        <h2 className="text-sm font-bold">Clustering Behavior</h2>
                     </div>
                     
-                    <div className="card bg-[#1e293b]/50 border border-white/5 p-4 space-y-5 rounded-xl">
+                    <div className="card space-y-4">
                         <div>
-                            <div className="text-sm font-medium text-white/90 block mb-1">Folder Density</div>
+                            <div className="text-sm font-bold mb-1">Folder Density</div>
                             <p className="text-xs text-secondary mb-3">
                                 {densityOptions.find(option => option.value === settings.folderDensity)?.hint}
                             </p>
@@ -116,10 +108,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, settings
                             />
                         </div>
 
-                        <div className="w-full h-px bg-white/5 my-2"></div>
+                        <div className="divider" />
 
                         <div>
-                            <div className="text-sm font-medium text-white/90 block mb-1">Organization Mode</div>
+                            <div className="text-sm font-bold mb-1">Organization Mode</div>
                             <p className="text-xs text-secondary mb-3">
                                 {organizationOptions.find(option => option.value === settings.organizationMode)?.hint}
                             </p>
@@ -132,16 +124,15 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, settings
                     </div>
                 </section>
 
-                {/* Naming Section */}
                 <section>
                     <div className="flex items-center gap-2 mb-3 px-1">
-                        <Type size={16} className="text-purple-400" />
-                        <h2 className="text-sm font-medium text-white/90">Folder Naming</h2>
+                        <Type size={16} className="text-accent" />
+                        <h2 className="text-sm font-bold">Folder Naming</h2>
                     </div>
                     
-                    <div className="card bg-[#1e293b]/50 border border-white/5 p-4 space-y-5 rounded-xl">
+                    <div className="card space-y-4">
                         <div>
-                            <div className="text-sm font-medium text-white/90 block mb-1">Naming Tone</div>
+                            <div className="text-sm font-bold mb-1">Naming Tone</div>
                             <p className="text-xs text-secondary mb-3">
                                 {toneOptions.find(option => option.value === settings.namingTone)?.hint}
                             </p>
@@ -152,46 +143,46 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, settings
                             />
                         </div>
 
-                        <div className="w-full h-px bg-white/5 my-2"></div>
+                        <div className="divider" />
 
                         <label htmlFor="emoji-toggle" className="flex items-start justify-between cursor-pointer group">
                             <div className="text-left pr-4">
-                                <span className="block text-sm font-medium text-white/90 group-hover:text-white transition-colors">Use Emojis in Names</span>
+                                <span className="text-sm font-bold">Use Emojis in Names</span>
                                 <span className="block text-xs text-secondary mt-1 leading-relaxed">Adds emoji prefixes to AI generated folder names.</span>
                             </div>
-                            <div className="relative flex items-center h-5 mt-0.5">
+                            <div className="toggle mt-0.5">
                                 <input
                                     id="emoji-toggle"
                                     type="checkbox"
                                     checked={settings.useEmojiNames}
                                     onChange={(event) => onSettingsChange({ useEmojiNames: event.target.checked })}
-                                    className="sr-only peer"
                                 />
-                                <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-500 shadow-inner border border-white/5"></div>
+                                <span className="toggle-track" />
                             </div>
                         </label>
                     </div>
                 </section>
 
-                {/* Appearance Section */}
-                <section className="mb-8">
+                <section>
                     <div className="flex items-center gap-2 mb-3 px-1">
-                        <Moon size={16} className="text-slate-400" />
-                        <h2 className="text-sm font-medium text-white/90">Appearance</h2>
+                        <Moon size={16} className="text-accent" />
+                        <h2 className="text-sm font-bold">Appearance</h2>
                     </div>
                     
-                    <div className="card bg-[#1e293b]/50 border border-white/5 p-4 rounded-xl">
+                    <div className="card">
                         <label htmlFor="theme-toggle" className="flex items-center justify-between cursor-pointer group">
-                            <span className="block text-sm font-medium text-white/90 group-hover:text-white transition-colors">Dark Mode</span>
-                            <div className="relative flex items-center h-5">
+                            <div>
+                                <span className="text-sm font-bold">Dark Mode</span>
+                                <span className="block text-xs text-secondary mt-1">Uses compact extension palette.</span>
+                            </div>
+                            <div className="toggle">
                                 <input
                                     id="theme-toggle"
                                     type="checkbox"
                                     checked={theme === 'dark'}
                                     onChange={toggleTheme}
-                                    className="sr-only peer"
                                 />
-                                <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500 shadow-inner border border-white/5"></div>
+                                <span className="toggle-track" />
                             </div>
                         </label>
                     </div>
@@ -201,5 +192,4 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, settings
         </div>
     );
 };
-
 
