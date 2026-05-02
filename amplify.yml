@@ -1,22 +1,20 @@
 version: 1
-applications:
-  - appRoot: apps/web
-    frontend:
-      phases:
-        preBuild:
-          commands:
-            - corepack enable
-            - corepack prepare pnpm@8.10.0 --activate
-            - cd ../.. && NODE_ENV=development pnpm install --frozen-lockfile
-        build:
-          commands:
-            - pnpm run build
-      artifacts:
-        baseDirectory: .next
-        files:
-          - '**/*'
-      cache:
-        paths:
-          - .next/cache/**/*
-          - ../../node_modules/**/*
-          - ../../.pnpm-store/**/*
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - corepack enable
+        - corepack prepare pnpm@8.10.0 --activate
+        - cd ../.. && NODE_ENV=development pnpm install --frozen-lockfile
+    build:
+      commands:
+        - pnpm run build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - .next/cache/**/*
+      - ../../node_modules/**/*
+      - ../../.pnpm-store/**/*
