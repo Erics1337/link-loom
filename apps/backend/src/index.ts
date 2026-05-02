@@ -45,6 +45,10 @@ const DEAD_LINK_TIMEOUT_MS = 3000;
 const DEAD_LINK_SCAN_DEADLINE_MS = 30_000;
 const DEAD_LINK_STATUSES = new Set([404, 410, 451]);
 const DEAD_LINK_NETWORK_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED']);
+const ALLOW_UNAUTHENTICATED_USER_ID =
+    process.env.ALLOW_UNAUTHENTICATED_USER_ID === 'true' ||
+    process.env.NODE_ENV === 'test' ||
+    Boolean(process.env.VITEST);
 
 const fetchAllPages = async <T>(
     fetchPage: (from: number, to: number) => any
@@ -94,6 +98,46 @@ const requirePremium = async (userId: string, reply: any) => {
         upgradeUrl: '/dashboard/billing'
     });
     return false;
+};
+
+const getBearerToken = (req: any) => {
+    const header = req.headers?.authorization;
+    if (typeof header !== 'string') return '';
+    const match = header.match(/^Bearer\s+(.+)$/i);
+    return match?.[1]?.trim() ?? '';
+};
+
+const getFallbackUserId = (req: any) => {
+    const paramUserId = typeof req.params?.userId === 'string' ? req.params.userId : '';
+    const bodyUserId = typeof req.body?.userId === 'string' ? req.body.userId : '';
+    return paramUserId || bodyUserId;
+};
+
+const requireRequestUserId = async (req: any, reply: any) => {
+    const token = getBearerToken(req);
+    const fallbackUserId = getFallbackUserId(req);
+
+    if (token) {
+        const { data, error } = await supabase.auth.getUser(token);
+        if (error || !data.user?.id) {
+            reply.code(401).send({ error: 'Invalid or expired session.' });
+            return null;
+        }
+
+        if (fallbackUserId && fallbackUserId !== data.user.id) {
+            reply.code(403).send({ error: 'User id does not match authenticated session.' });
+            return null;
+        }
+
+        return data.user.id;
+    }
+
+    if (ALLOW_UNAUTHENTICATED_USER_ID && fallbackUserId) {
+        return fallbackUserId;
+    }
+
+    reply.code(401).send({ error: 'Authentication required.' });
+    return null;
 };
 
 const fetchWithTimeout = async (url: string, method: 'HEAD' | 'GET') => {
@@ -181,7 +225,9 @@ export const buildApp = async () => {
 
         // API Routes
         fastify.post('/ingest', async (req: any, reply) => {
-            const { userId, bookmarks, clusteringSettings: rawClusteringSettings } = req.body;
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
+            const { bookmarks, clusteringSettings: rawClusteringSettings } = req.body;
             const clusteringSettings = normalizeClusteringSettings(rawClusteringSettings);
             console.log(
                 `[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId} (density=${clusteringSettings.folderDensity}, tone=${clusteringSettings.namingTone}, mode=${clusteringSettings.organizationMode}, emoji=${clusteringSettings.useEmojiNames})`
@@ -249,7 +295,9 @@ export const buildApp = async () => {
 
         // Device Registration
         fastify.post('/register-device', async (req: any, reply) => {
-            const { userId, deviceId, name } = req.body;
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
+            const { deviceId, name } = req.body;
 
             const userError = await ensureUserExists(userId);
             if (userError) {
@@ -305,7 +353,8 @@ export const buildApp = async () => {
         });
 
         fastify.get('/status/:userId', async (req: any, reply) => {
-            const { userId } = req.params;
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
 
             // Get user and bookmark status counts in parallel for richer stage reporting.
             const [
@@ -408,7 +457,8 @@ export const buildApp = async () => {
         });
 
         fastify.get('/structure/:userId', async (req: any, reply) => {
-            const { userId } = req.params;
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
 
             try {
                 const userClusters = await fetchAllPages<any>((from, to) =>
@@ -443,7 +493,8 @@ export const buildApp = async () => {
         });
 
         fastify.post('/dead-links/check', async (req: any, reply) => {
-            const userId = typeof req.body?.userId === 'string' ? req.body.userId : '';
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
             const hasPremium = await requirePremium(userId, reply);
             if (!hasPremium) return reply;
 
@@ -514,7 +565,8 @@ export const buildApp = async () => {
         });
 
         fastify.post('/auto-rename/:userId', async (req: any, reply) => {
-            const { userId } = req.params;
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
             const clusteringSettings = normalizeClusteringSettings(req.body?.clusteringSettings);
             const hasPremium = await requirePremium(userId, reply);
             if (!hasPremium) return reply;
@@ -612,7 +664,8 @@ export const buildApp = async () => {
 
         // Manual trigger for clustering (for recovery)
         fastify.post('/trigger-clustering/:userId', async (req: any, reply) => {
-            const { userId } = req.params;
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
             const clusteringSettings = normalizeClusteringSettings(req.body?.clusteringSettings);
             clearUserCancelled(userId);
             console.log(`[MANUAL] Triggering clustering for user ${userId}`);
@@ -623,7 +676,8 @@ export const buildApp = async () => {
         });
 
         fastify.post('/cancel/:userId', async (req: any, reply) => {
-            const { userId } = req.params;
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
             const clearAllQueues = Boolean(req.body?.clearAllQueues);
             console.log(`[CANCEL] Request received for user ${userId} (clearAllQueues=${clearAllQueues})`);
             markUserCancelled(userId);
@@ -645,7 +699,8 @@ export const buildApp = async () => {
         });
 
         fastify.get('/backups/:userId', async (req: any, reply) => {
-            const { userId } = req.params;
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
             try {
                 // Fetch snapshots with counts
                 const { data: snapshots, error } = await supabase
@@ -687,7 +742,8 @@ export const buildApp = async () => {
         });
 
         fastify.post('/backups/:userId', async (req: any, reply) => {
-            const { userId } = req.params;
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
             const { name } = req.body;
             try {
                 const { data: snapshotId, error } = await supabase.rpc('create_structure_snapshot', {
@@ -704,7 +760,9 @@ export const buildApp = async () => {
         });
 
         fastify.post('/backups/:userId/:snapshotId/restore', async (req: any, reply) => {
-            const { userId, snapshotId } = req.params;
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
+            const { snapshotId } = req.params;
             try {
                 const { error } = await supabase.rpc('restore_structure_snapshot', {
                     p_user_id: userId,
@@ -720,12 +778,15 @@ export const buildApp = async () => {
         });
 
         fastify.delete('/backups/:userId/:snapshotId', async (req: any, reply) => {
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
             const { snapshotId } = req.params;
             try {
                 const { error } = await supabase
                     .from('structure_snapshots')
                     .delete()
-                    .eq('id', snapshotId);
+                    .eq('id', snapshotId)
+                    .eq('user_id', userId);
 
                 if (error) throw error;
                 return { status: 'deleted' };
@@ -736,7 +797,9 @@ export const buildApp = async () => {
         });
 
         fastify.post('/search', async (req: any, reply) => {
-            const { userId, query } = req.body;
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
+            const { query } = req.body;
 
             // 1. Embed Query
             const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });

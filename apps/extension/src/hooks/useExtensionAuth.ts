@@ -10,12 +10,14 @@ type StoredSession = {
     user: {
         id: string;
         email?: string | null;
+        isAnonymous?: boolean;
     };
 };
 
 export type ExtensionAuthUser = {
     id: string;
     email?: string | null;
+    isAnonymous?: boolean;
 };
 
 export type ExtensionAuthStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
@@ -40,6 +42,24 @@ const clearStoredSession = async () => {
 const saveStoredSession = async (session: StoredSession) => {
     if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
     await chrome.storage.local.set({ [SESSION_STORAGE_KEY]: session });
+};
+
+const buildSessionFromPayload = (payload: any): StoredSession => {
+    const user = payload.user as { id?: string; email?: string | null; is_anonymous?: boolean } | undefined;
+    const accessToken = payload.access_token as string | undefined;
+    if (!user?.id || !accessToken) {
+        throw new Error('Auth response was incomplete.');
+    }
+
+    return {
+        accessToken,
+        refreshToken: payload.refresh_token as string | undefined,
+        user: {
+            id: user.id,
+            email: user.email ?? null,
+            isAnonymous: Boolean(user.is_anonymous)
+        }
+    };
 };
 
 const readStoredSession = async () => {
@@ -69,13 +89,16 @@ const getAuthenticatedUser = async (accessToken: string) => {
     const data = await response.json();
     return {
         id: data.id as string,
-        email: (data.email as string | undefined) ?? null
+        email: (data.email as string | undefined) ?? null,
+        isAnonymous: Boolean(data.is_anonymous)
     } as ExtensionAuthUser;
 };
 
 export const useExtensionAuth = () => {
     const [status, setStatus] = useState<ExtensionAuthStatus>('loading');
     const [user, setUser] = useState<ExtensionAuthUser | null>(null);
+    const [accessToken, setAccessToken] = useState<string | null>(null);
+    const [refreshToken, setRefreshToken] = useState<string | null>(null);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
     useEffect(() => {
@@ -103,6 +126,8 @@ export const useExtensionAuth = () => {
                 const authUser = await getAuthenticatedUser(session.accessToken);
                 if (!cancelled) {
                     setUser(authUser);
+                    setAccessToken(session.accessToken);
+                    setRefreshToken(session.refreshToken || null);
                     setStatus('authenticated');
                     setErrorMessage(null);
                 }
@@ -111,6 +136,8 @@ export const useExtensionAuth = () => {
                 if (!cancelled) {
                     setStatus('unauthenticated');
                     setUser(null);
+                    setAccessToken(null);
+                    setRefreshToken(null);
                     setErrorMessage(error instanceof Error ? error.message : 'Failed to restore session.');
                 }
             }
@@ -143,29 +170,92 @@ export const useExtensionAuth = () => {
             throw new Error(payload.message || payload.error_description || payload.msg || 'Invalid email or password.');
         }
 
-        const nextSession: StoredSession = {
-            accessToken: payload.access_token as string,
-            refreshToken: payload.refresh_token as string | undefined,
-            user: {
-                id: payload.user?.id as string,
-                email: (payload.user?.email as string | undefined) ?? null
-            }
-        };
-
-        if (!nextSession.user.id || !nextSession.accessToken) {
-            throw new Error('Login response was incomplete.');
-        }
+        const nextSession = buildSessionFromPayload(payload);
 
         await saveStoredSession(nextSession);
         setUser(nextSession.user);
+        setAccessToken(nextSession.accessToken);
+        setRefreshToken(nextSession.refreshToken || null);
         setStatus('authenticated');
         setErrorMessage(null);
         return nextSession.user;
     }, []);
 
+    const ensureAnonymousSession = useCallback(async () => {
+        if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+            throw new Error(getConfigurationError());
+        }
+
+        if (user && accessToken) {
+            return { user, accessToken };
+        }
+
+        const response = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                apikey: SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${SUPABASE_ANON_KEY}`
+            },
+            body: JSON.stringify({})
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.message || payload.msg || payload.error_description || 'Failed to start anonymous session.');
+        }
+
+        const nextSession = buildSessionFromPayload(payload);
+        await saveStoredSession(nextSession);
+        setUser(nextSession.user);
+        setAccessToken(nextSession.accessToken);
+        setStatus('authenticated');
+        setErrorMessage(null);
+        return { user: nextSession.user, accessToken: nextSession.accessToken };
+    }, [accessToken, user]);
+
     const signUp = useCallback(async (email: string, password: string) => {
         if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
             throw new Error(getConfigurationError());
+        }
+
+        if (user?.isAnonymous && accessToken) {
+            const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    apikey: SUPABASE_ANON_KEY,
+                    Authorization: `Bearer ${accessToken}`
+                },
+                body: JSON.stringify({ email, password })
+            });
+
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.message || payload.msg || payload.error_description || 'Failed to attach email to session.');
+            }
+
+            const nextUser: ExtensionAuthUser = {
+                id: payload.id || user.id,
+                email: (payload.email as string | undefined) ?? email,
+                isAnonymous: Boolean(payload.is_anonymous)
+            };
+            const nextSession: StoredSession = {
+                accessToken,
+                user: nextUser
+            };
+            await saveStoredSession(nextSession);
+            setUser(nextUser);
+            setStatus('authenticated');
+            setErrorMessage(null);
+
+            return {
+                userId: nextUser.id,
+                email: nextUser.email,
+                accessToken,
+                authenticated: true,
+                requiresEmailConfirmation: Boolean(payload.email_change_sent_at)
+            } as ExtensionSignUpResult;
         }
 
         const response = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
@@ -185,20 +275,15 @@ export const useExtensionAuth = () => {
 
         const createdUser = payload.user as { id?: string; email?: string } | undefined;
         const createdEmail = createdUser?.email ?? email;
-        const accessToken = payload.access_token as string | undefined;
+        const createdAccessToken = payload.access_token as string | undefined;
 
-        if (accessToken && createdUser?.id) {
-            const nextSession: StoredSession = {
-                accessToken,
-                refreshToken: payload.refresh_token as string | undefined,
-                user: {
-                    id: createdUser.id,
-                    email: createdEmail
-                }
-            };
+        if (createdAccessToken && createdUser?.id) {
+            const nextSession = buildSessionFromPayload(payload);
 
             await saveStoredSession(nextSession);
             setUser(nextSession.user);
+            setAccessToken(nextSession.accessToken);
+            setRefreshToken(nextSession.refreshToken || null);
             setStatus('authenticated');
             setErrorMessage(null);
             return {
@@ -217,19 +302,24 @@ export const useExtensionAuth = () => {
             authenticated: false,
             requiresEmailConfirmation: true
         } as ExtensionSignUpResult;
-    }, []);
+    }, [accessToken, user]);
 
     const signOut = useCallback(async () => {
         await clearStoredSession();
         setUser(null);
+        setAccessToken(null);
+        setRefreshToken(null);
         setStatus('unauthenticated');
     }, []);
 
     return {
         status,
         user,
+        accessToken,
+        refreshToken,
         errorMessage,
         isConfigured,
+        ensureAnonymousSession,
         signIn,
         signUp,
         signOut

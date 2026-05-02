@@ -10,6 +10,7 @@ const BACKEND_UNAVAILABLE_MESSAGE = BACKEND_URL
 const DEAD_LINK_SCAN_REQUEST_TIMEOUT_MS = 45000;
 const AUTO_RENAME_REQUEST_TIMEOUT_MS = 120000;
 const STRUCTURE_REQUEST_TIMEOUT_MS = 45000;
+const DEFAULT_FREE_TIER_LIMIT = 500;
 const STRUCTURE_VERSIONS_STORAGE_KEY = 'bookmarkStructureVersions';
 const PRE_ORGANIZE_BACKUP_KEY = 'preOrganizeBackup';
 const OVERFLOW_BOOKMARKS_STORAGE_KEY = 'bookmarkWeaverOverflowBookmarks';
@@ -314,7 +315,10 @@ const resolvePreviewRoot = (
 
 export const useBookmarkWeaver = (
     accountUserId?: string | null,
-    clusteringSettings?: ClusteringSettings
+    clusteringSettings?: ClusteringSettings,
+    authAccessToken?: string | null,
+    ensureAnonymousSession?: () => Promise<{ user: { id: string; email?: string | null; isAnonymous?: boolean }; accessToken: string }>,
+    canSaveAccountBackups = Boolean(accountUserId)
 ) => {
     const [status, setStatus] = useState<AppStatus>('idle');
     const [hasCachedResults, setHasCachedResults] = useState(false);
@@ -339,9 +343,46 @@ export const useBookmarkWeaver = (
     const bookmarkRootMapRef = useRef<Record<string, BookmarkRootTitle>>({});
     const bookmarkPreferredRootMapRef = useRef<Record<string, BookmarkRootTitle>>({});
     const availableRootsRef = useRef<BookmarkRootTitle[]>([]);
+    const authAccessTokenRef = useRef<string | null>(authAccessToken ?? null);
 
     const [isPremium, setIsPremium] = useState(false);
     const effectiveClusteringSettings = normalizeClusteringSettings(clusteringSettings);
+
+    useEffect(() => {
+        authAccessTokenRef.current = authAccessToken ?? null;
+    }, [authAccessToken]);
+
+    const getAuthHeaders = useCallback((): Record<string, string> => {
+        const token = authAccessTokenRef.current || authAccessToken;
+        return token ? { Authorization: `Bearer ${token}` } : {};
+    }, [authAccessToken]);
+
+    const ensureProcessingIdentity = useCallback(async () => {
+        if (userId && authAccessToken) {
+            return { userId, accessToken: authAccessToken };
+        }
+        if (accountUserId && authAccessToken) {
+            setUserId(accountUserId);
+            return { userId: accountUserId, accessToken: authAccessToken };
+        }
+        if (!ensureAnonymousSession) {
+            if (userId) return { userId, accessToken: '' };
+            throw new Error('Start a Link Loom session before organizing bookmarks.');
+        }
+
+        const session = await ensureAnonymousSession();
+        authAccessTokenRef.current = session.accessToken;
+        setUserId(session.user.id);
+        return { userId: session.user.id, accessToken: session.accessToken };
+    }, [accountUserId, authAccessToken, ensureAnonymousSession, userId]);
+
+    const buildAuthHeaders = useCallback((tokenOverride?: string): Record<string, string> => {
+        const token = tokenOverride || authAccessTokenRef.current || authAccessToken;
+        return {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+        };
+    }, [authAccessToken]);
 
     const loadCurrentBookmarkTreeSnapshot = useCallback(async () => {
         if (typeof chrome === 'undefined' || !chrome.bookmarks) {
@@ -372,15 +413,7 @@ export const useBookmarkWeaver = (
 
         const resolveUserId = async () => {
             if (accountUserId) return accountUserId;
-            if (typeof chrome === 'undefined' || !chrome.storage?.local) return crypto.randomUUID();
-
-            const result = await chrome.storage.local.get(['userId']);
-            let currentUserId = result.userId as string | undefined;
-            if (!currentUserId) {
-                currentUserId = crypto.randomUUID();
-                await chrome.storage.local.set({ userId: currentUserId });
-            }
-            return currentUserId;
+            return '';
         };
 
         const hydrate = async () => {
@@ -389,7 +422,9 @@ export const useBookmarkWeaver = (
             setUserId(resolvedUserId);
 
             try {
-                const res = await fetch(`${BACKEND_URL}/status/${resolvedUserId}`);
+                const res = await fetch(`${BACKEND_URL}/status/${resolvedUserId}`, {
+                    headers: getAuthHeaders()
+                });
                 const data = await res.json();
                 if (cancelled) return;
 
@@ -431,7 +466,7 @@ export const useBookmarkWeaver = (
         return () => {
             cancelled = true;
         };
-    }, [accountUserId]);
+    }, [accountUserId, getAuthHeaders]);
 
     // Polling Effect
     useEffect(() => {
@@ -445,7 +480,9 @@ export const useBookmarkWeaver = (
 
         const interval = setInterval(async () => {
             try {
-                const res = await fetch(`${BACKEND_URL}/status/${userId}`);
+                const res = await fetch(`${BACKEND_URL}/status/${userId}`, {
+                    headers: getAuthHeaders()
+                });
                 const data = await res.json();
                 
                 if (data.isPremium) setIsPremium(true);
@@ -482,7 +519,7 @@ export const useBookmarkWeaver = (
                     clusterRecoveryTriggered.current = true;
                     fetch(`${BACKEND_URL}/trigger-clustering/${userId}`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: buildAuthHeaders(),
                         body: JSON.stringify({ clusteringSettings: effectiveClusteringSettings })
                     })
                         .catch((err) => console.error('[WEAVING] Failed to trigger recovery clustering', err));
@@ -502,10 +539,18 @@ export const useBookmarkWeaver = (
         }, 2000);
 
         return () => clearInterval(interval);
-    }, [effectiveClusteringSettings, status, userId]);
+    }, [buildAuthHeaders, effectiveClusteringSettings, getAuthHeaders, status, userId]);
     const startWeaving = useCallback(async () => {
-        setStatus('weaving');
-        setWeavingPhase('backup');
+        let processingIdentity: { userId: string; accessToken: string };
+        try {
+            processingIdentity = await ensureProcessingIdentity();
+        } catch (error) {
+            setErrorMessage(error instanceof Error ? error.message : 'Failed to start Link Loom session.');
+            setStatus('error');
+            return;
+        }
+
+        setWeavingPhase(null);
         setErrorMessage(null);
         setClusters([]); // Reset clusters to avoid showing old results
         setHasCachedResults(false);
@@ -520,13 +565,15 @@ export const useBookmarkWeaver = (
         overflowBookmarksRef.current = []; // Clear any previous overflow
         pendingBookmarksRef.current = [];
 
-        if (userId) {
-            await clearPersistedOverflowBookmarks(userId);
+        if (processingIdentity.userId) {
+            await clearPersistedOverflowBookmarks(processingIdentity.userId);
         }
 
         // Mock for local dev
         if (typeof chrome === 'undefined' || !chrome.bookmarks) {
              console.log("Running in mock mode");
+            setStatus('weaving');
+            setWeavingPhase('ingest');
             setTimeout(() => {
                 setProgress({
                     pending: 50,
@@ -578,17 +625,6 @@ export const useBookmarkWeaver = (
             // 1. Get Bookmarks
             const tree = await loadCurrentBookmarkTreeSnapshot();
 
-            // 1a. Save a local backup before doing anything
-            const backup = {
-                id: crypto.randomUUID(),
-                createdAt: new Date().toISOString(),
-                tree: tree,
-            };
-            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-                await chrome.storage.local.set({ [PRE_ORGANIZE_BACKUP_KEY]: backup });
-                console.log('[WEAVING] Pre-organize backup saved to chrome.storage.local');
-            }
-
             const bookmarks: ScannedBookmark[] = [];
             const traverse = (node: any) => {
                 if (node.url) {
@@ -600,6 +636,32 @@ export const useBookmarkWeaver = (
             };
             traverse(tree[0]);
             const totalBookmarks = bookmarks.length;
+
+            if (!isPremium && totalBookmarks > DEFAULT_FREE_TIER_LIMIT) {
+                pendingBookmarksRef.current = bookmarks;
+                setLimitExceededInfo({
+                    total: totalBookmarks,
+                    limit: DEFAULT_FREE_TIER_LIMIT,
+                });
+                setStats({ duplicates: 0, deadLinks: 0 });
+                setWeavingPhase(null);
+                setStatus('limit_exceeded');
+                return;
+            }
+
+            setStatus('weaving');
+            setWeavingPhase('backup');
+
+            // 1a. Save a local backup before doing anything
+            const backup = {
+                id: crypto.randomUUID(),
+                createdAt: new Date().toISOString(),
+                tree: tree,
+            };
+            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+                await chrome.storage.local.set({ [PRE_ORGANIZE_BACKUP_KEY]: backup });
+                console.log('[WEAVING] Pre-organize backup saved to chrome.storage.local');
+            }
 
             // Move to ingest phase now that backup is complete
             setWeavingPhase('ingest');
@@ -632,8 +694,8 @@ export const useBookmarkWeaver = (
             // 2. Send to Backend
             const response = await fetch(`${BACKEND_URL}/ingest`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId, bookmarks, clusteringSettings: effectiveClusteringSettings }),
+                headers: buildAuthHeaders(processingIdentity.accessToken),
+                body: JSON.stringify({ bookmarks, clusteringSettings: effectiveClusteringSettings }),
             });
 
             // Handle 402 Payment Required (limit exceeded)
@@ -671,7 +733,7 @@ export const useBookmarkWeaver = (
             setErrorMessage(message);
             setStatus('error');
         }
-    }, [effectiveClusteringSettings, isPremium, userId]);
+    }, [buildAuthHeaders, effectiveClusteringSettings, ensureProcessingIdentity, isPremium]);
 
     const continueWithLimitedBookmarks = useCallback(async () => {
         const limit = limitExceededInfo?.limit ?? 500;
@@ -702,8 +764,8 @@ export const useBookmarkWeaver = (
         try {
             const response = await fetch(`${BACKEND_URL}/ingest`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId, bookmarks: slicedBookmarks, clusteringSettings: effectiveClusteringSettings }),
+                headers: buildAuthHeaders(),
+                body: JSON.stringify({ bookmarks: slicedBookmarks, clusteringSettings: effectiveClusteringSettings }),
             });
 
             if (response.status === 402) {
@@ -733,7 +795,7 @@ export const useBookmarkWeaver = (
             setErrorMessage(message);
             setStatus('error');
         }
-    }, [effectiveClusteringSettings, limitExceededInfo, userId]);
+    }, [buildAuthHeaders, effectiveClusteringSettings, limitExceededInfo, userId]);
 
 
 
@@ -778,10 +840,9 @@ export const useBookmarkWeaver = (
         try {
             const response = await fetch(`${BACKEND_URL}/dead-links/check`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: buildAuthHeaders(),
                 signal: controller.signal,
                 body: JSON.stringify({
-                    userId,
                     bookmarks: assignmentsToScan.map((assignment) => ({
                         chromeId: assignment.chromeId,
                         url: assignment.url
@@ -832,7 +893,7 @@ export const useBookmarkWeaver = (
                 setIsScanningDeadLinks(false);
             }
         }
-    }, [isPremium, structureAssignments, userId]);
+    }, [buildAuthHeaders, isPremium, structureAssignments]);
 
     const fetchResults = async (idOverride?: string, silent = false) => {
         const targetId = idOverride || userId;
@@ -844,7 +905,10 @@ export const useBookmarkWeaver = (
                 overflowBookmarksRef.current = await loadPersistedOverflowBookmarks(targetId);
             }
 
-            const res = await fetch(`${BACKEND_URL}/structure/${targetId}`, { signal: controller.signal });
+            const res = await fetch(`${BACKEND_URL}/structure/${targetId}`, {
+                signal: controller.signal,
+                headers: getAuthHeaders()
+            });
             if (!res.ok) {
                 throw new Error(`Structure fetch failed: ${res.status}`);
             }
@@ -1050,7 +1114,7 @@ export const useBookmarkWeaver = (
 
             const response = await fetch(`${BACKEND_URL}/auto-rename/${userId}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: buildAuthHeaders(),
                 signal: controller.signal,
                 body: JSON.stringify({ clusteringSettings: effectiveClusteringSettings }),
             });
@@ -1075,7 +1139,7 @@ export const useBookmarkWeaver = (
             clearTimeout(timeoutId);
             setIsAutoRenaming(false);
         }
-    }, [effectiveClusteringSettings, isPremium, userId]);
+    }, [buildAuthHeaders, effectiveClusteringSettings, isPremium, userId]);
 
     const deleteAllDuplicates = useCallback(async () => {
         if (typeof chrome === 'undefined' || !chrome.bookmarks) return;
@@ -1203,9 +1267,11 @@ export const useBookmarkWeaver = (
     }, [loadStructureVersions]);
 
     const loadBookmarkBackups = useCallback(async () => {
-        if (!accountUserId) return [] as BookmarkBackupSnapshot[];
+        if (!accountUserId || !canSaveAccountBackups) return [] as BookmarkBackupSnapshot[];
         try {
-            const res = await fetch(`${BACKEND_URL}/backups/${accountUserId}`);
+            const res = await fetch(`${BACKEND_URL}/backups/${accountUserId}`, {
+                headers: getAuthHeaders()
+            });
             if (!res.ok) throw new Error('Failed to load structure backups');
             const data = await res.json();
             return data.backups as BookmarkBackupSnapshot[];
@@ -1213,15 +1279,15 @@ export const useBookmarkWeaver = (
             console.error('[BACKUPS] Fetch error:', err);
             return [] as BookmarkBackupSnapshot[];
         }
-    }, [accountUserId]);
+    }, [accountUserId, canSaveAccountBackups, getAuthHeaders]);
 
     const saveCurrentBookmarkBackup = useCallback(async (customName?: string) => {
-        if (!accountUserId) throw new Error('You need to log in to save backups.');
+        if (!accountUserId || !canSaveAccountBackups) throw new Error('Create a free account to save backups.');
         
         const name = customName || `Snapshot ${new Date().toLocaleDateString()}`;
         const res = await fetch(`${BACKEND_URL}/backups/${accountUserId}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: buildAuthHeaders(),
             body: JSON.stringify({ name })
         });
 
@@ -1237,30 +1303,32 @@ export const useBookmarkWeaver = (
             createdAt: new Date().toISOString(),
             summary: { folders: 0, bookmarks: 0 }
         } as BookmarkBackupSnapshot;
-    }, [accountUserId]);
+    }, [accountUserId, buildAuthHeaders, canSaveAccountBackups]);
 
     const deleteBookmarkBackup = useCallback(async (backupId: string) => {
-        if (!accountUserId) throw new Error('You need to log in to manage backups.');
+        if (!accountUserId || !canSaveAccountBackups) throw new Error('Create a free account to manage backups.');
         
         const res = await fetch(`${BACKEND_URL}/backups/${accountUserId}/${backupId}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: getAuthHeaders()
         });
         
         if (!res.ok) throw new Error('Failed to delete structure snapshot');
-    }, [accountUserId]);
+    }, [accountUserId, canSaveAccountBackups, getAuthHeaders]);
 
     const restoreBookmarkBackup = useCallback(async (backupId: string) => {
-        if (!accountUserId) throw new Error('You need to log in to restore backups.');
+        if (!accountUserId || !canSaveAccountBackups) throw new Error('Create a free account to restore backups.');
         
         const res = await fetch(`${BACKEND_URL}/backups/${accountUserId}/${backupId}/restore`, {
-            method: 'POST'
+            method: 'POST',
+            headers: getAuthHeaders()
         });
         
         if (!res.ok) throw new Error('Failed to restore structure snapshot');
         
         // Automatically fetch the restored structured results 
         await fetchResults(accountUserId);
-    }, [accountUserId, fetchResults]);
+    }, [accountUserId, canSaveAccountBackups, fetchResults, getAuthHeaders]);
 
     const applyChanges = async () => {
         // Mock mode - just mark as done
@@ -1272,9 +1340,9 @@ export const useBookmarkWeaver = (
 
         try {
             const confirmed = window.confirm(
-                accountUserId
+                accountUserId && canSaveAccountBackups
                     ? 'Apply changes will rewrite the displayed structure directly inside your Chrome bookmark folders. A backup snapshot will be created first. Continue?'
-                    : 'Apply changes will rewrite the displayed structure directly inside your Chrome bookmark folders. Log in to enable automatic backups. Continue without backup?'
+                    : 'Apply changes will rewrite the displayed structure directly inside your Chrome bookmark folders. Create a free account to save cloud backups first. Continue without backup?'
             );
             if (!confirmed) return;
 
@@ -1282,7 +1350,7 @@ export const useBookmarkWeaver = (
             console.log('[ApplyChanges] Starting to apply changes...');
 
             // 0. Save a local snapshot backup before any changes (logged-in users only).
-            if (accountUserId) {
+            if (accountUserId && canSaveAccountBackups) {
                 await saveCurrentBookmarkBackup();
                 console.log('[ApplyChanges] Saved bookmark backup snapshot');
             } else {
@@ -1441,7 +1509,7 @@ export const useBookmarkWeaver = (
             await clearPersistedOverflowBookmarks(userId);
             await fetch(`${BACKEND_URL}/cancel/${userId}`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: buildAuthHeaders(),
                 body: JSON.stringify({ clearAllQueues: true })
             });
         } catch (error) {

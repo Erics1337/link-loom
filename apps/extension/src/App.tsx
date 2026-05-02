@@ -27,7 +27,17 @@ import './styles/global.css';
 
 const WEB_APP_URL = (import.meta.env.VITE_WEB_APP_URL as string | undefined) || 'https://linkloom.org';
 const App = () => {
-    const { user: authUser, errorMessage: authErrorMessage, signIn, signUp, signOut } = useExtensionAuth();
+    const {
+        user: authUser,
+        accessToken,
+        refreshToken,
+        errorMessage: authErrorMessage,
+        ensureAnonymousSession,
+        signIn,
+        signUp,
+        signOut
+    } = useExtensionAuth();
+    const isPermanentUser = Boolean(authUser && !authUser.isAnonymous);
     const { settings: clusteringSettings, updateSettings: updateClusteringSettings } = useClusteringSettings();
     const {
         status,
@@ -57,7 +67,13 @@ const App = () => {
         applyChanges,
         setStatus,
         errorMessage
-    } = useBookmarkWeaver(authUser?.id, clusteringSettings);
+    } = useBookmarkWeaver(
+        authUser?.id,
+        clusteringSettings,
+        accessToken,
+        ensureAnonymousSession,
+        isPermanentUser
+    );
     const [view, setView] = useState<'main' | 'settings' | 'login' | 'backups' | 'import-preview'>('main');
     const [backups, setBackups] = useState<BookmarkBackupSnapshot[]>([]);
     const [isImportingStructure, setIsImportingStructure] = useState(false);
@@ -78,7 +94,7 @@ const App = () => {
     } | null>(null);
     useTheme();
 
-    const { authStatus, errorMsg } = useDeviceAuth(authUser?.id || '');
+    const { authStatus, errorMsg } = useDeviceAuth(isPermanentUser ? authUser?.id || '' : '', accessToken);
 
     const handleOpenBackups = async () => {
         if (!authUser) {
@@ -128,13 +144,16 @@ const App = () => {
     const handleSignUp = async (email: string, password: string, plan: SignUpPlan) => {
         const result = await signUp(email, password);
         if (plan === 'paid') {
+            if (result.requiresEmailConfirmation) {
+                throw new Error('Confirm your email first, then sign in and start Pro checkout.');
+            }
             if (!result.authenticated || !result.userId) {
                 throw new Error('Confirm your email first, then sign in and start Pro checkout.');
             }
             await startPaidCheckout(result.userId, result.email || email, result.accessToken);
         }
 
-        if (result.authenticated) {
+        if (result.authenticated && !result.requiresEmailConfirmation) {
             setView('main');
         }
 
@@ -333,8 +352,8 @@ const App = () => {
                         onOpenLogin={() => setView('login')}
                         onOpenBackups={handleOpenBackups}
                         onSignOut={signOut}
-                        isLoggedIn={Boolean(authUser)}
-                        isPremium={Boolean(authUser && isPremium)}
+                        isLoggedIn={isPermanentUser}
+                        isPremium={Boolean(isPermanentUser && isPremium)}
                         accountEmail={authUser?.email}
                         hasCachedResults={hasCachedResults}
                         isImportingStructure={isImportingStructure}
@@ -418,7 +437,13 @@ const App = () => {
                         clusters={clusters}
                         stats={stats}
                         isPremium={Boolean(authUser && isPremium)}
-                        onUpgrade={() => window.open(`${WEB_APP_URL}/dashboard/billing`, '_blank', 'noopener,noreferrer')}
+                        onUpgrade={() => {
+                            let url = `${WEB_APP_URL}/dashboard/billing`;
+                            if (accessToken && refreshToken) {
+                                url += `?access_token=${accessToken}&refresh_token=${refreshToken}`;
+                            }
+                            window.open(url, '_blank', 'noopener,noreferrer');
+                        }}
                         onAutoRename={autoRenameBookmarks}
                         isAutoRenaming={isAutoRenaming}
                         onOpenSettings={() => setView('settings')}
@@ -456,7 +481,7 @@ const App = () => {
                         </div>
                         {isLimitError && (
                             <a
-                                href={`${WEB_APP_URL}/dashboard/billing`}
+                                href={accessToken && refreshToken ? `${WEB_APP_URL}/dashboard/billing?access_token=${accessToken}&refresh_token=${refreshToken}` : `${WEB_APP_URL}/dashboard/billing`}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="btn btn-primary"
@@ -478,28 +503,38 @@ const App = () => {
                 return (
                     <div className="app-shell">
                         <div className="panel">
-                            <p className="eyebrow">Free tier limit</p>
-                            <h1 className="screen-title mt-2">Too many bookmarks</h1>
+                            <p className="eyebrow">Choose your run</p>
+                            <h1 className="screen-title mt-2">You have {total.toLocaleString()} bookmarks</h1>
                             <p className="screen-copy mt-3">
-                                You have <strong>{total.toLocaleString()}</strong> bookmarks. Free supports <strong>{limit.toLocaleString()}</strong>. The extra <strong>{extra.toLocaleString()}</strong> will stay untouched.
+                                Free preview organizes {limit.toLocaleString()} bookmarks now. The remaining {extra.toLocaleString()} stay exactly where they are.
                             </p>
+                        </div>
+                        <div className="card space-y-3">
+                            <div className="stat-row">
+                                <span className="text-secondary text-sm">Included now</span>
+                                <span className="badge-count">{limit.toLocaleString()}</span>
+                            </div>
+                            <div className="stat-row">
+                                <span className="text-secondary text-sm">Left untouched</span>
+                                <span className="badge-count">{extra.toLocaleString()}</span>
+                            </div>
                         </div>
                         <button
                             onClick={continueWithLimitedBookmarks}
                             className="btn btn-primary w-full"
                         >
-                            Organize first {limit.toLocaleString()} bookmarks
+                            Preview first {limit.toLocaleString()} bookmarks
                         </button>
                         <a
-                            href={`${WEB_APP_URL}/dashboard/billing`}
+                            href={accessToken && refreshToken ? `${WEB_APP_URL}/dashboard/billing?access_token=${accessToken}&refresh_token=${refreshToken}` : `${WEB_APP_URL}/dashboard/billing`}
                             target="_blank"
                             rel="noreferrer"
                             className="btn w-full"
                         >
-                            Upgrade to Pro — unlimited bookmarks
+                            Upgrade to organize all {total.toLocaleString()}
                         </a>
                         <button onClick={() => setStatus('idle')} className="btn btn-ghost">
-                            Cancel
+                            Back
                         </button>
                     </div>
                 );

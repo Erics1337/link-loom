@@ -11,7 +11,7 @@ export type DeviceAuthStatus = 'checking' | 'authorized' | 'limit_reached' | 'er
 const isFailedFetchError = (error: unknown) =>
     error instanceof TypeError && error.message.toLowerCase().includes('failed to fetch');
 
-export const useDeviceAuth = (userId: string) => {
+export const useDeviceAuth = (userId: string, accessToken?: string | null) => {
     const [authStatus, setAuthStatus] = useState<DeviceAuthStatus>('checking');
     const [isPremium] = useState(false);
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -37,7 +37,10 @@ export const useDeviceAuth = (userId: string) => {
                 // 2. Register with Backend
                 const res = await fetch(`${BACKEND_URL}/register-device`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+                    },
                     body: JSON.stringify({
                         userId,
                         deviceId,
@@ -77,7 +80,7 @@ export const useDeviceAuth = (userId: string) => {
         };
 
         registerDevice();
-    }, [userId]);
+    }, [accessToken, userId]);
 
     return { authStatus, isPremium, errorMsg, setAuthStatus };
 };
