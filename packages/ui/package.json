@@ -1,0 +1,18 @@
+{
+  "name": "@link-loom/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./theme.css": "./src/theme.css"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@link-loom/tsconfig": "workspace:*",
+    "@types/react": "^18.2.15",
+    "typescript": "^5.2.2"
+  }
+}

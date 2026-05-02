@@ -1,18 +1,23 @@
 {
-    "name": "link-loom-monorepo",
-    "private": true,
-    "scripts": {
-        "build": "./node_modules/.bin/turbo run build",
-        "dev": "./node_modules/.bin/turbo run dev",
-        "lint": "./node_modules/.bin/turbo run lint",
-        "format": "prettier --write \"**/*.{ts,tsx,md}\""
-    },
-    "devDependencies": {
-        "turbo": "latest",
-        "prettier": "^3.0.0"
-    },
-    "packageManager": "pnpm@8.10.0",
-    "engines": {
-        "node": ">=18"
+  "name": "link-loom-monorepo",
+  "private": true,
+  "scripts": {
+    "build": "./node_modules/.bin/turbo run build",
+    "dev": "./node_modules/.bin/turbo run dev",
+    "lint": "./node_modules/.bin/turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\""
+  },
+  "devDependencies": {
+    "turbo": "latest",
+    "prettier": "^3.0.0"
+  },
+  "packageManager": "pnpm@8.10.0",
+  "pnpm": {
+    "overrides": {
+      "@crxjs/vite-plugin>cheerio": "1.0.0"
     }
+  },
+  "engines": {
+    "node": ">=18"
+  }
 }
