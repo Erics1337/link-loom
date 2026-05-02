@@ -10,7 +10,7 @@ applications:
             - cd ../.. && NODE_ENV=development pnpm install --frozen-lockfile
         build:
           commands:
-            - cd ../.. && pnpm --filter web... build
+            - pnpm run build
       artifacts:
         baseDirectory: .next
         files:
