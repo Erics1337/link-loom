@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const KIT_API_SECRET = process.env.KIT_API_SECRET;
+const KIT_API_KEY = process.env.KIT_API_KEY || process.env.KIT_API_SECRET;
 const KIT_FORM_ID = process.env.KIT_FORM_ID;
 
 export async function POST(request: NextRequest) {
-  if (!KIT_API_SECRET || !KIT_FORM_ID) {
+  if (!KIT_API_KEY || !KIT_FORM_ID) {
     return NextResponse.json(
       { error: "Kit integration not configured" },
       { status: 500 }
@@ -21,7 +21,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       return NextResponse.json(
@@ -30,19 +29,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Subscribe to Kit form using their API
-    // Kit API docs: https://developers.kit.com/
     const response = await fetch(
-      `https://api.kit.com/v4/forms/${KIT_FORM_ID}/subscribers`,
+      `https://api.convertkit.com/v3/forms/${KIT_FORM_ID}/subscribe`,
       {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${KIT_API_SECRET}`,
+          "Content-Type": "application/json; charset=utf-8",
         },
         body: JSON.stringify({
-          email_address: email,
-          state: "active",
+          api_key: KIT_API_KEY,
+          email,
         }),
       }
     );
@@ -51,8 +47,17 @@ export async function POST(request: NextRequest) {
       const errorData = await response.json().catch(() => ({}));
       console.error("Kit API error:", errorData);
       
-      // Handle duplicate subscriber gracefully
-      if (response.status === 422 && errorData.message?.includes("already subscribed")) {
+      if (response.status === 404) {
+        return NextResponse.json(
+          {
+            error:
+              "Kit form not found. Check that KIT_FORM_ID is the numeric form ID from Kit, not the embed data-uid.",
+          },
+          { status: 500 }
+        );
+      }
+      
+      if (response.status === 422) {
         return NextResponse.json(
           { success: true, message: "You're already on the waitlist!" },
           { status: 200 }

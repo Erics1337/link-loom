@@ -3,19 +3,31 @@
 import { createClient } from "@/utils/supabase/client";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { Alert, Button, Card, Input } from "@link-loom/ui";
+import { useSearchParams } from "next/navigation";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const searchParams = useSearchParams();
+  const inviteCode = searchParams.get("invite");
   const [view, setView] = useState<"sign-in" | "sign-up">("sign-in");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const router = useRouter();
   const supabase = createClient();
+
+  // Handle error from OAuth callback (waitlist block)
+  useEffect(() => {
+    const error = searchParams.get("error");
+    const msg = searchParams.get("message");
+    if (error === "waitlist_only" && msg) {
+      setMessage(decodeURIComponent(msg.replace(/\+/g, " ")));
+    }
+  }, [searchParams]);
 
   const handleSignUp = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -91,12 +103,32 @@ export default function Login() {
         </p>
       </div>
 
-      <Card className="mt-10 p-5 sm:mx-auto sm:w-full sm:max-w-md" elevated>
+      {/* Waitlist Banner - Always visible */}
+      <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md">
+        <Alert tone="info" className="text-center">
+          <p className="font-medium">🚀 Link Loom is in private beta</p>
+          <p className="text-sm mt-1">
+            New accounts are waitlist-only.{" "}
+            <Link href="/#waitlist" className="underline font-semibold">
+              Join the waitlist
+            </Link>{" "}
+            for early access.
+          </p>
+        </Alert>
+      </div>
+
+      <Card className="mt-6 p-5 sm:mx-auto sm:w-full sm:max-w-md" elevated>
         <div className="flex flex-col gap-4">
           <button
             onClick={async () => {
               setLoading(true);
               setMessage(null);
+
+              // Set invite code cookie before OAuth so callback can check it
+              if (inviteCode) {
+                document.cookie = `invite_code=${inviteCode};path=/;max-age=3600`;
+              }
+
               const { error } = await supabase.auth.signInWithOAuth({
                 provider: "google",
                 options: {
@@ -209,17 +241,37 @@ export default function Login() {
           </div>
 
           <div>
-            <Button type="submit" disabled={loading} className="w-full">
+            <Button 
+              type="submit" 
+              disabled={loading || (view === "sign-up" && !inviteCode)} 
+              className="w-full"
+            >
               {loading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
               ) : view === "sign-in" ? (
                 "Sign in"
-              ) : (
+              ) : inviteCode ? (
                 "Sign up"
+              ) : (
+                "Join waitlist for access"
               )}
             </Button>
           </div>
         </form>
+
+        {/* Sign-up Blocker - Only show when trying to sign up without invite */}
+        {view === "sign-up" && !inviteCode && (
+          <Alert tone="warning" className="mt-6">
+            <p className="font-medium">Sign up is currently waitlist-only</p>
+            <p className="text-sm mt-1">
+              We&apos;re onboarding in small batches to ensure a great experience.{" "}
+              <Link href="/#waitlist" className="underline font-semibold text-ll-accent">
+                Join the waitlist
+              </Link>{" "}
+              and we&apos;ll send you an invite soon.
+            </p>
+          </Alert>
+        )}
 
         {message && (
           <Alert
@@ -231,13 +283,31 @@ export default function Login() {
         )}
 
         <p className="mt-10 text-center text-sm text-ll-muted">
-          {view === "sign-in" ? "Not a member?" : "Already have an account?"}{" "}
-          <button
-            onClick={() => setView(view === "sign-in" ? "sign-up" : "sign-in")}
-            className="font-semibold leading-6 text-ll-accent hover:text-ll-accent-text"
-          >
-            {view === "sign-in" ? "Create your free account" : "Sign in"}
-          </button>
+          {view === "sign-in" ? (
+            <>
+              Not a member?{" "}
+              <button
+                onClick={() => setView("sign-up")}
+                className="font-semibold leading-6 text-ll-accent hover:text-ll-accent-text"
+              >
+                Try to create account
+              </button>
+              <span className="block mt-2 text-xs">
+                (New signups are waitlist-only —{" "}
+                <Link href="/#waitlist" className="underline">join here</Link>)
+              </span>
+            </>
+          ) : (
+            <>
+              Already have an account?{" "}
+              <button
+                onClick={() => setView("sign-in")}
+                className="font-semibold leading-6 text-ll-accent hover:text-ll-accent-text"
+              >
+                Sign in
+              </button>
+            </>
+          )}
         </p>
       </Card>
     </div>

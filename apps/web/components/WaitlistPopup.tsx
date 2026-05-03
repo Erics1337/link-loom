@@ -7,11 +7,13 @@ import { WaitlistForm } from "./WaitlistForm";
 interface WaitlistPopupProps {
   delay?: number; // Delay in ms before showing (default: 15000 = 15s)
   exitIntent?: boolean; // Show on exit intent (default: true)
+  scrollThreshold?: number; // Pixels to scroll before showing (default: 200)
 }
 
-export function WaitlistPopup({ delay = 15000, exitIntent = true }: WaitlistPopupProps) {
+export function WaitlistPopup({ delay = 15000, exitIntent = true, scrollThreshold = 200 }: WaitlistPopupProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [hasShown, setHasShown] = useState(false);
+  const [hasScrolled, setHasScrolled] = useState(false);
 
   // Check if user already dismissed or joined
   useEffect(() => {
@@ -22,9 +24,24 @@ export function WaitlistPopup({ delay = 15000, exitIntent = true }: WaitlistPopu
     }
   }, []);
 
-  // Time-based trigger
+  // Track scroll position
   useEffect(() => {
-    if (hasShown) return;
+    const handleScroll = () => {
+      if (window.scrollY >= scrollThreshold) {
+        setHasScrolled(true);
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    // Check initial scroll position
+    handleScroll();
+
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [scrollThreshold]);
+
+  // Time-based trigger (only after scroll threshold met)
+  useEffect(() => {
+    if (hasShown || !hasScrolled) return;
 
     const timer = setTimeout(() => {
       if (!hasShown) {
@@ -34,11 +51,11 @@ export function WaitlistPopup({ delay = 15000, exitIntent = true }: WaitlistPopu
     }, delay);
 
     return () => clearTimeout(timer);
-  }, [delay, hasShown]);
+  }, [delay, hasShown, hasScrolled]);
 
-  // Exit intent trigger
+  // Exit intent trigger (only after scroll threshold met)
   useEffect(() => {
-    if (!exitIntent || hasShown) return;
+    if (!exitIntent || hasShown || !hasScrolled) return;
 
     const handleMouseLeave = (e: MouseEvent) => {
       // Trigger when mouse leaves from the top of the page
@@ -50,7 +67,7 @@ export function WaitlistPopup({ delay = 15000, exitIntent = true }: WaitlistPopu
 
     document.addEventListener("mouseleave", handleMouseLeave);
     return () => document.removeEventListener("mouseleave", handleMouseLeave);
-  }, [exitIntent, hasShown]);
+  }, [exitIntent, hasShown, hasScrolled]);
 
   const handleClose = useCallback(() => {
     setIsOpen(false);

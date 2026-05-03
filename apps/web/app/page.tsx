@@ -4,7 +4,6 @@ import Image from "next/image";
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import {
-  ArrowRight,
   BookmarkCheck,
   Check,
   CheckCircle2,
@@ -230,9 +229,9 @@ export default function Home() {
           </nav>
           <Link
             href="/login"
-            className="inline-flex items-center gap-2 bg-[var(--ll-deep)] px-4 py-2 text-sm font-semibold text-[var(--ll-deep-text)] transition hover:bg-[var(--ll-accent)]"
+            className="text-sm font-medium text-[var(--ll-muted)] transition hover:text-[var(--ll-text)]"
           >
-            Log in <ArrowRight className="h-4 w-4" />
+            Existing user? Log in
           </Link>
         </div>
       </header>
@@ -245,7 +244,24 @@ export default function Home() {
                 <BookmarkCheck className="h-4 w-4 text-[var(--ll-accent)]" />
                 AI bookmark workspace
               </div>
-              <h1 className="mt-8 max-w-3xl text-5xl font-semibold leading-[0.94] tracking-tight text-[var(--ll-text)] sm:text-7xl">
+
+              {/* Chrome Extension Badge */}
+              <a
+                href="https://chromewebstore.google.com/detail/link-loom/jdmadgnmcebcecfpcbonmnjdjkmohjhc"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#4285f4]/10 px-3 py-1.5 text-xs font-medium text-[#4285f4] transition hover:bg-[#4285f4]/20"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 0C8.21 0 5.04 2.16 3.37 5.35L.63 10.5a.6.6 0 0 0 .09.68l11.38 11.38a.6.6 0 0 0 .68.09l5.15-2.74C21.84 18.96 24 15.79 24 12c0-6.63-5.37-12-12-12zM4.8 6.24A9.96 9.96 0 0 1 12 2.4c4.64 0 8.57 3.18 9.69 7.47H12c-2.39 0-4.45 1.46-5.31 3.53L4.8 6.24zm13.08 12.18l-4.34 2.31-8.08-8.08a3.6 3.6 0 0 1 2.77-1.3h9.65c.03.24.04.48.04.73 0 2.41-1.06 4.58-2.72 6.07l-1.32 1.07z"/>
+                </svg>
+                Get the Chrome Extension
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+
+              <h1 className="mt-6 max-w-3xl text-5xl font-semibold leading-[0.94] tracking-tight text-[var(--ll-text)] sm:text-7xl">
                 Link Loom
               </h1>
               <p className="mt-6 max-w-xl text-xl leading-8 text-[var(--ll-soft)]">
@@ -254,10 +270,10 @@ export default function Home() {
               </p>
               <div className="mt-9 flex flex-col gap-3 sm:flex-row">
                 <Link
-                  href="/login"
+                  href="#waitlist"
                   className="inline-flex items-center justify-center gap-2 bg-[var(--ll-primary)] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[var(--ll-primary-hover)]"
                 >
-                  Start organizing <ChevronRight className="h-4 w-4" />
+                  Join waitlist for early access <ChevronRight className="h-4 w-4" />
                 </Link>
                 <Link
                   href="#workflow"
@@ -321,6 +337,38 @@ export default function Home() {
                   </article>
                 );
               })}
+            </div>
+
+            {/* Chrome Extension CTA */}
+            <div className="mt-10">
+              <a
+                href="https://chromewebstore.google.com/detail/link-loom/jdmadgnmcebcecfpcbonmnjdjkmohjhc"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group flex flex-col items-center justify-between gap-4 rounded-lg border border-[color:var(--ll-border)] bg-[var(--ll-bg)] p-6 transition hover:border-[#4285f4]/30 hover:bg-[#4285f4]/5 sm:flex-row sm:px-8"
+              >
+                <div className="flex items-center gap-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[#4285f4]/10 text-[#4285f4]">
+                    <svg className="h-6 w-6" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12 0C8.21 0 5.04 2.16 3.37 5.35L.63 10.5a.6.6 0 0 0 .09.68l11.38 11.38a.6.6 0 0 0 .68.09l5.15-2.74C21.84 18.96 24 15.79 24 12c0-6.63-5.37-12-12-12zM4.8 6.24A9.96 9.96 0 0 1 12 2.4c4.64 0 8.57 3.18 9.69 7.47H12c-2.39 0-4.45 1.46-5.31 3.53L4.8 6.24zm13.08 12.18l-4.34 2.31-8.08-8.08a3.6 3.6 0 0 1 2.77-1.3h9.65c.03.24.04.48.04.73 0 2.41-1.06 4.58-2.72 6.07l-1.32 1.07z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-[var(--ll-text)]">
+                      Chrome Extension Available
+                    </h3>
+                    <p className="text-sm text-[var(--ll-muted)]">
+                      One-click bookmark capture from any tab. Already live on the Web Store.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-sm font-semibold text-[#4285f4]">
+                  Install Extension
+                  <svg className="h-4 w-4 transition group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                  </svg>
+                </div>
+              </a>
             </div>
           </div>
         </section>
