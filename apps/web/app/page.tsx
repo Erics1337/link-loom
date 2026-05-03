@@ -1,18 +1,26 @@
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
+import { useState, type FormEvent } from "react";
 import {
   ArrowRight,
   BookmarkCheck,
   Check,
+  CheckCircle2,
   ChevronRight,
   CircleCheck,
   FileSearch,
   FolderTree,
   Layers3,
+  Loader2,
+  Mail,
   Search,
   Sparkles,
 } from "lucide-react";
 import { CardBody, CardContainer, CardItem } from "@/components/ui/3d-card";
+import { WaitlistForm } from "@/components/WaitlistForm";
+import { WaitlistPopup } from "@/components/WaitlistPopup";
 
 const linkExamples = [
   {
@@ -405,6 +413,54 @@ export default function Home() {
             </div>
           </div>
         </section>
+
+        {/* ── Waitlist ───────────────────────────────────────── */}
+        <section
+          id="waitlist"
+          className="relative overflow-hidden border-b border-[color:var(--ll-border)] bg-[var(--ll-bg)] py-18 sm:py-24"
+        >
+          {/* Decorative background accents */}
+          <div
+            className="pointer-events-none absolute inset-0"
+            aria-hidden="true"
+            style={{
+              background:
+                "radial-gradient(circle at 20% 40%, rgba(143,199,167,0.10), transparent 50%), radial-gradient(circle at 80% 60%, rgba(74,94,163,0.08), transparent 50%)",
+            }}
+          />
+          <div className="relative mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
+            <div className="mx-auto max-w-2xl text-center">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--ll-accent)]">
+                Be first in line
+              </p>
+              <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-5xl">
+                Join the waitlist
+              </h2>
+              <p className="mt-5 text-base leading-7 text-[var(--ll-muted)]">
+                Link Loom is launching soon. Drop your email and we&apos;ll let
+                you know the moment it&apos;s live&nbsp;&mdash; plus early
+                access perks for waitlist members.
+              </p>
+            </div>
+
+            <WaitlistForm />
+
+            <div className="mt-10 flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-xs text-[var(--ll-muted)]">
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5 text-[var(--ll-accent)]" />
+                No spam, ever
+              </span>
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5 text-[var(--ll-accent)]" />
+                Unsubscribe anytime
+              </span>
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5 text-[var(--ll-accent)]" />
+                Early access perks
+              </span>
+            </div>
+          </div>
+        </section>
       </main>
 
       <footer className="border-t border-[color:var(--ll-border)] bg-[var(--ll-deep)] px-5 py-10 text-[var(--ll-deep-text)] sm:px-6 lg:px-8">
@@ -458,6 +514,8 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      <WaitlistPopup delay={15000} exitIntent={true} />
     </div>
   );
 }

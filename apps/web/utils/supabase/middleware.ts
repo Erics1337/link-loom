@@ -57,18 +57,16 @@ export async function updateSession(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
 
   const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || 'localhost:3000'
-  const protocol = request.headers.get('x-forwarded-proto') || 'https'
+  const protocol = request.headers.get('x-forwarded-proto') || 'http'
   const origin = process.env.NEXT_PUBLIC_SITE_URL || `${protocol}://${host}`
 
   // Protected routes
   if (request.nextUrl.pathname.startsWith('/dashboard') && !user) {
-    const url = new URL('/login', origin)
-    return NextResponse.redirect(url)
+    return NextResponse.redirect(new URL('/login', request.nextUrl))
   }
 
   if (request.nextUrl.pathname === '/login' && user) {
-    const url = new URL('/dashboard', origin)
-    return NextResponse.redirect(url)
+    return NextResponse.redirect(new URL('/dashboard', request.nextUrl))
   }
 
   return response
