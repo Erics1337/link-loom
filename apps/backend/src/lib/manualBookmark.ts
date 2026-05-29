@@ -85,6 +85,8 @@ export const queueManualBookmark = async ({
             title: title?.trim() || parsedUrl.toString(),
         }],
         clusteringSettings: normalizeClusteringSettings(clusteringSettings),
+    }, {
+        jobId: `ingest-${userId}-manual-generation-${jobGeneration}`,
     });
 
     return { ok: true, chromeId };

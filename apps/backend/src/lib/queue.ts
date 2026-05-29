@@ -12,6 +12,8 @@ export type QueueProcessor<T = unknown> = (job: QueueJob<T>) => Promise<void>;
 type QueueAddOptions = {
     delay?: number;
     jobId?: string;
+    attempts?: number;
+    backoffMs?: number;
 };
 
 type QueuedMessage = {
@@ -19,6 +21,15 @@ type QueuedMessage = {
     jobName: string;
     data: unknown;
     jobId?: string;
+    attempts: number;
+    backoffMs: number;
+};
+
+const defaultRetryPolicyByQueue: Record<QueueName, { attempts: number; backoffMs: number }> = {
+    ingest: { attempts: 5, backoffMs: 30000 },
+    enrichment: { attempts: 5, backoffMs: 30000 },
+    embedding: { attempts: 5, backoffMs: 30000 },
+    clustering: { attempts: 3, backoffMs: 60000 },
 };
 
 const queueDriver = process.env.QUEUE_DRIVER ?? (process.env.AWS_LAMBDA_FUNCTION_NAME ? 'sqs' : 'inline');
@@ -48,9 +59,12 @@ class AppQueue<T = unknown> {
 
     async add(jobName: string, data: T, options: QueueAddOptions = {}) {
         const jobId = options.jobId ?? `${this.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const retryPolicy = defaultRetryPolicyByQueue[this.name];
+        const attempts = options.attempts ?? retryPolicy.attempts;
+        const backoffMs = options.backoffMs ?? retryPolicy.backoffMs;
 
         if (queueDriver === 'test') {
-            return { id: jobId, data };
+            return { id: jobId, data, attempts, backoffMs };
         }
 
         if (queueDriver === 'sqs') {
@@ -64,6 +78,8 @@ class AppQueue<T = unknown> {
                 jobName,
                 data,
                 jobId,
+                attempts,
+                backoffMs,
             };
 
             await sqs.send(new SendMessageCommand({
@@ -72,7 +88,7 @@ class AppQueue<T = unknown> {
                 DelaySeconds: options.delay ? Math.min(Math.ceil(options.delay / 1000), 900) : undefined,
             }));
 
-            return { id: jobId, data };
+            return { id: jobId, data, attempts, backoffMs };
         }
 
         const processor = processors.get(this.name);
@@ -92,7 +108,7 @@ class AppQueue<T = unknown> {
             queueMicrotask(run);
         }
 
-        return { id: jobId, data };
+        return { id: jobId, data, attempts, backoffMs };
     }
 }
 

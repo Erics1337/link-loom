@@ -701,7 +701,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         await queues.clustering.add(
             'cluster',
             { userId, clusteringSettings: settings, jobGeneration },
-            { delay: 5000, jobId: `cluster-${userId}-deferred-${Date.now()}` }
+            { delay: 5000, jobId: `cluster-${userId}-deferred-generation-${jobGeneration ?? Date.now()}` }
         );
         return;
     }

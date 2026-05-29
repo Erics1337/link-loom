@@ -93,14 +93,18 @@ describe('Ingest Worker', () => {
                 jobGeneration: 9,
                 bookmarkId: 'bm-1',
                 url: 'https://example.com',
-            }
+            },
+            { jobId: 'enrich-user-1-generation-9-bm-1' }
         );
 
         // Verify clustering scheduled
         expect(queues.clustering.add).toHaveBeenCalledWith(
             'cluster',
             expect.objectContaining({ userId: 'user-1', jobGeneration: 9 }),
-            expect.objectContaining({ delay: 2000 })
+            expect.objectContaining({
+                delay: 2000,
+                jobId: 'cluster-user-1-generation-9',
+            })
         );
         expect(isUserCancelled).toHaveBeenCalledWith('user-1', 9);
     });

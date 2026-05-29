@@ -130,6 +130,9 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                     jobGeneration,
                     bookmarkId: inserted.id,
                     url: inserted.url,
+                },
+                {
+                    jobId: `enrich-${userId}-generation-${jobGeneration ?? 'legacy'}-${inserted.id}`,
                 }
             );
             }
@@ -157,7 +160,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
         console.log(`[INGEST WORKER] Scheduling clustering job for user ${userId}`);
         await queues.clustering.add('cluster', { userId, clusteringSettings, jobGeneration }, {
             delay: 2000, 
-            jobId: `cluster-${userId}-${Date.now()}` // Unique ID to ensure it runs
+            jobId: `cluster-${userId}-generation-${jobGeneration ?? Date.now()}`
         });
     } catch (error) {
         console.error(`[INGEST WORKER] ERROR:`, error);

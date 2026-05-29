@@ -96,7 +96,9 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
 
         console.log(`[INGEST] Cleared old clusters for user ${userId}`);
 
-        await queues.ingest.add('ingest', { userId, bookmarks, clusteringSettings, jobGeneration });
+        await queues.ingest.add('ingest', { userId, bookmarks, clusteringSettings, jobGeneration }, {
+            jobId: `ingest-${userId}-generation-${jobGeneration}`,
+        });
         console.log(`[INGEST] Queued ingest job for user ${userId}`);
         return { status: 'queued' };
     });
@@ -125,7 +127,7 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
         const jobGeneration = await beginUserPipelineRun(userId);
         console.log(`[MANUAL] Triggering clustering for user ${userId}`);
         await queues.clustering.add('cluster', { userId, clusteringSettings, jobGeneration }, {
-            jobId: `cluster-${userId}-manual-${Date.now()}`
+            jobId: `cluster-${userId}-manual-generation-${jobGeneration}`
         });
         return { status: 'clustering_queued' };
     });

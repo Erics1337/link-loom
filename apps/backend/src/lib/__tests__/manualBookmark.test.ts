@@ -82,7 +82,8 @@ describe('queueManualBookmark', () => {
                         title: 'Example Docs',
                     }),
                 ],
-            })
+            }),
+            { jobId: 'ingest-user-1-manual-generation-7' }
         );
     });
 });

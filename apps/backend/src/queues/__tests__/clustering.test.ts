@@ -82,7 +82,10 @@ describe('Clustering Worker', () => {
         expect(queues.clustering.add).toHaveBeenCalledWith(
             'cluster',
             expect.objectContaining({ userId: 'user-1', jobGeneration: 11 }),
-            expect.objectContaining({ delay: 5000 })
+            expect.objectContaining({
+                delay: 5000,
+                jobId: 'cluster-user-1-deferred-generation-11',
+            })
         );
         expect(isUserCancelled).toHaveBeenCalledWith('user-1', 11);
     });

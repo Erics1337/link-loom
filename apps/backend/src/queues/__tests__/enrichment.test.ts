@@ -85,7 +85,8 @@ describe('Enrichment Worker', () => {
                 bookmarkId: 'bm-1',
                 text: 'Test Title Test Description https://example.com',
                 url: 'https://example.com',
-            }
+            },
+            { jobId: 'embed-user-1-generation-4-bm-1' }
         );
         expect(isUserCancelled).toHaveBeenCalledWith('user-1', 4);
     });
@@ -111,7 +112,8 @@ describe('Enrichment Worker', () => {
                 bookmarkId: 'bm-2',
                 text: '  https://broken.com', // space space url
                 url: 'https://broken.com',
-            }
+            },
+            { jobId: 'embed-user-2-generation-5-bm-2' }
         );
     });
 

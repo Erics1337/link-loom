@@ -71,6 +71,9 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
             bookmarkId,
             text: `${title} ${description} ${url}`,
             url,
+        },
+        {
+            jobId: `embed-${userId}-generation-${jobGeneration ?? 'legacy'}-${bookmarkId}`,
         }
     );
 };
