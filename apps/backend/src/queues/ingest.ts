@@ -12,15 +12,17 @@ export interface IngestJobData {
         title: string;
     }[];
     clusteringSettings?: ClusteringSettings;
+    jobGeneration?: number;
 }
 
 export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
     const { userId, bookmarks: rawBookmarks } = job.data;
+    const { jobGeneration } = job.data;
     const clusteringSettings = normalizeClusteringSettings(job.data.clusteringSettings);
     console.log(`[INGEST WORKER] Starting: ${rawBookmarks.length} bookmarks for user ${userId}`);
 
     try {
-        if (await isUserCancelled(userId)) {
+        if (await isUserCancelled(userId, jobGeneration)) {
             console.log(`[INGEST WORKER] Cancelled before start for user ${userId}`);
             return;
         }
@@ -42,7 +44,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
         let saved = 0;
         let handled = 0;
         for (const b of rawBookmarks) {
-            if (await isUserCancelled(userId)) {
+            if (await isUserCancelled(userId, jobGeneration)) {
                 console.log(`[INGEST WORKER] Cancelled during ingest for user ${userId}`);
                 return;
             }
@@ -125,6 +127,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                     'enrich',
                 {
                     userId,
+                    jobGeneration,
                     bookmarkId: inserted.id,
                     url: inserted.url,
                 }
@@ -144,7 +147,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
         await job.updateProgress({ processed: rawBookmarks.length, total: rawBookmarks.length });
         console.log(`[INGEST WORKER] Done: ${saved} bookmarks saved (${handled} handled)`);
 
-        if (await isUserCancelled(userId)) {
+        if (await isUserCancelled(userId, jobGeneration)) {
             console.log(`[INGEST WORKER] Cancelled before scheduling clustering for user ${userId}`);
             return;
         }
@@ -152,7 +155,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
         // Schedule clustering to run after embeddings complete
         // Add with delay to allow embedding jobs to finish first
         console.log(`[INGEST WORKER] Scheduling clustering job for user ${userId}`);
-        await queues.clustering.add('cluster', { userId, clusteringSettings }, {
+        await queues.clustering.add('cluster', { userId, clusteringSettings, jobGeneration }, {
             delay: 2000, 
             jobId: `cluster-${userId}-${Date.now()}` // Unique ID to ensure it runs
         });

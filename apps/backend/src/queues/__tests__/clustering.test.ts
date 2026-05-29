@@ -66,7 +66,7 @@ describe('Clustering Worker', () => {
     } as unknown as QueueJob<any>);
 
     it('should defer if there are still pending inflight bookmarks', async () => {
-        const job = createMockJob({ userId: 'user-1' });
+        const job = createMockJob({ userId: 'user-1', jobGeneration: 11 });
 
         // First DB call: checking inflight count
         const mockBookmarksChain = createMockChain(null, 5); // 5 inflight
@@ -81,13 +81,14 @@ describe('Clustering Worker', () => {
         // Verify clustering was deferred
         expect(queues.clustering.add).toHaveBeenCalledWith(
             'cluster',
-            expect.objectContaining({ userId: 'user-1' }),
+            expect.objectContaining({ userId: 'user-1', jobGeneration: 11 }),
             expect.objectContaining({ delay: 5000 })
         );
+        expect(isUserCancelled).toHaveBeenCalledWith('user-1', 11);
     });
 
     it('should fetch valid bookmarks and create at least a root cluster', async () => {
-        const job = createMockJob({ userId: 'user-2' });
+        const job = createMockJob({ userId: 'user-2', jobGeneration: 12 });
 
         // Second DB call: Fetch bookmarks
         const mockFetchChain = {
@@ -140,6 +141,7 @@ describe('Clustering Worker', () => {
         // Actually, we mocked the config defaults so we don't know the exact split without tracing. But we know assigning happens.
         
         expect(supabase.from).toHaveBeenCalledWith('bookmarks');
+        expect(isUserCancelled).toHaveBeenCalledWith('user-2', 12);
     });
 
     it('should accept Supabase joined vectors returned as arrays', async () => {

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 
 import { supabase } from '../db';
-import { clearUserCancelled, markUserCancelled } from '../lib/cancellation';
+import { beginUserPipelineRun, markUserCancelled } from '../lib/cancellation';
 import { normalizeClusteringSettings } from '../lib/clusteringSettings';
 import { queues } from '../lib/queue';
 import {
@@ -15,10 +15,6 @@ import { errorResponseSchema, looseObjectBodySchema, userIdParamsSchema } from '
 type IngestBody = {
     bookmarks?: any[];
     clusteringSettings?: unknown;
-};
-
-type CancelBody = {
-    clearAllQueues?: unknown;
 };
 
 export const registerIngestRoutes = async (fastify: FastifyInstance) => {
@@ -47,13 +43,12 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
         console.log(
             `[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId} (density=${clusteringSettings.folderDensity}, tone=${clusteringSettings.namingTone}, mode=${clusteringSettings.organizationMode}, emoji=${clusteringSettings.useEmojiNames})`
         );
-        await clearUserCancelled(userId);
-
         const userError = await ensureUserExists(userId);
         if (userError) {
             console.error('[INGEST] Failed to ensure user exists:', userError);
             return reply.code(500).send({ error: 'Failed to initialize user' });
         }
+        const jobGeneration = await beginUserPipelineRun(userId);
 
         const isPremium = await getUserPremiumStatus(userId);
 
@@ -85,7 +80,8 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
             .eq('user_id', userId);
 
         if (deleteBookmarksError) {
-            console.warn(`[INGEST] Warning: Failed to clear old bookmarks for user ${userId}`, deleteBookmarksError);
+            console.error(`[INGEST] Failed to clear old bookmarks for user ${userId}`, deleteBookmarksError);
+            return reply.code(500).send({ error: 'Failed to clear existing bookmarks' });
         }
 
         const { error: deleteError } = await supabase
@@ -94,12 +90,13 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
             .eq('user_id', userId);
 
         if (deleteError) {
-            console.warn(`[INGEST] Warning: Failed to clear old clusters for user ${userId}`, deleteError);
-        } else {
-            console.log(`[INGEST] Cleared old clusters for user ${userId}`);
+            console.error(`[INGEST] Failed to clear old clusters for user ${userId}`, deleteError);
+            return reply.code(500).send({ error: 'Failed to clear existing clusters' });
         }
 
-        await queues.ingest.add('ingest', { userId, bookmarks, clusteringSettings });
+        console.log(`[INGEST] Cleared old clusters for user ${userId}`);
+
+        await queues.ingest.add('ingest', { userId, bookmarks, clusteringSettings, jobGeneration });
         console.log(`[INGEST] Queued ingest job for user ${userId}`);
         return { status: 'queued' };
     });
@@ -125,9 +122,9 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
         if (!userId) return reply;
         const body = req.body as { clusteringSettings?: unknown };
         const clusteringSettings = normalizeClusteringSettings(body?.clusteringSettings);
-        await clearUserCancelled(userId);
+        const jobGeneration = await beginUserPipelineRun(userId);
         console.log(`[MANUAL] Triggering clustering for user ${userId}`);
-        await queues.clustering.add('cluster', { userId, clusteringSettings }, {
+        await queues.clustering.add('cluster', { userId, clusteringSettings, jobGeneration }, {
             jobId: `cluster-${userId}-manual-${Date.now()}`
         });
         return { status: 'clustering_queued' };
@@ -136,16 +133,12 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
     fastify.post('/cancel/:userId', {
         schema: {
             params: userIdParamsSchema,
-            body: looseObjectBodySchema,
             response: {
                 200: {
                     type: 'object',
-                    required: ['status', 'jobsRemoved', 'failedToRemove', 'clearAllQueues'],
+                    required: ['status'],
                     properties: {
                         status: { type: 'string' },
-                        jobsRemoved: { type: 'number' },
-                        failedToRemove: { type: 'number' },
-                        clearAllQueues: { type: 'boolean' },
                     },
                 },
                 401: errorResponseSchema,
@@ -156,9 +149,7 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
     }, async (req, reply) => {
         const userId = await requireRequestUserId(req, reply);
         if (!userId) return reply;
-        const body = req.body as CancelBody;
-        const clearAllQueues = Boolean(body?.clearAllQueues);
-        console.log(`[CANCEL] Request received for user ${userId} (clearAllQueues=${clearAllQueues})`);
+        console.log(`[CANCEL] Request received for user ${userId}`);
         await markUserCancelled(userId);
 
         const { error: updateError } = await supabase
@@ -172,6 +163,6 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
             return reply.code(500).send({ error: 'Failed to reset status' });
         }
 
-        return { status: 'cancelled', jobsRemoved: 0, failedToRemove: 0, clearAllQueues };
+        return { status: 'cancelled' };
     });
 };

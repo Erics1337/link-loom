@@ -10,17 +10,18 @@ const openai = new OpenAI({
 
 export interface EmbeddingJobData {
     userId: string;
+    jobGeneration?: number;
     bookmarkId: string;
     text: string;
     url: string;
 }
 
 export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
-    const { userId, bookmarkId, text, url } = job.data;
+    const { userId, jobGeneration, bookmarkId, text, url } = job.data;
     console.log(`Processing bookmark ${bookmarkId}`);
 
     try {
-        if (await isUserCancelled(userId)) {
+        if (await isUserCancelled(userId, jobGeneration)) {
             console.log(`[EMBEDDING] Cancelled before start for user ${userId}`);
             return;
         }
@@ -62,7 +63,7 @@ export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
         }
 
         // 3. Update Status
-        if (await isUserCancelled(userId)) {
+        if (await isUserCancelled(userId, jobGeneration)) {
             console.log(`[EMBEDDING] Cancelled before status update for user ${userId}`);
             return;
         }

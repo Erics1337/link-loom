@@ -1,3 +1,5 @@
+import { AuthError, createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
+
 type QueryResult<T = unknown> = {
     data: T | null;
     error: null;
@@ -37,7 +39,12 @@ const state = {
     assignments: [
         { bookmark_id: 'embedded-1', user_id: 'status-user' },
     ] as AssignmentRow[],
-    controls: new Map<string, { user_id: string; is_cancelled: boolean; updated_at: string }>(),
+    controls: new Map<string, {
+        user_id: string;
+        is_cancelled: boolean;
+        job_generation: number;
+        updated_at: string;
+    }>(),
 };
 
 class FakeQueryBuilder {
@@ -192,33 +199,65 @@ class FakeQueryBuilder {
     }
 }
 
-export const fakeSupabase = {
-    auth: {
-        getUser: async (token: string) => ({
-            data: {
-                user: token ? { id: token } : null,
+function buildFakeSupabase() {
+    const client = createClient(
+        process.env.SUPABASE_URL ?? 'https://e2e-fake.supabase.co',
+        process.env.SUPABASE_SERVICE_ROLE_KEY ?? 'e2e-fake-service-role-key',
+        {
+            auth: {
+                persistSession: false,
+                autoRefreshToken: false,
+                detectSessionInUrl: false,
             },
-            error: token ? null : { message: 'Missing token' },
-        }),
-    },
-    from: (table: string) => ({
-        select: (columns?: string, options?: { count?: string; head?: boolean }) =>
-            new FakeQueryBuilder(table).select(columns, options),
-        delete: () => new FakeQueryBuilder(table).delete(),
-        update: (values: Record<string, unknown>) => new FakeQueryBuilder(table).update(values),
-        upsert: async (row: any) => {
-            if (table === 'users' && row?.id) {
-                const existing = state.users.get(row.id);
-                state.users.set(row.id, { id: row.id, is_premium: existing?.is_premium ?? false });
-            }
+        }
+    );
 
-            if (table === 'user_pipeline_controls' && row?.user_id) {
-                state.controls.set(row.user_id, row);
-            }
+    client.auth.getUser = async (jwt?: string) => {
+        if (!jwt) {
+            return {
+                data: { user: null },
+                error: new AuthError('Missing token', 401),
+            };
+        }
 
-            return { data: null, error: null };
-        },
-        insert: async () => ({ data: null, error: null }),
-    }),
-    rpc: async () => ({ data: null, error: null }),
-};
+        return {
+            data: { user: { id: jwt } as User },
+            error: null,
+        };
+    };
+
+    client.from = ((table: string) =>
+        ({
+            select: (columns?: string, options?: { count?: string; head?: boolean }) =>
+                new FakeQueryBuilder(table).select(columns, options),
+            delete: () => new FakeQueryBuilder(table).delete(),
+            update: (values: Record<string, unknown>) => new FakeQueryBuilder(table).update(values),
+            upsert: async (row: Record<string, unknown>) => {
+                if (table === 'users' && row?.id) {
+                    const existing = state.users.get(String(row.id));
+                    state.users.set(String(row.id), {
+                        id: String(row.id),
+                        is_premium: existing?.is_premium ?? false,
+                    });
+                }
+
+                if (table === 'user_pipeline_controls' && row?.user_id) {
+                    state.controls.set(String(row.user_id), {
+                        user_id: String(row.user_id),
+                        is_cancelled: Boolean(row.is_cancelled),
+                        job_generation: Number(row.job_generation ?? 0),
+                        updated_at: String(row.updated_at),
+                    });
+                }
+
+                return { data: null, error: null };
+            },
+            insert: async () => ({ data: null, error: null }),
+        }) as unknown as ReturnType<typeof client.from>) as typeof client.from;
+
+    client.rpc = (async () => ({ data: null, error: null })) as unknown as typeof client.rpc;
+
+    return client;
+}
+
+export const fakeSupabase: SupabaseClient = buildFakeSupabase();

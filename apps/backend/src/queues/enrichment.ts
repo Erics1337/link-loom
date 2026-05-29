@@ -7,15 +7,16 @@ import * as cheerio from 'cheerio';
 
 export interface EnrichmentJobData {
     userId: string;
+    jobGeneration?: number;
     bookmarkId: string;
     url: string;
 }
 
 export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
-    const { userId, bookmarkId, url } = job.data;
+    const { userId, jobGeneration, bookmarkId, url } = job.data;
     console.log(`Enriching bookmark ${bookmarkId}: ${url}`);
 
-    if (await isUserCancelled(userId)) {
+    if (await isUserCancelled(userId, jobGeneration)) {
         console.log(`[ENRICHMENT] Cancelled before start for user ${userId}`);
         return;
     }
@@ -37,7 +38,7 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
         }
     }
 
-    if (await isUserCancelled(userId)) {
+    if (await isUserCancelled(userId, jobGeneration)) {
         console.log(`[ENRICHMENT] Cancelled after fetch for user ${userId}`);
         return;
     }
@@ -56,7 +57,7 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
         return;
     }
 
-    if (await isUserCancelled(userId)) {
+    if (await isUserCancelled(userId, jobGeneration)) {
         console.log(`[ENRICHMENT] Cancelled before embedding enqueue for user ${userId}`);
         return;
     }
@@ -66,6 +67,7 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
         'embed',
         {
             userId,
+            jobGeneration,
             bookmarkId,
             text: `${title} ${description} ${url}`,
             url,

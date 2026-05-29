@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import { fakeSupabase } from './fakeSupabase';
 
@@ -19,6 +19,6 @@ if (useFakeSupabase) {
     console.log('Supabase client initialized with service role key');
 }
 
-export const supabase = useFakeSupabase
-    ? fakeSupabase as unknown as ReturnType<typeof createClient>
+export const supabase: SupabaseClient = useFakeSupabase
+    ? fakeSupabase
     : createClient(supabaseUrl, supabaseServiceRoleKey);

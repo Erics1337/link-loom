@@ -193,18 +193,14 @@ describe('backend HTTP contract', () => {
   });
 
   it('cancels an authenticated user pipeline and clears inflight statuses', async () => {
-    const cancelResponse = await jsonRequest('/cancel/status-user', 'status-user', {
-      clearAllQueues: true,
+    const cancelResponse = await request('/cancel/status-user', {
+      method: 'POST',
+      headers: { authorization: 'Bearer status-user' },
     });
     const cancelBody = await cancelResponse.json();
 
     assert.equal(cancelResponse.status, 200);
-    assert.deepEqual(cancelBody, {
-      status: 'cancelled',
-      jobsRemoved: 0,
-      failedToRemove: 0,
-      clearAllQueues: true,
-    });
+    assert.deepEqual(cancelBody, { status: 'cancelled' });
 
     const statusResponse = await request('/status/status-user', {
       headers: { authorization: 'Bearer status-user' },
@@ -219,8 +215,9 @@ describe('backend HTTP contract', () => {
   });
 
   it('prevents authenticated users from operating on another user id', async () => {
-    const response = await jsonRequest('/cancel/status-user', 'other-user', {
-      clearAllQueues: false,
+    const response = await request('/cancel/status-user', {
+      method: 'POST',
+      headers: { authorization: 'Bearer other-user' },
     });
     const body = await response.json();
 

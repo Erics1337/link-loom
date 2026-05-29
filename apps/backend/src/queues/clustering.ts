@@ -26,6 +26,7 @@ const openai = new OpenAI({
 export interface ClusteringJobData {
     userId: string;
     clusteringSettings?: ClusteringSettings;
+    jobGeneration?: number;
 }
 
 interface ClusterGroup {
@@ -425,17 +426,27 @@ const assignLeafGroup = async (
     bookmarkIds: string[],
     parentId: string | null,
     userId: string,
-    settings: ClusteringSettings
+    settings: ClusteringSettings,
+    jobGeneration?: number
 ) => {
     let leafClusterId = parentId;
 
     if (!leafClusterId) {
         const fallbackName = await generateClusterName(bookmarkIds, settings);
+        if (await isUserCancelled(userId, jobGeneration)) {
+            log(`[CLUSTERING] Cancelled before leaf cluster creation for user ${userId}`);
+            return;
+        }
         leafClusterId = await createCluster(userId, null, fallbackName);
     }
 
     if (!leafClusterId) {
         log(`Unable to assign ${bookmarkIds.length} bookmarks for user ${userId}: no target cluster`);
+        return;
+    }
+
+    if (await isUserCancelled(userId, jobGeneration)) {
+        log(`[CLUSTERING] Cancelled before assignment write for user ${userId}`);
         return;
     }
 
@@ -589,9 +600,10 @@ async function recursiveCluster(
     vectors: number[][],
     parentId: string | null,
     userId: string,
-    settings: ClusteringSettings
+    settings: ClusteringSettings,
+    jobGeneration?: number
 ) {
-    if (await isUserCancelled(userId)) {
+    if (await isUserCancelled(userId, jobGeneration)) {
         log(`[CLUSTERING] Cancelled recursion for user ${userId}`);
         return;
     }
@@ -600,13 +612,13 @@ async function recursiveCluster(
 
     // Base case: stop splitting when node is already small enough for selected density.
     if (bookmarkIds.length <= profile.targetLeafSize) {
-        await assignLeafGroup(bookmarkIds, parentId, userId, settings);
+        await assignLeafGroup(bookmarkIds, parentId, userId, settings, jobGeneration);
         return;
     }
 
     const k = chooseSplitK(bookmarkIds.length, profile);
     if (k < 2) {
-        await assignLeafGroup(bookmarkIds, parentId, userId, settings);
+        await assignLeafGroup(bookmarkIds, parentId, userId, settings, jobGeneration);
         return;
     }
 
@@ -630,7 +642,7 @@ async function recursiveCluster(
 
         // If split collapses to one group, treat as a leaf to avoid useless folder depth.
         if (groups.length <= 1) {
-            await assignLeafGroup(bookmarkIds, parentId, userId, settings);
+            await assignLeafGroup(bookmarkIds, parentId, userId, settings, jobGeneration);
             return;
         }
 
@@ -638,6 +650,9 @@ async function recursiveCluster(
             groups.map(group =>
                 limit(async () => {
                     const name = await generateClusterName(group.ids, settings);
+                    if (await isUserCancelled(userId, jobGeneration)) {
+                        return { clusterId: null, group };
+                    }
                     const clusterId = await createCluster(userId, parentId, name);
                     return { clusterId, group };
                 })
@@ -647,27 +662,28 @@ async function recursiveCluster(
         await Promise.all(
             createdClusters.map(async item => {
                 if (!item.clusterId) {
-                    await assignLeafGroup(item.group.ids, parentId, userId, settings);
+                    await assignLeafGroup(item.group.ids, parentId, userId, settings, jobGeneration);
                     return;
                 }
 
-                await recursiveCluster(item.group.ids, item.group.vecs, item.clusterId, userId, settings);
+                await recursiveCluster(item.group.ids, item.group.vecs, item.clusterId, userId, settings, jobGeneration);
             })
         );
     } catch (e: any) {
         log(`Clustering error: ${e}`);
-        await assignLeafGroup(bookmarkIds, parentId, userId, settings);
+        await assignLeafGroup(bookmarkIds, parentId, userId, settings, jobGeneration);
     }
 }
 
 export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
     const { userId } = job.data;
+    const { jobGeneration } = job.data;
     const settings = normalizeClusteringSettings(job.data.clusteringSettings);
     log(
         `Clustering bookmarks for user ${userId} (density=${settings.folderDensity}, tone=${settings.namingTone}, mode=${settings.organizationMode}, emoji=${settings.useEmojiNames})`
     );
 
-    if (await isUserCancelled(userId)) {
+    if (await isUserCancelled(userId, jobGeneration)) {
         log(`[CLUSTERING] Cancelled before start for user ${userId}`);
         return;
     }
@@ -684,7 +700,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         log(`[CLUSTERING] Deferring user ${userId}; ${inflightCount} bookmarks still pending enrichment/embedding`);
         await queues.clustering.add(
             'cluster',
-            { userId, clusteringSettings: settings },
+            { userId, clusteringSettings: settings, jobGeneration },
             { delay: 5000, jobId: `cluster-${userId}-deferred-${Date.now()}` }
         );
         return;
@@ -718,7 +734,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         if (chunk.length < size) break;
         from += size;
 
-        if (await isUserCancelled(userId)) {
+        if (await isUserCancelled(userId, jobGeneration)) {
             log(`[CLUSTERING] Cancelled during fetch for user ${userId}`);
             return;
         }
@@ -762,6 +778,11 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
     const ids = parsedRows.map(row => row.id);
     const vectors = parsedRows.map(row => row.vector);
 
-    await recursiveCluster(ids, vectors, null, userId, settings);
+    if (await isUserCancelled(userId, jobGeneration)) {
+        log(`[CLUSTERING] Cancelled before writes for user ${userId}`);
+        return;
+    }
+
+    await recursiveCluster(ids, vectors, null, userId, settings, jobGeneration);
     log('Clustering completed');
 };

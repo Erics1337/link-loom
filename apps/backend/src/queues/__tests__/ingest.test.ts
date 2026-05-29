@@ -53,6 +53,7 @@ describe('Ingest Worker', () => {
     it('should correctly process a cache MISS and enqueue to enrichment', async () => {
         const job = createMockJob({
             userId: 'user-1',
+            jobGeneration: 9,
             bookmarks: [
                 { id: 'c-1', url: 'https://example.com', title: 'Example' }
             ],
@@ -89,6 +90,7 @@ describe('Ingest Worker', () => {
             'enrich',
             {
                 userId: 'user-1',
+                jobGeneration: 9,
                 bookmarkId: 'bm-1',
                 url: 'https://example.com',
             }
@@ -97,9 +99,10 @@ describe('Ingest Worker', () => {
         // Verify clustering scheduled
         expect(queues.clustering.add).toHaveBeenCalledWith(
             'cluster',
-            expect.objectContaining({ userId: 'user-1' }),
+            expect.objectContaining({ userId: 'user-1', jobGeneration: 9 }),
             expect.objectContaining({ delay: 2000 })
         );
+        expect(isUserCancelled).toHaveBeenCalledWith('user-1', 9);
     });
 
     it('should stop processing if cancelled mid-ingest', async () => {
@@ -109,6 +112,7 @@ describe('Ingest Worker', () => {
 
         const job = createMockJob({
             userId: 'user-1',
+            jobGeneration: 10,
             bookmarks: [
                 { id: 'c-1', url: 'https://example.com', title: 'Example' },
             ]
@@ -121,5 +125,6 @@ describe('Ingest Worker', () => {
 
         expect(queues.enrichment.add).not.toHaveBeenCalled();
         expect(queues.clustering.add).not.toHaveBeenCalled();
+        expect(isUserCancelled).toHaveBeenCalledWith('user-1', 10);
     });
 });

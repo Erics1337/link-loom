@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { supabase } from '../db';
 import { queues } from './queue';
-import { clearUserCancelled } from './cancellation';
+import { beginUserPipelineRun } from './cancellation';
 import { ClusteringSettings, normalizeClusteringSettings } from './clusteringSettings';
 
 type QueueManualBookmarkInput = {
@@ -64,7 +64,7 @@ export const queueManualBookmark = async ({
         }
     }
 
-    await clearUserCancelled(userId);
+    const jobGeneration = await beginUserPipelineRun(userId);
 
     const { error: deleteClustersError } = await supabase
         .from('clusters')
@@ -78,6 +78,7 @@ export const queueManualBookmark = async ({
     const chromeId = `manual-${randomUUID()}`;
     await queues.ingest.add('ingest', {
         userId,
+        jobGeneration,
         bookmarks: [{
             id: chromeId,
             url: parsedUrl.toString(),
