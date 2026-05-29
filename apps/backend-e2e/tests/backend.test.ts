@@ -443,6 +443,48 @@ describe('backend HTTP contract', () => {
     assert.equal(statusBody.isIngesting, false);
   });
 
+  it('prevents stale queued workers from writing after cancellation', async () => {
+    await clearQueuedJobs();
+
+    const ingestResponse = await jsonRequest('/ingest', 'cancel-worker-user', {
+      bookmarks: [
+        { id: 'cancel-chrome-1', title: 'Should Not Write', url: 'https://example.com/cancelled' },
+      ],
+    });
+    assert.equal(ingestResponse.status, 200);
+    assert.deepEqual(await ingestResponse.json(), { status: 'queued' });
+
+    const queuedBeforeCancel = await readQueuedJobs();
+    const queuedIngest = queuedBeforeCancel.jobs.find((job) =>
+      job.queue === 'ingest' && job.data.userId === 'cancel-worker-user'
+    );
+    assert.ok(queuedIngest);
+    assert.equal(queuedIngest.data.jobGeneration, 1);
+
+    const cancelResponse = await request('/cancel/cancel-worker-user', {
+      method: 'POST',
+      headers: { authorization: 'Bearer cancel-worker-user' },
+    });
+    assert.equal(cancelResponse.status, 200);
+    assert.deepEqual(await cancelResponse.json(), { status: 'cancelled' });
+
+    const drained = await drainQueuedJobs(5);
+    assert.deepEqual(
+      drained.processed.map((job) => job.queue),
+      ['ingest']
+    );
+    assert.equal(drained.remaining, 0);
+
+    const { bookmarks } = await readBookmarks('cancel-worker-user');
+    assert.equal(bookmarks.length, 0);
+
+    const queuedAfterDrain = await readQueuedJobs();
+    assert.equal(
+      queuedAfterDrain.jobs.some((job) => job.data?.userId === 'cancel-worker-user'),
+      false
+    );
+  });
+
   it('prevents authenticated users from operating on another user id', async () => {
     const response = await request('/cancel/status-user', {
       method: 'POST',
