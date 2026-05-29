@@ -1,4 +1,5 @@
 import { AuthError, createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
 
 type QueryResult<T = unknown> = {
     data: T | null;
@@ -15,6 +16,15 @@ type BookmarkRow = {
     description?: string | null;
     url?: string;
     chrome_id?: string;
+    content_hash?: string;
+};
+
+type SharedLinkRow = {
+    id: string;
+    url: string;
+    title?: string | null;
+    description?: string | null;
+    vector?: number[] | null;
 };
 
 type ClusterRow = {
@@ -54,6 +64,7 @@ const state = {
         ['status-user', { id: 'status-user', is_premium: false }],
         ['premium-user', { id: 'premium-user', is_premium: true }],
     ]),
+    sharedLinks: new Map<string, SharedLinkRow>(),
     bookmarks: [
         { id: 'pending-1', user_id: 'status-user', status: 'pending' },
         { id: 'enriched-1', user_id: 'status-user', status: 'enriched' },
@@ -162,6 +173,10 @@ class FakeQueryBuilder {
         };
     }
 
+    async single() {
+        return this.maybeSingle();
+    }
+
     then<TResult1 = QueryResult, TResult2 = never>(
         onfulfilled?: ((value: QueryResult) => TResult1 | PromiseLike<TResult1>) | null,
         onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
@@ -219,6 +234,14 @@ class FakeQueryBuilder {
             );
         }
 
+        if (this.table === 'shared_links') {
+            for (const [id, row] of Array.from(state.sharedLinks.entries())) {
+                if (matches(row as unknown as Record<string, unknown>)) {
+                    state.sharedLinks.set(id, { ...row, ...this.updateValues });
+                }
+            }
+        }
+
         return { data: null, error: null };
     }
 
@@ -229,6 +252,10 @@ class FakeQueryBuilder {
 
         if (this.table === 'bookmarks') {
             return state.bookmarks.filter((row) => this.matches(row));
+        }
+
+        if (this.table === 'shared_links') {
+            return Array.from(state.sharedLinks.values()).filter((row) => this.matches(row));
         }
 
         if (this.table === 'clusters') {
@@ -261,6 +288,102 @@ class FakeQueryBuilder {
         }
 
         return true;
+    }
+}
+
+class FakeUpsertBuilder {
+    private selected = false;
+
+    constructor(private readonly table: string, private readonly row: Record<string, unknown>) {}
+
+    select() {
+        this.selected = true;
+        return this;
+    }
+
+    async single() {
+        const result = this.applyUpsert();
+        return {
+            data: result,
+            error: null,
+        };
+    }
+
+    then<TResult1 = QueryResult, TResult2 = never>(
+        onfulfilled?: ((value: QueryResult) => TResult1 | PromiseLike<TResult1>) | null,
+        onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+    ) {
+        const data = this.applyUpsert();
+        const result: QueryResult = {
+            data: this.selected ? data : null,
+            error: null,
+        };
+        return Promise.resolve(result).then(onfulfilled, onrejected);
+    }
+
+    private applyUpsert() {
+        if (this.table === 'users' && this.row?.id) {
+            const existing = state.users.get(String(this.row.id));
+            state.users.set(String(this.row.id), {
+                id: String(this.row.id),
+                is_premium: existing?.is_premium ?? false,
+            });
+            return state.users.get(String(this.row.id)) ?? null;
+        }
+
+        if (this.table === 'shared_links' && this.row?.id) {
+            const id = String(this.row.id);
+            const existing = state.sharedLinks.get(id);
+            const next = {
+                ...existing,
+                id,
+                url: String(this.row.url ?? existing?.url ?? ''),
+                title: this.row.title as string | null | undefined,
+                description: this.row.description as string | null | undefined,
+                vector: this.row.vector as number[] | null | undefined ?? existing?.vector ?? null,
+            };
+            state.sharedLinks.set(id, next);
+            return next;
+        }
+
+        if (this.table === 'bookmarks') {
+            const userId = String(this.row.user_id ?? '');
+            const chromeId = String(this.row.chrome_id ?? '');
+            const existingIndex = state.bookmarks.findIndex((item) =>
+                item.user_id === userId && item.chrome_id === chromeId
+            );
+            const next: BookmarkRow = {
+                ...(existingIndex >= 0 ? state.bookmarks[existingIndex] : {}),
+                id: existingIndex >= 0 ? state.bookmarks[existingIndex].id : randomUUID(),
+                user_id: userId,
+                chrome_id: chromeId,
+                url: String(this.row.url ?? ''),
+                title: String(this.row.title ?? ''),
+                content_hash: String(this.row.content_hash ?? ''),
+                status: String(this.row.status ?? 'pending'),
+                description: this.row.description as string | null | undefined,
+            };
+
+            if (existingIndex >= 0) {
+                state.bookmarks[existingIndex] = next;
+            } else {
+                state.bookmarks.push(next);
+            }
+
+            return next;
+        }
+
+        if (this.table === 'user_pipeline_controls' && this.row?.user_id) {
+            state.controls.set(String(this.row.user_id), {
+                user_id: String(this.row.user_id),
+                is_cancelled: Boolean(this.row.is_cancelled),
+                job_generation: Number(this.row.job_generation ?? 0),
+                updated_at: String(this.row.updated_at),
+            });
+            return state.controls.get(String(this.row.user_id)) ?? null;
+        }
+
+        return null;
     }
 }
 
@@ -297,26 +420,7 @@ function buildFakeSupabase() {
                 new FakeQueryBuilder(table).select(columns, options),
             delete: () => new FakeQueryBuilder(table).delete(),
             update: (values: Record<string, unknown>) => new FakeQueryBuilder(table).update(values),
-            upsert: async (row: Record<string, unknown>) => {
-                if (table === 'users' && row?.id) {
-                    const existing = state.users.get(String(row.id));
-                    state.users.set(String(row.id), {
-                        id: String(row.id),
-                        is_premium: existing?.is_premium ?? false,
-                    });
-                }
-
-                if (table === 'user_pipeline_controls' && row?.user_id) {
-                    state.controls.set(String(row.user_id), {
-                        user_id: String(row.user_id),
-                        is_cancelled: Boolean(row.is_cancelled),
-                        job_generation: Number(row.job_generation ?? 0),
-                        updated_at: String(row.updated_at),
-                    });
-                }
-
-                return { data: null, error: null };
-            },
+            upsert: (row: Record<string, unknown>) => new FakeUpsertBuilder(table, row),
             insert: async () => ({ data: null, error: null }),
         }) as unknown as ReturnType<typeof client.from>) as typeof client.from;
 

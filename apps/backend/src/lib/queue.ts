@@ -164,6 +164,32 @@ export const clearTestQueuedJobs = () => {
     testQueuedJobs.length = 0;
 };
 
+export const drainTestQueuedJobs = async (maxJobs = 50) => {
+    const processed: Array<{ queue: QueueName; jobName: string; jobId?: string }> = [];
+
+    while (testQueuedJobs.length > 0 && processed.length < maxJobs) {
+        const message = testQueuedJobs.shift();
+        if (!message) break;
+
+        const processor = processors.get(message.queue);
+        if (!processor) {
+            throw new Error(`No test processor registered for queue ${message.queue}`);
+        }
+
+        await processor(createQueueJob(message.data));
+        processed.push({
+            queue: message.queue,
+            jobName: message.jobName,
+            jobId: message.jobId,
+        });
+    }
+
+    return {
+        processed,
+        remaining: testQueuedJobs.length,
+    };
+};
+
 export const queues = {
     ingest: new AppQueue<any>('ingest'),
     enrichment: new AppQueue<any>('enrichment'),

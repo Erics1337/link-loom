@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import http from 'node:http';
 import { after, before, describe, it } from 'node:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -97,6 +98,25 @@ describe('backend HTTP contract', () => {
   const clearQueuedJobs = async () => {
     const response = await request('/__e2e/queues', { method: 'DELETE' });
     assert.equal(response.status, 200);
+  };
+
+  const drainQueuedJobs = async (maxJobs: number) => {
+    const response = await request('/__e2e/queues/drain', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ maxJobs }),
+    });
+    assert.equal(response.status, 200);
+    return response.json() as Promise<{
+      processed: Array<{ queue: string; jobName: string; jobId?: string }>;
+      remaining: number;
+    }>;
+  };
+
+  const readBookmarks = async (userId: string) => {
+    const response = await request(`/__e2e/bookmarks/${userId}`);
+    assert.equal(response.status, 200);
+    return response.json() as Promise<{ bookmarks: Array<any> }>;
   };
 
   it('reports health', async () => {
@@ -264,6 +284,61 @@ describe('backend HTTP contract', () => {
 
     assert.equal(response.status, 400);
     assert.equal(body.error, 'A valid URL is required.');
+  });
+
+  it('blocks localhost SSRF targets through the real manual ingest and enrichment path', async () => {
+    await clearQueuedJobs();
+
+    let privateHitCount = 0;
+    const privateServer = http.createServer((_req, res) => {
+      privateHitCount++;
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<title>Private Metadata</title>');
+    });
+    await new Promise<void>((resolve) => privateServer.listen(0, '127.0.0.1', resolve));
+
+    try {
+      const address = privateServer.address();
+      assert.ok(address && typeof address === 'object');
+      const privateUrl = `http://127.0.0.1:${address.port}/latest/meta-data`;
+
+      const response = await jsonRequest('/bookmarks/add', 'ssrf-enrichment-user', {
+        url: privateUrl,
+        title: 'Metadata Trap',
+      });
+      const body = await response.json();
+
+      assert.equal(response.status, 200);
+      assert.equal(body.status, 'queued');
+
+      const drained = await drainQueuedJobs(2);
+      assert.deepEqual(
+        drained.processed.map((job) => job.queue),
+        ['ingest', 'enrichment']
+      );
+
+      const { bookmarks } = await readBookmarks('ssrf-enrichment-user');
+      const bookmark = bookmarks.find((item) => item.chrome_id === body.chromeId);
+
+      assert.ok(bookmark);
+      assert.equal(bookmark.status, 'enriched');
+      assert.equal(bookmark.description, '');
+      assert.equal(privateHitCount, 0);
+
+      const { jobs } = await readQueuedJobs();
+      const embeddingJob = jobs.find((job) =>
+        job.queue === 'embedding' &&
+        job.data.userId === 'ssrf-enrichment-user' &&
+        job.data.bookmarkId === bookmark.id
+      );
+      assert.ok(embeddingJob);
+      assert.equal(embeddingJob.jobName, 'embed');
+      assert.match(embeddingJob.jobId, /^embed-ssrf-enrichment-user-generation-/);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        privateServer.close((error) => error ? reject(error) : resolve());
+      });
+    }
   });
 
   it('returns structure clusters and assignments for the authenticated user', async () => {
