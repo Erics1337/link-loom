@@ -3,6 +3,11 @@
     "globalDependencies": [
         "**/.env.*local"
     ],
+    "globalEnv": [
+        "BACKEND_E2E_BASE_URL",
+        "HOST",
+        "PORT"
+    ],
     "tasks": {
         "build": {
             "dependsOn": [
