@@ -78,7 +78,9 @@ export const buildApp = async () => {
 const start = async () => {
     try {
         await buildApp();
-        await fastify.listen({ port: 3333, host: '0.0.0.0' });
+        const port = Number.parseInt(process.env.PORT ?? '3333', 10);
+        const host = process.env.HOST ?? '0.0.0.0';
+        await fastify.listen({ port: Number.isNaN(port) ? 3333 : port, host });
     } catch (err) {
         fastify.log.error(err);
         process.exit(1);

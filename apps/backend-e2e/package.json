@@ -1,0 +1,17 @@
+{
+  "name": "@link-loom/backend-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "test:e2e": "node --import tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "backend": "workspace:*"
+  },
+  "devDependencies": {
+    "@link-loom/tsconfig": "workspace:*",
+    "@types/node": "^20.19.25",
+    "tsx": "^4.0.0",
+    "typescript": "^5.2.2"
+  }
+}

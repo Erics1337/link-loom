@@ -5,6 +5,7 @@
     "build": "./node_modules/.bin/turbo run build",
     "dev": "./node_modules/.bin/turbo run dev",
     "lint": "./node_modules/.bin/turbo run lint",
+    "test:e2e": "./node_modules/.bin/turbo run test:e2e",
     "format": "prettier --write \"**/*.{ts,tsx,md}\""
   },
   "devDependencies": {
