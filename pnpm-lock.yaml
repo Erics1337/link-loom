@@ -81,6 +81,9 @@ importers:
 
   apps/backend-e2e:
     dependencies:
+      '@supabase/supabase-js':
+        specifier: ^2.38.4
+        version: 2.86.2
       backend:
         specifier: workspace:*
         version: link:../backend
