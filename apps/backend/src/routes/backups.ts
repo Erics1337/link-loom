@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 
 import { supabase } from '../db';
+import { beginUserPipelineRun } from '../lib/cancellation';
 import { requireRequestUserId } from '../lib/userContext';
 import { errorResponseSchema, looseObjectBodySchema, snapshotParamsSchema, userIdParamsSchema } from './schemas';
 
@@ -124,6 +125,7 @@ export const registerBackupRoutes = async (fastify: FastifyInstance) => {
         if (!userId) return reply;
         const { snapshotId } = req.params as { snapshotId: string };
         try {
+            await beginUserPipelineRun(userId);
             const { error } = await supabase.rpc('restore_structure_snapshot', {
                 p_user_id: userId,
                 p_snapshot_id: snapshotId
