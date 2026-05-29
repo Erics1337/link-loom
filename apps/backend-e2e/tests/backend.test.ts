@@ -88,6 +88,17 @@ describe('backend HTTP contract', () => {
     });
   };
 
+  const readQueuedJobs = async () => {
+    const response = await request('/__e2e/queues');
+    assert.equal(response.status, 200);
+    return response.json() as Promise<{ jobs: Array<any> }>;
+  };
+
+  const clearQueuedJobs = async () => {
+    const response = await request('/__e2e/queues', { method: 'DELETE' });
+    assert.equal(response.status, 200);
+  };
+
   it('reports health', async () => {
     const response = await request('/health');
 
@@ -189,6 +200,8 @@ describe('backend HTTP contract', () => {
   });
 
   it('queues a manual bookmark through the ingest pipeline', async () => {
+    await clearQueuedJobs();
+
     const response = await jsonRequest('/bookmarks/add', 'bookmark-user', {
       url: 'https://example.com/saved',
       title: 'Saved Example',
@@ -198,6 +211,49 @@ describe('backend HTTP contract', () => {
     assert.equal(response.status, 200);
     assert.equal(body.status, 'queued');
     assert.match(body.chromeId, /^manual-/);
+
+    const { jobs } = await readQueuedJobs();
+    const ingestJob = jobs.find((job) => job.queue === 'ingest' && job.data.userId === 'bookmark-user');
+    assert.ok(ingestJob);
+    assert.equal(ingestJob.jobName, 'ingest');
+    assert.equal(ingestJob.attempts, 5);
+    assert.equal(ingestJob.data.bookmarks[0].chromeId, undefined);
+    assert.equal(ingestJob.data.bookmarks[0].id, body.chromeId);
+    assert.equal(ingestJob.data.bookmarks[0].title, 'Saved Example');
+    assert.equal(ingestJob.data.bookmarks[0].url, 'https://example.com/saved');
+    assert.match(ingestJob.jobId, /^ingest-bookmark-user-manual-generation-/);
+  });
+
+  it('queues duplicate manual URLs as distinct Chrome bookmark entries', async () => {
+    await clearQueuedJobs();
+
+    const firstResponse = await jsonRequest('/bookmarks/add', 'duplicate-user', {
+      url: 'https://example.com/duplicate',
+      title: 'First Duplicate',
+    });
+    const secondResponse = await jsonRequest('/bookmarks/add', 'duplicate-user', {
+      url: 'https://example.com/duplicate',
+      title: 'Second Duplicate',
+    });
+    const firstBody = await firstResponse.json();
+    const secondBody = await secondResponse.json();
+
+    assert.equal(firstResponse.status, 200);
+    assert.equal(secondResponse.status, 200);
+    assert.notEqual(firstBody.chromeId, secondBody.chromeId);
+
+    const { jobs } = await readQueuedJobs();
+    const duplicateJobs = jobs.filter((job) => job.queue === 'ingest' && job.data.userId === 'duplicate-user');
+
+    assert.equal(duplicateJobs.length, 2);
+    assert.deepEqual(
+      duplicateJobs.map((job) => job.data.bookmarks[0].url),
+      ['https://example.com/duplicate', 'https://example.com/duplicate']
+    );
+    assert.notEqual(
+      duplicateJobs[0].data.bookmarks[0].id,
+      duplicateJobs[1].data.bookmarks[0].id
+    );
   });
 
   it('rejects invalid manual bookmark URLs', async () => {

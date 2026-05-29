@@ -25,6 +25,11 @@ type QueuedMessage = {
     backoffMs: number;
 };
 
+type TestQueuedJob = QueuedMessage & {
+    id: string;
+    delay?: number;
+};
+
 const defaultRetryPolicyByQueue: Record<QueueName, { attempts: number; backoffMs: number }> = {
     ingest: { attempts: 5, backoffMs: 30000 },
     enrichment: { attempts: 5, backoffMs: 30000 },
@@ -35,6 +40,7 @@ const defaultRetryPolicyByQueue: Record<QueueName, { attempts: number; backoffMs
 const queueDriver = process.env.QUEUE_DRIVER ?? (process.env.AWS_LAMBDA_FUNCTION_NAME ? 'sqs' : 'inline');
 const sqs = new SQSClient({});
 const processors = new Map<QueueName, QueueProcessor>();
+const testQueuedJobs: TestQueuedJob[] = [];
 
 const queueUrlEnvByName: Record<QueueName, string> = {
     ingest: 'INGEST_QUEUE_URL',
@@ -64,6 +70,16 @@ class AppQueue<T = unknown> {
         const backoffMs = options.backoffMs ?? retryPolicy.backoffMs;
 
         if (queueDriver === 'test') {
+            testQueuedJobs.push({
+                id: jobId,
+                queue: this.name,
+                jobName,
+                data,
+                jobId,
+                attempts,
+                backoffMs,
+                delay: options.delay,
+            });
             return { id: jobId, data, attempts, backoffMs };
         }
 
@@ -122,6 +138,12 @@ export const parseQueuedMessage = (raw: string): QueuedMessage => {
         throw new Error('Invalid queue message');
     }
     return message;
+};
+
+export const getTestQueuedJobs = () => [...testQueuedJobs];
+
+export const clearTestQueuedJobs = () => {
+    testQueuedJobs.length = 0;
 };
 
 export const queues = {

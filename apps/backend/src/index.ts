@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import * as dotenv from 'dotenv';
 
-import { createWorker } from './lib/queue';
+import { clearTestQueuedJobs, createWorker, getTestQueuedJobs } from './lib/queue';
 import { ingestProcessor } from './queues/ingest';
 import { enrichmentProcessor } from './queues/enrichment';
 import { embeddingProcessor } from './queues/embedding';
@@ -66,6 +66,14 @@ export const buildApp = async () => {
         await registerToolRoutes(fastify);
         await registerBackupRoutes(fastify);
         await registerSearchRoutes(fastify);
+
+        if (process.env.BACKEND_E2E_FAKE_SUPABASE === 'true') {
+            fastify.get('/__e2e/queues', async () => ({ jobs: getTestQueuedJobs() }));
+            fastify.delete('/__e2e/queues', async () => {
+                clearTestQueuedJobs();
+                return { status: 'cleared' };
+            });
+        }
 
         return fastify;
     } catch (err) {
