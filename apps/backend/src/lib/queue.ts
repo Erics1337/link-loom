@@ -49,6 +49,10 @@ class AppQueue<T = unknown> {
     async add(jobName: string, data: T, options: QueueAddOptions = {}) {
         const jobId = options.jobId ?? `${this.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+        if (queueDriver === 'test') {
+            return { id: jobId, data };
+        }
+
         if (queueDriver === 'sqs') {
             const queueUrl = process.env[queueUrlEnvByName[this.name]];
             if (!queueUrl) {
