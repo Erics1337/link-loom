@@ -43,4 +43,20 @@ describe('queue contract', () => {
             backoffMs: 30000,
         });
     });
+
+    it('normalizes legacy queued messages without retry metadata', async () => {
+        const { parseQueuedMessage } = await import('../queue');
+        const message = parseQueuedMessage(JSON.stringify({
+            queue: 'clustering',
+            jobName: 'cluster',
+            data: { userId: 'user-1' },
+        }));
+
+        expect(message).toMatchObject({
+            queue: 'clustering',
+            jobName: 'cluster',
+            attempts: 3,
+            backoffMs: 60000,
+        });
+    });
 });

@@ -16,7 +16,7 @@ type QueueAddOptions = {
     backoffMs?: number;
 };
 
-type QueuedMessage = {
+export type QueuedMessage = {
     queue: QueueName;
     jobName: string;
     data: unknown;
@@ -132,12 +132,30 @@ export const createWorker = <T>(name: QueueName, processor: QueueProcessor<T>, _
     queues[name].registerProcessor(processor);
 };
 
+const queueNames = new Set<QueueName>(['ingest', 'enrichment', 'embedding', 'clustering']);
+
 export const parseQueuedMessage = (raw: string): QueuedMessage => {
-    const message = JSON.parse(raw) as QueuedMessage;
-    if (!message.queue || !message.jobName || !('data' in message)) {
+    const message = JSON.parse(raw) as Partial<QueuedMessage>;
+    if (!message.queue || !queueNames.has(message.queue) || !message.jobName || !('data' in message)) {
         throw new Error('Invalid queue message');
     }
-    return message;
+
+    const retryPolicy = defaultRetryPolicyByQueue[message.queue];
+    const attempts = Number.isFinite(message.attempts) && Number(message.attempts) > 0
+        ? Number(message.attempts)
+        : retryPolicy.attempts;
+    const backoffMs = Number.isFinite(message.backoffMs) && Number(message.backoffMs) >= 0
+        ? Number(message.backoffMs)
+        : retryPolicy.backoffMs;
+
+    return {
+        queue: message.queue,
+        jobName: message.jobName,
+        data: message.data,
+        jobId: message.jobId,
+        attempts,
+        backoffMs,
+    };
 };
 
 export const getTestQueuedJobs = () => [...testQueuedJobs];
