@@ -36,6 +36,13 @@ export class StructureClient {
         const response = await fetch(`${this.options.backendUrl}/status/${userId}`, {
             headers: this.options.getAuthHeaders()
         });
+        if (!response.ok) {
+            const body = await response.text().catch(() => '');
+            const detail = body ? `: ${body}` : '';
+            throw new Error(
+                `Status request failed (${response.status} ${response.statusText})${detail}`
+            );
+        }
         return response.json() as Promise<StatusResponse>;
     }
 
@@ -96,7 +103,6 @@ export class StructureClient {
         return fetch(`${this.options.backendUrl}/cancel/${userId}`, {
             method: 'POST',
             headers: this.options.buildAuthHeaders(),
-            body: JSON.stringify({ clearAllQueues: true })
         });
     }
 }

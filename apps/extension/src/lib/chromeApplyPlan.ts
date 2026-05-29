@@ -59,7 +59,7 @@ const applyBookmarksForNodes = async (
                 const nextTitle = node.title.trim();
                 const currentTitle = (node.originalTitle || node.title).trim();
                 if (nextTitle && nextTitle !== currentTitle) {
-                    await chrome.bookmarks.update(chromeId, { title: node.title });
+                    await chrome.bookmarks.update(chromeId, { title: nextTitle });
                 }
                 await chrome.bookmarks.move(chromeId, { parentId });
                 if (isTopLevel) {

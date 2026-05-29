@@ -152,6 +152,9 @@ importers:
       vite:
         specifier: ^4.4.5
         version: 4.5.14
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@types/node@20.19.25)(@vitest/ui@4.0.18)(tsx@4.21.0)
 
   apps/web:
     dependencies:

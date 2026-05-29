@@ -98,7 +98,12 @@ export const buildBookmarkRootSnapshot = (tree: any[]): BookmarkRootSnapshot => 
 
 export const collectScannedBookmarks = (tree: any[]) => {
     const bookmarks: ScannedBookmark[] = [];
+    if (!tree?.length) {
+        return bookmarks;
+    }
+
     const traverse = (node: any) => {
+        if (!node) return;
         if (node.url) {
             bookmarks.push({ id: node.id, url: node.url, title: node.title });
         }
@@ -106,7 +111,8 @@ export const collectScannedBookmarks = (tree: any[]) => {
             node.children.forEach(traverse);
         }
     };
-    traverse(tree[0]);
+
+    tree.forEach((node) => traverse(node));
     return bookmarks;
 };
 

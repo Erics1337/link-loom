@@ -132,7 +132,7 @@ export const buildStructurePreview = ({
     };
 
     const overflowIds = new Set(overflowBookmarks.map((bookmark) => bookmark.id));
-    const buildOverflowTree = (nodes: any[]): BookmarkNode[] => {
+    const buildOverflowTree = (nodes: any[], isTopLevel = false): BookmarkNode[] => {
         const result: BookmarkNode[] = [];
 
         for (const node of nodes) {
@@ -157,6 +157,11 @@ export const buildStructurePreview = ({
             const filteredChildren = buildOverflowTree(node.children);
             if (filteredChildren.length === 0) continue;
 
+            if (isTopLevel && typeof node.title === 'string' && isBookmarkRootTitle(node.title)) {
+                result.push(...filteredChildren);
+                continue;
+            }
+
             result.push({
                 id: `overflow-folder-${node.id}`,
                 title: node.title || 'Untitled Folder',
@@ -170,7 +175,7 @@ export const buildStructurePreview = ({
         return result;
     };
 
-    const overflowNodes = buildOverflowTree(originalTree?.[0]?.children || []);
+    const overflowNodes = buildOverflowTree(originalTree?.[0]?.children || [], true);
     const rootNodes: BookmarkNode[] = [];
     const overflowCount = overflowBookmarks.length;
 

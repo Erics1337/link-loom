@@ -492,9 +492,11 @@ export const useBookmarkWeaver = (
         }));
 
         try {
+            const processingIdentity = await ensureProcessingIdentity();
             const response = await structureClient.ingest({
                 bookmarks: slicedBookmarks,
                 clusteringSettings: effectiveClusteringSettings,
+                accessToken: processingIdentity.accessToken,
             });
 
             if (response.status === 402) {
@@ -524,7 +526,7 @@ export const useBookmarkWeaver = (
             setErrorMessage(message);
             setStatus('error');
         }
-    }, [effectiveClusteringSettings, limitExceededInfo, structureClient, userId]);
+    }, [effectiveClusteringSettings, ensureProcessingIdentity, limitExceededInfo, structureClient, userId]);
 
 
 
