@@ -7,12 +7,6 @@ dotenv.config();
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-if (process.env.BACKEND_E2E_FAKE_SUPABASE === "true") {
-  throw new Error(
-    "BACKEND_E2E_FAKE_SUPABASE has been removed. Run backend e2e against local Supabase instead.",
-  );
-}
-
 // Use service role key for backend operations (bypasses RLS)
 if (!supabaseServiceRoleKey) {
   console.error(
