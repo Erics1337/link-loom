@@ -10,35 +10,95 @@ type BookmarkRow = {
     id: string;
     user_id: string;
     status: string;
+    title?: string;
+    ai_title?: string | null;
+    description?: string | null;
+    url?: string;
+    chrome_id?: string;
 };
 
 type ClusterRow = {
     id: string;
     user_id: string;
+    name?: string;
+    parent_id?: string | null;
 };
 
 type AssignmentRow = {
+    cluster_id?: string;
     bookmark_id: string;
     user_id: string;
+    clusters?: { user_id: string };
+    bookmarks?: {
+        title?: string;
+        ai_title?: string | null;
+        description?: string | null;
+        url?: string;
+        chrome_id?: string;
+    };
+};
+
+type SnapshotRow = {
+    id: string;
+    user_id: string;
+    name: string;
+    created_at: string;
+    snapshot_clusters: Array<{
+        id: string;
+        snapshot_assignments: Array<{ count: number }>;
+    }>;
 };
 
 const state = {
     users: new Map<string, { id: string; is_premium: boolean }>([
         ['status-user', { id: 'status-user', is_premium: false }],
+        ['premium-user', { id: 'premium-user', is_premium: true }],
     ]),
     bookmarks: [
         { id: 'pending-1', user_id: 'status-user', status: 'pending' },
         { id: 'enriched-1', user_id: 'status-user', status: 'enriched' },
-        { id: 'embedded-1', user_id: 'status-user', status: 'embedded' },
+        {
+            id: 'embedded-1',
+            user_id: 'status-user',
+            status: 'embedded',
+            title: 'Embedded One',
+            ai_title: 'AI Embedded One',
+            description: 'Fixture bookmark',
+            url: 'https://example.com/embedded-one',
+            chrome_id: 'chrome-embedded-1',
+        },
         { id: 'embedded-2', user_id: 'status-user', status: 'embedded' },
         { id: 'error-1', user_id: 'status-user', status: 'error' },
     ] as BookmarkRow[],
     clusters: [
-        { id: 'cluster-1', user_id: 'status-user' },
+        { id: 'cluster-1', user_id: 'status-user', name: 'Fixture Cluster', parent_id: null },
     ] as ClusterRow[],
     assignments: [
-        { bookmark_id: 'embedded-1', user_id: 'status-user' },
+        {
+            cluster_id: 'cluster-1',
+            bookmark_id: 'embedded-1',
+            user_id: 'status-user',
+            clusters: { user_id: 'status-user' },
+            bookmarks: {
+                title: 'Embedded One',
+                ai_title: 'AI Embedded One',
+                description: 'Fixture bookmark',
+                url: 'https://example.com/embedded-one',
+                chrome_id: 'chrome-embedded-1',
+            },
+        },
     ] as AssignmentRow[],
+    snapshots: [
+        {
+            id: 'snapshot-1',
+            user_id: 'status-user',
+            name: 'Fixture Snapshot',
+            created_at: '2026-05-29T00:00:00.000Z',
+            snapshot_clusters: [
+                { id: 'snapshot-cluster-1', snapshot_assignments: [{ count: 1 }] },
+            ],
+        },
+    ] as SnapshotRow[],
     controls: new Map<string, {
         user_id: string;
         is_cancelled: boolean;
@@ -143,6 +203,7 @@ class FakeQueryBuilder {
         }
 
         if (this.table === 'structure_snapshots') {
+            state.snapshots = state.snapshots.filter((row) => !matches(row));
             return { data: null, error: null };
         }
 
@@ -180,6 +241,10 @@ class FakeQueryBuilder {
 
         if (this.table === 'user_pipeline_controls') {
             return Array.from(state.controls.values()).filter((row) => this.matches(row));
+        }
+
+        if (this.table === 'structure_snapshots') {
+            return state.snapshots.filter((row) => this.matches(row));
         }
 
         return [];
@@ -255,7 +320,31 @@ function buildFakeSupabase() {
             insert: async () => ({ data: null, error: null }),
         }) as unknown as ReturnType<typeof client.from>) as typeof client.from;
 
-    client.rpc = (async () => ({ data: null, error: null })) as unknown as typeof client.rpc;
+    client.rpc = (async (fn: string, args?: Record<string, unknown>) => {
+        if (fn === 'create_structure_snapshot') {
+            const userId = String(args?.p_user_id ?? '');
+            const snapshotId = `snapshot-${state.snapshots.length + 1}`;
+            state.snapshots.unshift({
+                id: snapshotId,
+                user_id: userId,
+                name: String(args?.p_snapshot_name ?? 'Backup'),
+                created_at: new Date().toISOString(),
+                snapshot_clusters: [],
+            });
+            return { data: snapshotId, error: null };
+        }
+
+        if (fn === 'restore_structure_snapshot') {
+            const userId = String(args?.p_user_id ?? '');
+            const snapshotId = String(args?.p_snapshot_id ?? '');
+            const snapshot = state.snapshots.find((item) => item.id === snapshotId && item.user_id === userId);
+            return snapshot
+                ? { data: null, error: null }
+                : { data: null, error: { message: 'Snapshot not found' } };
+        }
+
+        return { data: null, error: null };
+    }) as unknown as typeof client.rpc;
 
     return client;
 }

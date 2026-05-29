@@ -143,6 +143,24 @@ describe('backend HTTP contract', () => {
     assert.deepEqual(body, { status: 'queued' });
   });
 
+  it('queues manual clustering for the authenticated user', async () => {
+    const response = await jsonRequest('/trigger-clustering/status-user', 'status-user', {
+      clusteringSettings: { folderDensity: 'fewer' },
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body, { status: 'clustering_queued' });
+  });
+
+  it('prevents trigger-clustering for a different user id', async () => {
+    const response = await jsonRequest('/trigger-clustering/status-user', 'other-user', {});
+    const body = await response.json();
+
+    assert.equal(response.status, 403);
+    assert.equal(body.error, 'User id does not match authenticated session.');
+  });
+
   it('rejects ingests that exceed the free tier limit', async () => {
     const bookmarks = Array.from({ length: 501 }, (_, index) => ({
       id: `chrome-${index}`,
@@ -190,6 +208,86 @@ describe('backend HTTP contract', () => {
 
     assert.equal(response.status, 400);
     assert.equal(body.error, 'A valid URL is required.');
+  });
+
+  it('returns structure clusters and assignments for the authenticated user', async () => {
+    const response = await request('/structure/status-user', {
+      headers: { authorization: 'Bearer status-user' },
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.clusters.length, 1);
+    assert.equal(body.clusters[0].id, 'cluster-1');
+    assert.equal(body.assignments.length, 1);
+    assert.equal(body.assignments[0].bookmark_id, 'embedded-1');
+  });
+
+  it('prevents structure reads for a different user id', async () => {
+    const response = await request('/structure/status-user', {
+      headers: { authorization: 'Bearer other-user' },
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 403);
+    assert.equal(body.error, 'User id does not match authenticated session.');
+  });
+
+  it('creates, lists, restores, and deletes backup snapshots', async () => {
+    const createResponse = await jsonRequest('/backups/status-user', 'status-user', {
+      name: 'E2E Snapshot',
+    });
+    const createBody = await createResponse.json();
+
+    assert.equal(createResponse.status, 200);
+    assert.equal(createBody.status, 'created');
+    assert.match(createBody.snapshotId, /^snapshot-/);
+
+    const listResponse = await request('/backups/status-user', {
+      headers: { authorization: 'Bearer status-user' },
+    });
+    const listBody = await listResponse.json();
+
+    assert.equal(listResponse.status, 200);
+    assert.ok(listBody.backups.some((backup: any) => backup.id === createBody.snapshotId));
+
+    const restoreResponse = await request(`/backups/status-user/${createBody.snapshotId}/restore`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer status-user' },
+    });
+    assert.equal(restoreResponse.status, 200);
+    assert.deepEqual(await restoreResponse.json(), { status: 'restored' });
+
+    const deleteResponse = await request(`/backups/status-user/${createBody.snapshotId}`, {
+      method: 'DELETE',
+      headers: { authorization: 'Bearer status-user' },
+    });
+    assert.equal(deleteResponse.status, 200);
+    assert.deepEqual(await deleteResponse.json(), { status: 'deleted' });
+  });
+
+  it('prevents backup access for a different user id', async () => {
+    const response = await request('/backups/status-user', {
+      headers: { authorization: 'Bearer other-user' },
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 403);
+    assert.equal(body.error, 'User id does not match authenticated session.');
+  });
+
+  it('runs premium dead-link checks without allowing localhost SSRF targets through', async () => {
+    const response = await jsonRequest('/dead-links/check', 'premium-user', {
+      bookmarks: [
+        { chromeId: 'chrome-localhost', url: 'http://127.0.0.1/latest/meta-data' },
+      ],
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.scanned, 1);
+    assert.equal(body.dead, 0);
+    assert.deepEqual(body.deadChromeIds, []);
   });
 
   it('cancels an authenticated user pipeline and clears inflight statuses', async () => {
