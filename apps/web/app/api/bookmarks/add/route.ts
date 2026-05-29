@@ -4,6 +4,8 @@ import { createClient } from '@/utils/supabase/server'
 const getBackendUrl = () =>
   (process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || '').replace(/\/$/, '')
 
+const BACKEND_FETCH_TIMEOUT_MS = 15_000
+
 export async function POST(request: Request) {
   const supabase = createClient()
   const {
@@ -29,15 +31,43 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json().catch(() => ({}))
-  const response = await fetch(`${backendUrl}/bookmarks/add`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${session.access_token}`,
-    },
-    body: JSON.stringify(body),
-  })
 
-  const payload = await response.json().catch(() => ({}))
-  return NextResponse.json(payload, { status: response.status })
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), BACKEND_FETCH_TIMEOUT_MS)
+
+  let response: Response
+  try {
+    response = await fetch(`${backendUrl}/bookmarks/add`, {
+      signal: controller.signal,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    clearTimeout(timeoutId)
+    const timedOut = controller.signal.aborted
+    return NextResponse.json(
+      {
+        error: timedOut
+          ? 'Backend request timed out. Please try again.'
+          : 'Could not reach the backend service.',
+      },
+      { status: timedOut ? 504 : 502 }
+    )
+  }
+
+  clearTimeout(timeoutId)
+
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    const text = await response.text().catch(() => '')
+    payload = text || {}
+  }
+
+  return NextResponse.json(payload, { status: response.status || 502 })
 }

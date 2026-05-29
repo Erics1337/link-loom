@@ -134,6 +134,44 @@ describe('backend HTTP contract', () => {
     assert.equal(body.error, 'Authentication required.');
   });
 
+  it('requires authentication on body-scoped backend tools', async () => {
+    const cases = [
+      request('/register-device', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ deviceId: 'device-1' }),
+      }),
+      request('/search', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query: 'bookmarks' }),
+      }),
+      request('/dead-links/check', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ bookmarks: [] }),
+      }),
+    ];
+
+    for (const responsePromise of cases) {
+      const response = await responsePromise;
+      const body = await response.json();
+
+      assert.equal(response.status, 401);
+      assert.equal(body.error, 'Authentication required.');
+    }
+  });
+
+  it('rejects empty search queries before requesting embeddings', async () => {
+    const response = await jsonRequest('/search', 'search-user', {
+      query: '   ',
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(body.error, 'Query is required');
+  });
+
   it('reports detailed pipeline status for an authenticated user', async () => {
     const response = await request('/status/status-user', {
       headers: { authorization: 'Bearer status-user' },
@@ -401,6 +439,14 @@ describe('backend HTTP contract', () => {
     const response = await request('/backups/status-user', {
       headers: { authorization: 'Bearer other-user' },
     });
+    const body = await response.json();
+
+    assert.equal(response.status, 403);
+    assert.equal(body.error, 'User id does not match authenticated session.');
+  });
+
+  it('prevents auto-rename for a different user id before premium work', async () => {
+    const response = await jsonRequest('/auto-rename/status-user', 'other-user', {});
     const body = await response.json();
 
     assert.equal(response.status, 403);
