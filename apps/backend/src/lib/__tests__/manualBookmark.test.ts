@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { queueManualBookmark } from '../manualBookmark';
 import { supabase } from '../../db';
 import { queues } from '../queue';
-import { clearUserCancelled } from '../cancellation';
+import { beginUserPipelineRun } from '../cancellation';
 
 vi.mock('../../db', () => ({
     supabase: {
@@ -19,13 +19,13 @@ vi.mock('../queue', () => ({
 }));
 
 vi.mock('../cancellation', () => ({
-    clearUserCancelled: vi.fn(),
+    beginUserPipelineRun: vi.fn(),
 }));
 
 describe('queueManualBookmark', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        (clearUserCancelled as any).mockResolvedValue(undefined);
+        (beginUserPipelineRun as any).mockResolvedValue(7);
     });
 
     it('rejects unsupported URL protocols before queueing work', async () => {
@@ -69,19 +69,21 @@ describe('queueManualBookmark', () => {
         });
 
         expect(result.ok).toBe(true);
-        expect(clearUserCancelled).toHaveBeenCalledWith('user-1');
+        expect(beginUserPipelineRun).toHaveBeenCalledWith('user-1');
         expect(clusterChain.delete).toHaveBeenCalled();
         expect(queues.ingest.add).toHaveBeenCalledWith(
             'ingest',
             expect.objectContaining({
                 userId: 'user-1',
+                jobGeneration: 7,
                 bookmarks: [
                     expect.objectContaining({
                         url: 'https://example.com/docs',
                         title: 'Example Docs',
                     }),
                 ],
-            })
+            }),
+            { jobId: 'ingest-user-1-manual-generation-7' }
         );
     });
 });

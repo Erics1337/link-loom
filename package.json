@@ -6,6 +6,7 @@
     "dev": "./node_modules/.bin/turbo run dev",
     "lint": "./node_modules/.bin/turbo run lint",
     "test:e2e": "./node_modules/.bin/turbo run test:e2e",
+    "smoke:backend": "pnpm --filter backend smoke",
     "format": "prettier --write \"**/*.{ts,tsx,md}\""
   },
   "devDependencies": {

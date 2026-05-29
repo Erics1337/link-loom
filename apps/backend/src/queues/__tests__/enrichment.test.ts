@@ -61,6 +61,7 @@ describe('Enrichment Worker', () => {
 
         const job = createMockJob({
             userId: 'user-1',
+            jobGeneration: 4,
             bookmarkId: 'bm-1',
             url: 'https://example.com'
         });
@@ -80,11 +81,14 @@ describe('Enrichment Worker', () => {
             'embed',
             {
                 userId: 'user-1',
+                jobGeneration: 4,
                 bookmarkId: 'bm-1',
                 text: 'Test Title Test Description https://example.com',
                 url: 'https://example.com',
-            }
+            },
+            { jobId: 'embed-user-1-generation-4-bm-1' }
         );
+        expect(isUserCancelled).toHaveBeenCalledWith('user-1', 4);
     });
 
     it('should handle fetch failure gracefully and still enqueue with just URL', async () => {
@@ -92,6 +96,7 @@ describe('Enrichment Worker', () => {
 
         const job = createMockJob({
             userId: 'user-2',
+            jobGeneration: 5,
             bookmarkId: 'bm-2',
             url: 'https://broken.com'
         });
@@ -103,10 +108,12 @@ describe('Enrichment Worker', () => {
             'embed',
             {
                 userId: 'user-2',
+                jobGeneration: 5,
                 bookmarkId: 'bm-2',
                 text: '  https://broken.com', // space space url
                 url: 'https://broken.com',
-            }
+            },
+            { jobId: 'embed-user-2-generation-5-bm-2' }
         );
     });
 

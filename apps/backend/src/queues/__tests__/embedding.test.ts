@@ -51,6 +51,7 @@ describe('Embedding Worker', () => {
     it('should correctly process a cache MISS, call OpenAI, and cache the result', async () => {
         const job = createMockJob({
             userId: 'user-1',
+            jobGeneration: 6,
             bookmarkId: 'bm-1',
             text: 'Test content',
             url: 'https://example.com'
@@ -87,11 +88,13 @@ describe('Embedding Worker', () => {
         expect(mockBookmarksChain.update).toHaveBeenCalledWith({
             status: 'embedded'
         });
+        expect(isUserCancelled).toHaveBeenCalledWith('user-1', 6);
     });
 
     it('should correctly process a cache HIT and skip OpenAI', async () => {
         const job = createMockJob({
             userId: 'user-2',
+            jobGeneration: 7,
             bookmarkId: 'bm-2',
             text: 'More test content',
             url: 'https://cached.com'
@@ -115,6 +118,7 @@ describe('Embedding Worker', () => {
         expect(mockBookmarksChain.update).toHaveBeenCalledWith({
             status: 'embedded'
         });
+        expect(isUserCancelled).toHaveBeenCalledWith('user-2', 7);
     });
 
     it('should abort if cancelled before processing', async () => {

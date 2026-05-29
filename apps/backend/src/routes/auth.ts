@@ -57,7 +57,16 @@ export const registerAuthRoutes = async (fastify: FastifyInstance) => {
             .maybeSingle();
 
         if (existing) {
-            await supabase.from('user_devices').update({ last_seen_at: new Date() }).eq('id', existing.id);
+            const { error: updateError } = await supabase
+                .from('user_devices')
+                .update({ last_seen_at: new Date() })
+                .eq('id', existing.id);
+
+            if (updateError) {
+                console.error('[Device] Update error:', updateError);
+                return reply.code(500).send({ error: 'Failed to update device' });
+            }
+
             return { status: 'registered' };
         }
 
