@@ -52,6 +52,12 @@ variable "worker_timeout_seconds" {
   default     = 120
 }
 
+variable "queue_max_receive_count" {
+  description = "Number of failed receives before moving a worker message to its DLQ."
+  type        = number
+  default     = 5
+}
+
 variable "clustering_memory_mb" {
   description = "Memory for the clustering worker Lambda."
   type        = number

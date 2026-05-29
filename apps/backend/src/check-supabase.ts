@@ -1,14 +1,20 @@
-
 import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
 
-// Credentials from `npx supabase status -o json` output
-const SUPABASE_URL = 'http://127.0.0.1:54321';
-const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU';
+dotenv.config({ path: '.env.local' });
+dotenv.config();
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !supabaseServiceKey) {
+    throw new Error('Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY before running this check.');
+}
+
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 async function testConnection() {
-    console.log('Testing connection to:', SUPABASE_URL);
+    console.log('Testing connection to:', supabaseUrl);
     try {
         const { data, error } = await supabase.from('users').select('count', { count: 'exact', head: true });
         if (error) {

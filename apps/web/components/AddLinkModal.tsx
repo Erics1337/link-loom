@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Plus, X, Loader2 } from "lucide-react";
-import { createClient } from "@/utils/supabase/client";
 import { Alert, Button, Card, IconButton, Input } from "@link-loom/ui";
 
 export function AddLinkModal() {
@@ -28,25 +27,19 @@ export function AddLinkModal() {
       // Basic URL validation
       new URL(url);
 
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        throw new Error("You must be logged in to add a link.");
-      }
-
-      // Write straight to db; backend ingestion queues will take over
-      const { error: dbError } = await supabase.from("bookmarks").insert({
-        user_id: user.id,
-        chrome_id: `manual-${crypto.randomUUID()}`,
-        url,
-        title: "Adding link...", // Placeholder until enriched
-        status: "pending",
+      const response = await fetch("/api/bookmarks/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url,
+          title: url,
+        }),
       });
 
-      if (dbError) throw dbError;
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || payload.message || "Failed to add link.");
+      }
 
       setSuccess(true);
       setTimeout(() => {

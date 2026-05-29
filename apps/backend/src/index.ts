@@ -34,8 +34,10 @@ import { supabase } from './db';
 import OpenAI from 'openai';
 import { markUserCancelled, clearUserCancelled } from './lib/cancellation';
 import { normalizeClusteringSettings } from './lib/clusteringSettings';
-import pLimit from 'p-limit';
+import { createLimit } from './lib/limit';
 import { generateBookmarkRename } from './lib/bookmarkRename';
+import { safeFetch } from './lib/safeFetch';
+import { queueManualBookmark } from './lib/manualBookmark';
 
 const DEFAULT_FREE_TIER_LIMIT = 500;
 const parsedFreeTierLimit = Number.parseInt(process.env.FREE_TIER_LIMIT ?? `${DEFAULT_FREE_TIER_LIMIT}`, 10);
@@ -141,30 +143,8 @@ const requireRequestUserId = async (req: any, reply: any) => {
 };
 
 const fetchWithTimeout = async (url: string, method: 'HEAD' | 'GET') => {
-    const controller = new AbortController();
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<Response>((_, reject) => {
-        timeoutId = setTimeout(() => {
-            controller.abort();
-            reject(new Error(`Request timed out after ${DEAD_LINK_TIMEOUT_MS}ms`));
-        }, DEAD_LINK_TIMEOUT_MS);
-    });
-    try {
-        const headers = method === 'GET' ? { Range: 'bytes=0-0' } : undefined;
-        const requestPromise = fetch(url, {
-            method,
-            redirect: 'follow',
-            signal: controller.signal,
-            headers
-        });
-
-        return await Promise.race([requestPromise, timeoutPromise]);
-    } catch (error) {
-        controller.abort();
-        throw error;
-    } finally {
-        if (timeoutId) clearTimeout(timeoutId);
-    }
+    const headers = method === 'GET' ? { Range: 'bytes=0-0' } : undefined;
+    return safeFetch(url, { method, headers, timeoutMs: DEAD_LINK_TIMEOUT_MS });
 };
 
 const isDeadBookmarkUrl = async (rawUrl: string) => {
@@ -232,7 +212,7 @@ export const buildApp = async () => {
             console.log(
                 `[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId} (density=${clusteringSettings.folderDensity}, tone=${clusteringSettings.namingTone}, mode=${clusteringSettings.organizationMode}, emoji=${clusteringSettings.useEmojiNames})`
             );
-            clearUserCancelled(userId);
+            await clearUserCancelled(userId);
 
             const userError = await ensureUserExists(userId);
             if (userError) {
@@ -291,6 +271,38 @@ export const buildApp = async () => {
             await queues.ingest.add('ingest', { userId, bookmarks, clusteringSettings });
             console.log(`[INGEST] Queued ingest job for user ${userId}`);
             return { status: 'queued' };
+        });
+
+        fastify.post('/bookmarks/add', async (req: any, reply) => {
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
+
+            const rawUrl = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+            const title = typeof req.body?.title === 'string' && req.body.title.trim()
+                ? req.body.title.trim()
+                : rawUrl;
+
+            const userError = await ensureUserExists(userId);
+            if (userError) {
+                console.error('[BOOKMARKS] Failed to ensure user exists:', userError);
+                return reply.code(500).send({ error: 'Failed to initialize user' });
+            }
+
+            const isPremium = await getUserPremiumStatus(userId);
+            const result = await queueManualBookmark({
+                userId,
+                rawUrl,
+                title,
+                freeTierLimit: FREE_TIER_LIMIT,
+                isPremium,
+                clusteringSettings: req.body?.clusteringSettings,
+            });
+
+            if (!result.ok) {
+                return reply.code(result.statusCode).send(result.payload);
+            }
+
+            return { status: 'queued', chromeId: result.chromeId };
         });
 
         // Device Registration
@@ -527,7 +539,7 @@ export const buildApp = async () => {
             console.log(`[DEAD_LINKS] Checking ${uniqueUrls.length} unique URLs (from ${bookmarks.length} bookmarks)`);
 
             const deadUrlSet = new Set<string>();
-            const deadLinkCheckLimit = pLimit(50);
+            const deadLinkCheckLimit = createLimit(50);
             let deadlinePassed = false;
             let scannedCount = 0;
 
@@ -615,7 +627,7 @@ export const buildApp = async () => {
                 return { renamed: 0, scanned: 0, updates: [] };
             }
 
-            const renameLimit = pLimit(6);
+            const renameLimit = createLimit(6);
             const updates: Array<{ bookmark_id: string; ai_title: string }> = [];
             const updateErrors: string[] = [];
 
@@ -667,7 +679,7 @@ export const buildApp = async () => {
             const userId = await requireRequestUserId(req, reply);
             if (!userId) return reply;
             const clusteringSettings = normalizeClusteringSettings(req.body?.clusteringSettings);
-            clearUserCancelled(userId);
+            await clearUserCancelled(userId);
             console.log(`[MANUAL] Triggering clustering for user ${userId}`);
             await queues.clustering.add('cluster', { userId, clusteringSettings }, {
                 jobId: `cluster-${userId}-manual-${Date.now()}`
@@ -680,7 +692,7 @@ export const buildApp = async () => {
             if (!userId) return reply;
             const clearAllQueues = Boolean(req.body?.clearAllQueues);
             console.log(`[CANCEL] Request received for user ${userId} (clearAllQueues=${clearAllQueues})`);
-            markUserCancelled(userId);
+            await markUserCancelled(userId);
 
             // SQS messages already in flight cannot be selectively removed cheaply.
             // Reset DB state; processors also check the in-memory flag in local dev.

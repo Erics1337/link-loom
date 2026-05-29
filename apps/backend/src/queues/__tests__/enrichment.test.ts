@@ -4,6 +4,7 @@ import { supabase } from '../../db';
 import { queues } from '../../lib/queue';
 import { isUserCancelled } from '../../lib/cancellation';
 import { QueueJob } from '../../lib/queue';
+import { safeFetch } from '../../lib/safeFetch';
 
 // Mock dependencies
 vi.mock('../../db', () => ({
@@ -28,14 +29,14 @@ vi.mock('../../lib/cancellation', () => ({
     isUserCancelled: vi.fn()
 }));
 
-// Mock global fetch
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+vi.mock('../../lib/safeFetch', () => ({
+    safeFetch: vi.fn()
+}));
 
 describe('Enrichment Worker', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mockFetch.mockReset();
+        (safeFetch as any).mockReset();
         (isUserCancelled as any).mockReturnValue(false);
     });
 
@@ -54,7 +55,7 @@ describe('Enrichment Worker', () => {
                 <body></body>
             </html>
         `;
-        mockFetch.mockResolvedValueOnce({
+        (safeFetch as any).mockResolvedValueOnce({
             text: () => Promise.resolve(mockHtml)
         });
 
@@ -67,7 +68,7 @@ describe('Enrichment Worker', () => {
         await enrichmentProcessor(job);
 
         // Verify fetch was called
-        expect(mockFetch).toHaveBeenCalledWith('https://example.com', expect.any(Object));
+        expect(safeFetch).toHaveBeenCalledWith('https://example.com', { timeoutMs: 5000 });
 
         // Verify Supabase update
         expect(supabase.from).toHaveBeenCalledWith('bookmarks');
@@ -82,13 +83,12 @@ describe('Enrichment Worker', () => {
                 bookmarkId: 'bm-1',
                 text: 'Test Title Test Description https://example.com',
                 url: 'https://example.com',
-            },
-            expect.any(Object) // options
+            }
         );
     });
 
     it('should handle fetch failure gracefully and still enqueue with just URL', async () => {
-        mockFetch.mockRejectedValueOnce(new Error('Network error'));
+        (safeFetch as any).mockRejectedValueOnce(new Error('Network error'));
 
         const job = createMockJob({
             userId: 'user-2',
@@ -106,8 +106,7 @@ describe('Enrichment Worker', () => {
                 bookmarkId: 'bm-2',
                 text: '  https://broken.com', // space space url
                 url: 'https://broken.com',
-            },
-            expect.any(Object)
+            }
         );
     });
 
@@ -117,7 +116,7 @@ describe('Enrichment Worker', () => {
 
         await enrichmentProcessor(job);
 
-        expect(mockFetch).not.toHaveBeenCalled();
+        expect(safeFetch).not.toHaveBeenCalled();
         expect(supabase.from).not.toHaveBeenCalled();
         expect(queues.embedding.add).not.toHaveBeenCalled();
     });

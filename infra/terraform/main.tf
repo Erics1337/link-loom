@@ -72,28 +72,68 @@ resource "aws_sqs_queue" "ingest" {
   name                       = "${local.name_prefix}-ingest"
   visibility_timeout_seconds = var.worker_timeout_seconds + 30
   message_retention_seconds  = 1209600
-  tags                       = local.tags
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.ingest_dlq.arn
+    maxReceiveCount     = var.queue_max_receive_count
+  })
+  tags = local.tags
+}
+
+resource "aws_sqs_queue" "ingest_dlq" {
+  name                      = "${local.name_prefix}-ingest-dlq"
+  message_retention_seconds = 1209600
+  tags                      = local.tags
 }
 
 resource "aws_sqs_queue" "enrichment" {
   name                       = "${local.name_prefix}-enrichment"
   visibility_timeout_seconds = var.worker_timeout_seconds + 30
   message_retention_seconds  = 1209600
-  tags                       = local.tags
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.enrichment_dlq.arn
+    maxReceiveCount     = var.queue_max_receive_count
+  })
+  tags = local.tags
+}
+
+resource "aws_sqs_queue" "enrichment_dlq" {
+  name                      = "${local.name_prefix}-enrichment-dlq"
+  message_retention_seconds = 1209600
+  tags                      = local.tags
 }
 
 resource "aws_sqs_queue" "embedding" {
   name                       = "${local.name_prefix}-embedding"
   visibility_timeout_seconds = var.worker_timeout_seconds + 30
   message_retention_seconds  = 1209600
-  tags                       = local.tags
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.embedding_dlq.arn
+    maxReceiveCount     = var.queue_max_receive_count
+  })
+  tags = local.tags
+}
+
+resource "aws_sqs_queue" "embedding_dlq" {
+  name                      = "${local.name_prefix}-embedding-dlq"
+  message_retention_seconds = 1209600
+  tags                      = local.tags
 }
 
 resource "aws_sqs_queue" "clustering" {
   name                       = "${local.name_prefix}-clustering"
   visibility_timeout_seconds = var.worker_timeout_seconds + 30
   message_retention_seconds  = 1209600
-  tags                       = local.tags
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.clustering_dlq.arn
+    maxReceiveCount     = var.queue_max_receive_count
+  })
+  tags = local.tags
+}
+
+resource "aws_sqs_queue" "clustering_dlq" {
+  name                      = "${local.name_prefix}-clustering-dlq"
+  message_retention_seconds = 1209600
+  tags                      = local.tags
 }
 
 data "aws_iam_policy_document" "lambda_assume_role" {

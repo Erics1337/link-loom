@@ -1,6 +1,7 @@
 import { QueueJob, queues } from '../lib/queue';
 import { supabase } from '../db';
 import { isUserCancelled } from '../lib/cancellation';
+import { safeFetch } from '../lib/safeFetch';
 
 import * as cheerio from 'cheerio';
 
@@ -14,7 +15,7 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
     const { userId, bookmarkId, url } = job.data;
     console.log(`Enriching bookmark ${bookmarkId}: ${url}`);
 
-    if (isUserCancelled(userId)) {
+    if (await isUserCancelled(userId)) {
         console.log(`[ENRICHMENT] Cancelled before start for user ${userId}`);
         return;
     }
@@ -23,12 +24,7 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
     let title = '';
 
     try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
-        
-        const response = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        
+        const response = await safeFetch(url, { timeoutMs: 5000 });
         const html = await response.text();
         const $ = cheerio.load(html);
         title = $('title').text().trim() || '';
@@ -41,7 +37,7 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
         }
     }
 
-    if (isUserCancelled(userId)) {
+    if (await isUserCancelled(userId)) {
         console.log(`[ENRICHMENT] Cancelled after fetch for user ${userId}`);
         return;
     }
@@ -60,7 +56,7 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
         return;
     }
 
-    if (isUserCancelled(userId)) {
+    if (await isUserCancelled(userId)) {
         console.log(`[ENRICHMENT] Cancelled before embedding enqueue for user ${userId}`);
         return;
     }
@@ -73,7 +69,6 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
             bookmarkId,
             text: `${title} ${description} ${url}`,
             url,
-        },
-        { attempts: 3, backoff: { type: 'exponential', delay: 1000 } }
+        }
     );
 };

@@ -89,9 +89,6 @@ describe('Clustering Worker', () => {
     it('should fetch valid bookmarks and create at least a root cluster', async () => {
         const job = createMockJob({ userId: 'user-2' });
 
-        // First DB call: inflight count -> 0
-        const mockCountChain = createMockChain(null, 0);
-        
         // Second DB call: Fetch bookmarks
         const mockFetchChain = {
             select: vi.fn().mockReturnThis(),
@@ -143,5 +140,54 @@ describe('Clustering Worker', () => {
         // Actually, we mocked the config defaults so we don't know the exact split without tracing. But we know assigning happens.
         
         expect(supabase.from).toHaveBeenCalledWith('bookmarks');
+    });
+
+    it('should accept Supabase joined vectors returned as arrays', async () => {
+        const job = createMockJob({ userId: 'user-3' });
+        const mockAssignmentInsert = vi.fn().mockResolvedValue({ error: null });
+
+        (supabase.from as any).mockImplementation((table: string) => {
+            if (table === 'bookmarks') {
+                const chain: any = {
+                    select: vi.fn(() => chain),
+                    eq: vi.fn(() => chain),
+                    in: vi.fn().mockResolvedValue({ count: 0, data: [] }),
+                    range: vi.fn()
+                        .mockResolvedValueOnce({
+                            data: [
+                                { id: 'bm-1', shared_links: [{ vector: [0.1, 0.2] }] },
+                                { id: 'bm-2', shared_links: [{ vector: [0.3, 0.4] }] }
+                            ],
+                            error: null
+                        })
+                        .mockResolvedValueOnce({ data: [], error: null }),
+                    then: (resolve: any) => resolve({ count: 0 })
+                };
+                return chain;
+            }
+
+            if (table === 'clusters') {
+                return {
+                    insert: vi.fn().mockReturnThis(),
+                    select: vi.fn().mockReturnThis(),
+                    single: vi.fn().mockResolvedValue({ data: { id: 'cluster-array-shape' }, error: null })
+                };
+            }
+
+            if (table === 'cluster_assignments') {
+                return {
+                    insert: mockAssignmentInsert
+                };
+            }
+
+            return {};
+        });
+
+        await clusteringProcessor(job);
+
+        expect(mockAssignmentInsert).toHaveBeenCalledWith([
+            { cluster_id: 'cluster-array-shape', bookmark_id: 'bm-1' },
+            { cluster_id: 'cluster-array-shape', bookmark_id: 'bm-2' }
+        ]);
     });
 });

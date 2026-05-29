@@ -91,8 +91,7 @@ describe('Ingest Worker', () => {
                 userId: 'user-1',
                 bookmarkId: 'bm-1',
                 url: 'https://example.com',
-            },
-            expect.any(Object)
+            }
         );
 
         // Verify clustering scheduled

@@ -21,7 +21,6 @@
     "fastify": "^4.24.3",
     "ml-kmeans": "^6.0.0",
     "openai": "^4.14.0",
-    "p-limit": "^7.2.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {

@@ -12,8 +12,6 @@ export type QueueProcessor<T = unknown> = (job: QueueJob<T>) => Promise<void>;
 type QueueAddOptions = {
     delay?: number;
     jobId?: string;
-    attempts?: number;
-    backoff?: unknown;
 };
 
 type QueuedMessage = {
@@ -21,7 +19,6 @@ type QueuedMessage = {
     jobName: string;
     data: unknown;
     jobId?: string;
-    attempts?: number;
 };
 
 const queueDriver = process.env.QUEUE_DRIVER ?? (process.env.AWS_LAMBDA_FUNCTION_NAME ? 'sqs' : 'inline');
@@ -63,7 +60,6 @@ class AppQueue<T = unknown> {
                 jobName,
                 data,
                 jobId,
-                attempts: options.attempts,
             };
 
             await sqs.send(new SendMessageCommand({

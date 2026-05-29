@@ -2,7 +2,7 @@ import { QueueJob } from '../lib/queue';
 import { supabase } from '../db';
 import { kmeans } from 'ml-kmeans';
 import OpenAI from 'openai';
-import pLimit from 'p-limit';
+import { createLimit } from '../lib/limit';
 import { isUserCancelled } from '../lib/cancellation';
 import { ClusteringDensityProfile, ClusteringSettings, getDensityProfile, normalizeClusteringSettings } from '../lib/clusteringSettings';
 import { emojiPrefixLabel } from '../lib/emojiNaming';
@@ -46,7 +46,7 @@ const CLUSTER_NAME_MIN_BOOKMARKS_FOR_AI = parsePositiveInt(process.env.CLUSTER_N
 const CLUSTER_NAME_CONTEXT_SAMPLE_SIZE = parsePositiveInt(process.env.CLUSTER_NAME_CONTEXT_SAMPLE_SIZE, 20);
 
 // Concurrency limit for cluster naming and cluster creation requests.
-const limit = pLimit(CLUSTER_NAME_CONCURRENCY);
+const limit = createLimit(CLUSTER_NAME_CONCURRENCY);
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const clusterNameCache = new Map<string, string>();
@@ -204,8 +204,7 @@ const recoverStalePipelineState = async (userId: string) => {
     for (const enrichmentJob of toQueueEnrichment) {
         await queues.enrichment.add(
             'enrich',
-            { userId, bookmarkId: enrichmentJob.bookmarkId, url: enrichmentJob.url },
-            { attempts: 3, backoff: { type: 'exponential', delay: 1000 } }
+            { userId, bookmarkId: enrichmentJob.bookmarkId, url: enrichmentJob.url }
         );
     }
 
@@ -217,8 +216,7 @@ const recoverStalePipelineState = async (userId: string) => {
                 bookmarkId: embeddingJob.bookmarkId,
                 url: embeddingJob.url,
                 text: embeddingJob.text,
-            },
-            { attempts: 3, backoff: { type: 'exponential', delay: 1000 } }
+            }
         );
     }
 
@@ -593,7 +591,7 @@ async function recursiveCluster(
     userId: string,
     settings: ClusteringSettings
 ) {
-    if (isUserCancelled(userId)) {
+    if (await isUserCancelled(userId)) {
         log(`[CLUSTERING] Cancelled recursion for user ${userId}`);
         return;
     }
@@ -669,7 +667,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         `Clustering bookmarks for user ${userId} (density=${settings.folderDensity}, tone=${settings.namingTone}, mode=${settings.organizationMode}, emoji=${settings.useEmojiNames})`
     );
 
-    if (isUserCancelled(userId)) {
+    if (await isUserCancelled(userId)) {
         log(`[CLUSTERING] Cancelled before start for user ${userId}`);
         return;
     }
@@ -720,7 +718,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         if (chunk.length < size) break;
         from += size;
 
-        if (isUserCancelled(userId)) {
+        if (await isUserCancelled(userId)) {
             log(`[CLUSTERING] Cancelled during fetch for user ${userId}`);
             return;
         }
@@ -734,7 +732,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
     log(`Fetched ${userBookmarks.length} bookmarks from DB`);
 
     const validBookmarks = userBookmarks.filter(
-        bookmark => bookmark.shared_links && (bookmark.shared_links as { vector?: unknown }).vector
+        bookmark => Boolean(parseVector(getJoinedSharedVector(bookmark.shared_links)))
     );
     log(`Valid bookmarks with vectors: ${validBookmarks.length}`);
 
@@ -746,7 +744,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
     const parsedRows: Array<{ id: string; vector: number[] }> = [];
 
     for (const bookmark of validBookmarks) {
-        const rawVector = (bookmark.shared_links as { vector?: unknown })?.vector;
+        const rawVector = getJoinedSharedVector(bookmark.shared_links);
         const parsedVector = parseVector(rawVector);
         if (!parsedVector) continue;
 

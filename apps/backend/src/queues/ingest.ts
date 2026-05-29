@@ -20,7 +20,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
     console.log(`[INGEST WORKER] Starting: ${rawBookmarks.length} bookmarks for user ${userId}`);
 
     try {
-        if (isUserCancelled(userId)) {
+        if (await isUserCancelled(userId)) {
             console.log(`[INGEST WORKER] Cancelled before start for user ${userId}`);
             return;
         }
@@ -42,7 +42,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
         let saved = 0;
         let handled = 0;
         for (const b of rawBookmarks) {
-            if (isUserCancelled(userId)) {
+            if (await isUserCancelled(userId)) {
                 console.log(`[INGEST WORKER] Cancelled during ingest for user ${userId}`);
                 return;
             }
@@ -123,13 +123,12 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                 // Cache MISS - Add to Enrichment Queue
                 await queues.enrichment.add(
                     'enrich',
-                    {
-                        userId,
-                        bookmarkId: inserted.id,
-                        url: inserted.url,
-                    },
-                    { attempts: 3, backoff: { type: 'exponential', delay: 1000 } }
-                );
+                {
+                    userId,
+                    bookmarkId: inserted.id,
+                    url: inserted.url,
+                }
+            );
             }
 
             saved++;
@@ -145,7 +144,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
         await job.updateProgress({ processed: rawBookmarks.length, total: rawBookmarks.length });
         console.log(`[INGEST WORKER] Done: ${saved} bookmarks saved (${handled} handled)`);
 
-        if (isUserCancelled(userId)) {
+        if (await isUserCancelled(userId)) {
             console.log(`[INGEST WORKER] Cancelled before scheduling clustering for user ${userId}`);
             return;
         }

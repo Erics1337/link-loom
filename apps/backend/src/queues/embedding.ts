@@ -20,7 +20,7 @@ export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
     console.log(`Processing bookmark ${bookmarkId}`);
 
     try {
-        if (isUserCancelled(userId)) {
+        if (await isUserCancelled(userId)) {
             console.log(`[EMBEDDING] Cancelled before start for user ${userId}`);
             return;
         }
@@ -62,7 +62,7 @@ export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
         }
 
         // 3. Update Status
-        if (isUserCancelled(userId)) {
+        if (await isUserCancelled(userId)) {
             console.log(`[EMBEDDING] Cancelled before status update for user ${userId}`);
             return;
         }
