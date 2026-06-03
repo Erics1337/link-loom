@@ -59,7 +59,7 @@ export async function POST(request: Request) {
     payload = await response.json()
   } catch {
     const text = await response.text().catch(() => '')
-    payload = text || {}
+    payload = { error: text || 'Invalid JSON response' }
   }
 
   return NextResponse.json(payload, { status: response.status || 502 })
