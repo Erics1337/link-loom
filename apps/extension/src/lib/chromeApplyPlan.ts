@@ -446,8 +446,8 @@ const applyBookmarksForNodes = async (
                 await chrome.bookmarks.move(node.chromeId, { parentId });
                 entry.status = 'applied';
                 await writeJournal(journal);
+                result.movedCount += 1;
             }
-            result.movedCount += 1;
         } catch (error) {
             result.skippedCount += 1;
             result.shouldWarnAboutPartialApply = true;

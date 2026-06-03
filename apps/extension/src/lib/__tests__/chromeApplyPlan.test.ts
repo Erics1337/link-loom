@@ -161,6 +161,7 @@ const buildDocsPlan = (bookmarkOverrides: Record<string, unknown> = {}) =>
 describe('chrome bookmark apply plan', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        vi.unstubAllGlobals();
     });
 
     it('creates folders, trims title updates, moves bookmarks, and clears replaced root children', async () => {
@@ -226,6 +227,19 @@ describe('chrome bookmark apply plan', () => {
             'old-folder'
         );
         expect(await loadActiveChromeApplyJournal()).not.toBeNull();
+    });
+
+    it('does not count bookmarks that are already in the target parent as moved', async () => {
+        const chromeMock = stubChromeBookmarks();
+        chromeMock.records.get('chrome-1')!.parentId = '1';
+
+        const plan = await buildBookmarksBarPlan([
+            bookmarkNode({ rootTitle: 'Bookmarks Bar' })
+        ]);
+        const result = await applyChromeBookmarkPlan(plan);
+
+        expect(result.movedCount).toBe(0);
+        expect(chromeMock.api.move).not.toHaveBeenCalled();
     });
 
     it('does not roll back pending move entries that never applied', async () => {
