@@ -12,7 +12,7 @@ export type BookmarkStructureVersion = {
     };
 };
 
-export type BookmarkBackupSnapshot = {
+export type CloudSnapshot = {
     id: string;
     name: string;
     createdAt: string;
@@ -72,41 +72,41 @@ export const deleteStructureVersion = async (versionId: string) => {
     await chrome.storage.local.set({ [STRUCTURE_VERSIONS_STORAGE_KEY]: remaining });
 };
 
-type CloudBackupClientOptions = {
+type CloudSnapshotClientOptions = {
     backendUrl: string;
     accountUserId?: string | null;
-    canSaveAccountBackups: boolean;
+    canSaveCloudSnapshots: boolean;
     buildAuthHeaders: () => Record<string, string>;
     getAuthHeaders: () => Record<string, string>;
 };
 
-export class BackupClient {
-    constructor(private readonly options: CloudBackupClientOptions) {}
+export class CloudSnapshotClient {
+    constructor(private readonly options: CloudSnapshotClientOptions) {}
 
-    async loadBookmarkBackups() {
-        if (!this.options.accountUserId || !this.options.canSaveAccountBackups) {
-            return [] as BookmarkBackupSnapshot[];
+    async loadCloudSnapshots() {
+        if (!this.options.accountUserId || !this.options.canSaveCloudSnapshots) {
+            return [] as CloudSnapshot[];
         }
 
         try {
             const response = await fetch(`${this.options.backendUrl}/backups/${this.options.accountUserId}`, {
                 headers: this.options.getAuthHeaders()
             });
-            if (!response.ok) throw new Error('Failed to load structure backups');
+            if (!response.ok) throw new Error('Failed to load Cloud Snapshots');
             const data = await response.json();
-            return data.backups as BookmarkBackupSnapshot[];
+            return data.backups as CloudSnapshot[];
         } catch (error) {
-            console.error('[BACKUPS] Fetch error:', error);
-            return [] as BookmarkBackupSnapshot[];
+            console.error('[CLOUD SNAPSHOTS] Fetch error:', error);
+            return [] as CloudSnapshot[];
         }
     }
 
-    async saveCurrentBookmarkBackup(customName?: string) {
-        if (!this.options.accountUserId || !this.options.canSaveAccountBackups) {
-            throw new Error('Create a free account to save backups.');
+    async saveCurrentCloudSnapshot(customName?: string) {
+        if (!this.options.accountUserId || !this.options.canSaveCloudSnapshots) {
+            throw new Error('Create a free account to save Cloud Snapshots.');
         }
 
-        const name = customName || `Snapshot ${new Date().toLocaleDateString()}`;
+        const name = customName || `Cloud Snapshot ${new Date().toLocaleDateString()}`;
         const response = await fetch(`${this.options.backendUrl}/backups/${this.options.accountUserId}`, {
             method: 'POST',
             headers: this.options.buildAuthHeaders(),
@@ -115,7 +115,7 @@ export class BackupClient {
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || 'Failed to save structure snapshot');
+            throw new Error(errorData.error || 'Failed to save Cloud Snapshot');
         }
 
         const data = await response.json().catch(() => ({}));
@@ -128,32 +128,32 @@ export class BackupClient {
             name,
             createdAt: new Date().toISOString(),
             summary: { folders: 0, bookmarks: 0 }
-        } as BookmarkBackupSnapshot;
+        } as CloudSnapshot;
     }
 
-    async deleteBookmarkBackup(backupId: string) {
-        if (!this.options.accountUserId || !this.options.canSaveAccountBackups) {
-            throw new Error('Create a free account to manage backups.');
+    async deleteCloudSnapshot(snapshotId: string) {
+        if (!this.options.accountUserId || !this.options.canSaveCloudSnapshots) {
+            throw new Error('Create a free account to manage Cloud Snapshots.');
         }
 
-        const response = await fetch(`${this.options.backendUrl}/backups/${this.options.accountUserId}/${backupId}`, {
+        const response = await fetch(`${this.options.backendUrl}/backups/${this.options.accountUserId}/${snapshotId}`, {
             method: 'DELETE',
             headers: this.options.getAuthHeaders()
         });
 
-        if (!response.ok) throw new Error('Failed to delete structure snapshot');
+        if (!response.ok) throw new Error('Failed to delete Cloud Snapshot');
     }
 
-    async restoreBookmarkBackup(backupId: string) {
-        if (!this.options.accountUserId || !this.options.canSaveAccountBackups) {
-            throw new Error('Create a free account to restore backups.');
+    async restoreCloudSnapshot(snapshotId: string) {
+        if (!this.options.accountUserId || !this.options.canSaveCloudSnapshots) {
+            throw new Error('Create a free account to restore Cloud Snapshots.');
         }
 
-        const response = await fetch(`${this.options.backendUrl}/backups/${this.options.accountUserId}/${backupId}/restore`, {
+        const response = await fetch(`${this.options.backendUrl}/backups/${this.options.accountUserId}/${snapshotId}/restore`, {
             method: 'POST',
             headers: this.options.getAuthHeaders()
         });
 
-        if (!response.ok) throw new Error('Failed to restore structure snapshot');
+        if (!response.ok) throw new Error('Failed to restore Cloud Snapshot');
     }
 }

@@ -39,7 +39,7 @@ export const VersionsScreen: React.FC<VersionsScreenProps> = ({
                 <div>
                     <h1 className="text-xl font-bold">Structure Versions</h1>
                     <p className="text-xs text-secondary mt-1">
-                        Restore or delete saved bookmark structure snapshots.
+                        Restore or delete saved proposed organizations.
                     </p>
                 </div>
                 <button onClick={onBack} className="btn btn-secondary">

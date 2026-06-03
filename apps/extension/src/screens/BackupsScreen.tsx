@@ -1,18 +1,18 @@
 import React from 'react';
-import { BookmarkBackupSnapshot } from '../hooks/useBookmarkWeaver';
+import { CloudSnapshot } from '../hooks/useBookmarkWeaver';
 import { ArrowLeft, Save } from 'lucide-react';
 import { formatTimestamp, useWorkingMessage } from './screenUtils';
 
-interface BackupsScreenProps {
-    backups: BookmarkBackupSnapshot[];
+interface CloudSnapshotsScreenProps {
+    snapshots: CloudSnapshot[];
     onBack: () => void;
     onSaveCurrent: () => Promise<void>;
-    onRestore: (backupId: string) => Promise<void>;
-    onDelete: (backupId: string) => Promise<void>;
+    onRestore: (snapshotId: string) => Promise<void>;
+    onDelete: (snapshotId: string) => Promise<void>;
 }
 
-export const BackupsScreen: React.FC<BackupsScreenProps> = ({
-    backups,
+export const CloudSnapshotsScreen: React.FC<CloudSnapshotsScreenProps> = ({
+    snapshots,
     onBack,
     onSaveCurrent,
     onRestore,
@@ -27,29 +27,29 @@ export const BackupsScreen: React.FC<BackupsScreenProps> = ({
         setMessage(null);
         try {
             await onSaveCurrent();
-            setMessage('Saved current bookmark state.');
+            setMessage('Saved Cloud Snapshot.');
         } catch (error) {
             setMessage(
                 error instanceof Error
                     ? error.message
-                    : 'Failed to save backup.'
+                    : 'Failed to save Cloud Snapshot.'
             );
         } finally {
             setIsSavingCurrent(false);
         }
     };
 
-    const handleRestore = async (backupId: string) => {
-        await runWithWorkingId(backupId, () => onRestore(backupId), {
-            success: 'Structure snapshot restored successfully.',
-            failure: 'Failed to restore backup.'
+    const handleRestore = async (snapshotId: string) => {
+        await runWithWorkingId(snapshotId, () => onRestore(snapshotId), {
+            success: 'Cloud Snapshot restored successfully.',
+            failure: 'Failed to restore Cloud Snapshot.'
         });
     };
 
-    const handleDelete = async (backupId: string) => {
-        await runWithWorkingId(backupId, () => onDelete(backupId), {
-            success: 'Backup deleted.',
-            failure: 'Failed to delete backup.'
+    const handleDelete = async (snapshotId: string) => {
+        await runWithWorkingId(snapshotId, () => onDelete(snapshotId), {
+            success: 'Cloud Snapshot deleted.',
+            failure: 'Failed to delete Cloud Snapshot.'
         });
     };
 
@@ -60,8 +60,8 @@ export const BackupsScreen: React.FC<BackupsScreenProps> = ({
                     <ArrowLeft size={18} />
                 </button>
                 <div className="flex-1">
-                    <p className="eyebrow">Backups</p>
-                    <h1 className="screen-title">Snapshots</h1>
+                    <p className="eyebrow">Cloud Snapshots</p>
+                    <h1 className="screen-title">Cloud Snapshots</h1>
                 </div>
             </div>
 
@@ -73,26 +73,26 @@ export const BackupsScreen: React.FC<BackupsScreenProps> = ({
                 disabled={isSavingCurrent}
             >
                 <Save size={15} />{' '}
-                {isSavingCurrent ? 'Saving...' : 'Save Current Structure'}
+                {isSavingCurrent ? 'Saving...' : 'Save Cloud Snapshot'}
             </button>
 
             <div className="card flex-1 min-h-0 overflow-y-auto">
-                {backups.length === 0 && (
+                {snapshots.length === 0 && (
                     <div className="message">
-                        No snapshots yet. Save current structure before applying
-                        major folder changes.
+                        No Cloud Snapshots yet. Save the current backend
+                        structure before applying major folder changes.
                     </div>
                 )}
 
-                {backups.map((backup) => {
-                    const summary = backup.summary || {
+                {snapshots.map((snapshot) => {
+                    const summary = snapshot.summary || {
                         folders: 0,
                         bookmarks: 0
                     };
-                    const isWorking = workingId === backup.id;
+                    const isWorking = workingId === snapshot.id;
                     return (
                         <div
-                            key={backup.id}
+                            key={snapshot.id}
                             className="border-b border-white-10"
                             style={{ padding: '12px 0' }}
                         >
@@ -100,12 +100,12 @@ export const BackupsScreen: React.FC<BackupsScreenProps> = ({
                                 <div className="min-h-0">
                                     <div
                                         className="text-sm font-bold text-primary truncate"
-                                        title={backup.name}
+                                        title={snapshot.name}
                                     >
-                                        {backup.name}
+                                        {snapshot.name}
                                     </div>
                                     <div className="text-xs text-secondary mt-0.5">
-                                        {formatTimestamp(backup.createdAt)}
+                                        {formatTimestamp(snapshot.createdAt)}
                                     </div>
                                 </div>
                                 <span className="badge-count">
@@ -122,14 +122,14 @@ export const BackupsScreen: React.FC<BackupsScreenProps> = ({
                             </div>
                             <div className="flex items-center gap-2 mt-2">
                                 <button
-                                    onClick={() => handleRestore(backup.id)}
+                                    onClick={() => handleRestore(snapshot.id)}
                                     className="btn btn-secondary flex-1"
                                     disabled={isWorking}
                                 >
-                                    Restore
+                                    Restore Cloud Snapshot
                                 </button>
                                 <button
-                                    onClick={() => handleDelete(backup.id)}
+                                    onClick={() => handleDelete(snapshot.id)}
                                     className="text-btn-danger"
                                     disabled={isWorking}
                                 >

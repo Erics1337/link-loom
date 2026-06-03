@@ -80,7 +80,7 @@ export default async function DashboardLayout({
             className="flex items-center gap-3 rounded-ll-md px-4 py-3 text-ll-muted transition-colors hover:bg-ll-accent-soft hover:text-ll-text"
           >
             <History className="w-5 h-5" />
-            Structure Backups
+            Cloud Snapshots
           </a>
           <a
             href="/dashboard/devices"

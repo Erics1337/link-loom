@@ -2,16 +2,16 @@ import { Dispatch, SetStateAction, useCallback } from 'react';
 import { BookmarkNode } from '../components/BookmarkTree';
 import { BookmarkStats } from '../lib/bookmarkStructure';
 import {
-    BackupClient,
+    CloudSnapshotClient,
     deleteStructureVersion as deleteStoredStructureVersion,
     loadStructureVersions as loadStoredStructureVersions,
     saveStructureVersion as saveStoredStructureVersion
 } from '../lib/backupClient';
 import { AppStatus } from './useBookmarkWeaverTypes';
 
-type UseBookmarkBackupsArgs = {
+type UseBookmarkPersistenceArgs = {
     accountUserId?: string | null;
-    backupClient: BackupClient;
+    cloudSnapshotClient: CloudSnapshotClient;
     clusters: BookmarkNode[];
     stats: BookmarkStats;
     fetchResults: (idOverride?: string, silent?: boolean) => Promise<void>;
@@ -21,9 +21,9 @@ type UseBookmarkBackupsArgs = {
     setStatus: Dispatch<SetStateAction<AppStatus>>;
 };
 
-export const useBookmarkBackups = ({
+export const useBookmarkPersistence = ({
     accountUserId,
-    backupClient,
+    cloudSnapshotClient,
     clusters,
     stats,
     fetchResults,
@@ -31,7 +31,7 @@ export const useBookmarkBackups = ({
     setClusters,
     setStats,
     setStatus
-}: UseBookmarkBackupsArgs) => {
+}: UseBookmarkPersistenceArgs) => {
     const saveStructureVersion = useCallback(async () => {
         return saveStoredStructureVersion(clusters, stats);
     }, [clusters, stats]);
@@ -62,33 +62,38 @@ export const useBookmarkBackups = ({
         await deleteStoredStructureVersion(versionId);
     }, []);
 
-    const loadBookmarkBackups = useCallback(async () => {
-        return backupClient.loadBookmarkBackups();
-    }, [backupClient]);
+    const loadCloudSnapshots = useCallback(async () => {
+        return cloudSnapshotClient.loadCloudSnapshots();
+    }, [cloudSnapshotClient]);
 
-    const saveCurrentBookmarkBackup = useCallback(
+    const saveCurrentCloudSnapshot = useCallback(
         async (customName?: string) => {
-            return backupClient.saveCurrentBookmarkBackup(customName);
+            return cloudSnapshotClient.saveCurrentCloudSnapshot(customName);
         },
-        [backupClient]
+        [cloudSnapshotClient]
     );
 
-    const deleteBookmarkBackup = useCallback(
-        async (backupId: string) => {
-            await backupClient.deleteBookmarkBackup(backupId);
+    const deleteCloudSnapshot = useCallback(
+        async (snapshotId: string) => {
+            await cloudSnapshotClient.deleteCloudSnapshot(snapshotId);
         },
-        [backupClient]
+        [cloudSnapshotClient]
     );
 
-    const restoreBookmarkBackup = useCallback(
-        async (backupId: string) => {
-            await backupClient.restoreBookmarkBackup(backupId);
+    const restoreCloudSnapshot = useCallback(
+        async (snapshotId: string) => {
+            await cloudSnapshotClient.restoreCloudSnapshot(snapshotId);
             if (accountUserId) {
                 resetBookmarkTreeSnapshot();
                 await fetchResults(accountUserId);
             }
         },
-        [accountUserId, backupClient, fetchResults, resetBookmarkTreeSnapshot]
+        [
+            accountUserId,
+            cloudSnapshotClient,
+            fetchResults,
+            resetBookmarkTreeSnapshot
+        ]
     );
 
     return {
@@ -96,9 +101,9 @@ export const useBookmarkBackups = ({
         loadStructureVersions,
         restoreStructureVersion,
         deleteStructureVersion,
-        loadBookmarkBackups,
-        saveCurrentBookmarkBackup,
-        deleteBookmarkBackup,
-        restoreBookmarkBackup
+        loadCloudSnapshots,
+        saveCurrentCloudSnapshot,
+        deleteCloudSnapshot,
+        restoreCloudSnapshot
     };
 };

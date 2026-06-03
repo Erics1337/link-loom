@@ -366,11 +366,11 @@ export const useWeaveRun = ({
             }
 
             setStatus('weaving');
-            setWeavingPhase('backup');
+            setWeavingPhase('safety-backup');
 
             await savePreOrganizeBackup(tree);
             console.log(
-                '[WEAVING] Pre-organize backup saved to chrome.storage.local'
+                '[WEAVING] Safety Backup saved to chrome.storage.local'
             );
 
             setWeavingPhase('ingest');

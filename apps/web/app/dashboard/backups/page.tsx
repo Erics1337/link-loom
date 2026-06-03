@@ -1,13 +1,13 @@
 import { createClient } from "@/utils/supabase/server";
 import { History, Save } from "lucide-react";
-import { BackupActions } from "@/components/BackupActions";
+import { CloudSnapshotActions } from "@/components/BackupActions";
 import {
   DashboardPanelHeader,
   DashboardTopbar,
   formatRelativeTime,
 } from "../dashboard-ui";
 
-export default async function BackupsPage() {
+export default async function CloudSnapshotsPage() {
   const supabase = createClient();
   const {
     data: { user },
@@ -17,7 +17,7 @@ export default async function BackupsPage() {
     return <div>Please log in</div>;
   }
 
-  // Fetch snapshots
+  // Fetch Cloud Snapshots from the backend-compatible structure_snapshots table.
   const { data: snapshots, count } = await supabase
     .from("structure_snapshots")
     .select("*", { count: "exact" })
@@ -31,7 +31,7 @@ export default async function BackupsPage() {
           <div className="flex items-center gap-3">
             <History className="h-5 w-5 text-ll-accent" />
             <h1 className="text-xl font-semibold text-ll-text">
-              Structure Backups
+              Cloud Snapshots
             </h1>
           </div>
         }
@@ -44,26 +44,26 @@ export default async function BackupsPage() {
           </h2>
           <p className="text-ll-muted">
             Link Loom dynamically reorganizes your bookmarks using artificial
-            intelligence. If you want to freeze a particular folder structure
-            before running a new organization job, you can create a snapshot
-            from the Link Loom browser extension. You can then restore your
-            bookmarks to this exact structure at any time.
+            intelligence. If you want to freeze a particular backend structure
+            before running a new organization job, create a Cloud Snapshot from
+            the Link Loom browser extension. You can then restore your account
+            to that exact cluster and assignment state.
           </p>
         </div>
 
         <div className="ll-panel max-w-4xl">
           <DashboardPanelHeader
-            title="Saved Snapshots"
-            summary={`${count || 0} backups limit of 10`}
+            title="Cloud Snapshots"
+            summary={`${count || 0} of 10 Cloud Snapshots`}
           />
 
           {!snapshots || snapshots.length === 0 ? (
             <div className="px-6 py-12 text-center text-ll-muted">
               <Save className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>You haven't saved any structure backups yet.</p>
+              <p>You haven't saved any Cloud Snapshots yet.</p>
               <p className="text-sm mt-2">
                 Open the Link Loom browser extension to create your first
-                backup.
+                Cloud Snapshot.
               </p>
             </div>
           ) : (
@@ -90,7 +90,7 @@ export default async function BackupsPage() {
                   </div>
 
                   <div className="flex-shrink-0">
-                    <BackupActions
+                    <CloudSnapshotActions
                       snapshotId={snapshot.id}
                       snapshotName={snapshot.name}
                     />

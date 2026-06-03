@@ -76,7 +76,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             <form onSubmit={handleSubmit} className="card flex flex-col gap-3">
                 <p className="screen-copy">
                     {mode === 'sign-in'
-                        ? 'Sync plan status, backups, and device access.'
+                        ? 'Sync plan status, Cloud Snapshots, and device access.'
                         : 'Start free, or create an account and continue to Pro checkout.'}
                 </p>
 

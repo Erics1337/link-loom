@@ -24,7 +24,7 @@ export type AppStatus =
     | 'error'
     | 'limit_exceeded';
 
-export type WeavingPhase = 'backup' | 'ingest' | null;
+export type WeavingPhase = 'safety-backup' | 'ingest' | null;
 
 export type LimitExceededInfo = {
     total: number;

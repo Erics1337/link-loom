@@ -83,7 +83,7 @@ describe('processingSession', () => {
         ]);
     });
 
-    it('persists overflow bookmarks and pre-organize backups through chrome storage', async () => {
+    it('persists overflow bookmarks and Safety Backups through chrome storage', async () => {
         const stored: Record<string, unknown> = {};
         const storage = {
             get: vi.fn(async (keys: string[]) => Object.fromEntries(keys.map((key) => [key, stored[key]]))),

@@ -15,6 +15,7 @@ export type BookmarkRootSnapshot = {
 
 const IMPORTED_FOLDER_PATTERN = /^Imported(?: \(\d+\))?$/;
 const OVERFLOW_BOOKMARKS_STORAGE_KEY = 'bookmarkWeaverOverflowBookmarks';
+// Safety Backup storage keeps the legacy key so existing local Safety Backup data remains readable.
 const PRE_ORGANIZE_BACKUP_KEY = 'preOrganizeBackup';
 
 export const createEmptyProgress = (): WeavingProgress => ({
