@@ -21,6 +21,9 @@ export type WeavingProgress = {
 export type StatusResponse = WeavingProgress & {
     isDone?: boolean;
     isPremium?: boolean;
+    pipelineRunId?: string | null;
+    pipelineGeneration?: number | null;
+    pipelineStatus?: 'running' | 'cancelled' | 'completed' | 'failed' | string | null;
 };
 
 type ClientOptions = {
@@ -31,6 +34,13 @@ type ClientOptions = {
 
 export class StructureClient {
     constructor(private readonly options: ClientOptions) {}
+
+    private postHeaders(tokenOverride?: string): Record<string, string> {
+        return {
+            ...this.options.buildAuthHeaders(tokenOverride),
+            'Content-Type': 'application/json',
+        };
+    }
 
     async getStatus(userId: string) {
         const response = await fetch(`${this.options.backendUrl}/status/${userId}`, {
@@ -53,7 +63,7 @@ export class StructureClient {
     }) {
         return fetch(`${this.options.backendUrl}/ingest`, {
             method: 'POST',
-            headers: this.options.buildAuthHeaders(input.accessToken),
+            headers: this.postHeaders(input.accessToken),
             body: JSON.stringify({
                 bookmarks: input.bookmarks,
                 clusteringSettings: input.clusteringSettings,
@@ -64,7 +74,7 @@ export class StructureClient {
     async triggerClustering(userId: string, clusteringSettings: ClusteringSettings) {
         return fetch(`${this.options.backendUrl}/trigger-clustering/${userId}`, {
             method: 'POST',
-            headers: this.options.buildAuthHeaders(),
+            headers: this.postHeaders(),
             body: JSON.stringify({ clusteringSettings })
         });
     }
@@ -79,7 +89,7 @@ export class StructureClient {
     async scanDeadLinks(assignments: StructureAssignment[], signal?: AbortSignal) {
         return fetch(`${this.options.backendUrl}/dead-links/check`, {
             method: 'POST',
-            headers: this.options.buildAuthHeaders(),
+            headers: this.postHeaders(),
             signal,
             body: JSON.stringify({
                 bookmarks: assignments.map((assignment) => ({
@@ -93,7 +103,7 @@ export class StructureClient {
     async autoRename(userId: string, clusteringSettings: ClusteringSettings, signal?: AbortSignal) {
         return fetch(`${this.options.backendUrl}/auto-rename/${userId}`, {
             method: 'POST',
-            headers: this.options.buildAuthHeaders(),
+            headers: this.postHeaders(),
             signal,
             body: JSON.stringify({ clusteringSettings }),
         });
@@ -102,7 +112,7 @@ export class StructureClient {
     async cancel(userId: string) {
         return fetch(`${this.options.backendUrl}/cancel/${userId}`, {
             method: 'POST',
-            headers: this.options.buildAuthHeaders(),
+            headers: this.postHeaders(),
         });
     }
 }

@@ -2,7 +2,7 @@ import { Dispatch, MutableRefObject, SetStateAction, useCallback, useEffect } fr
 import { BookmarkNode } from '../components/BookmarkTree';
 import { ClusteringSettings } from '../lib/clusteringSettings';
 import { BookmarkStats, normalizeBookmarkUrl } from '../lib/bookmarkStructure';
-import { StructureClient, WeavingProgress } from '../lib/structureClient';
+import { StatusResponse, StructureClient, WeavingProgress } from '../lib/structureClient';
 import {
     clearPersistedOverflowBookmarks,
     collectScannedBookmarks,
@@ -19,6 +19,37 @@ import {
     ProcessingIdentity,
     WeavingPhase
 } from './useBookmarkWeaverTypes';
+
+const isCompletedPipeline = (status?: string | null) => status === 'completed';
+const isFailedPipeline = (status?: string | null) => status === 'failed';
+const isCancelledPipeline = (status?: string | null) => status === 'cancelled';
+
+export const getTerminalWeavingAction = (
+    data: Pick<StatusResponse, 'isDone' | 'pipelineStatus'>
+) => {
+    if (!data.isDone) return null;
+    if (data.pipelineStatus == null) return 'fetch-results';
+    if (isCompletedPipeline(data.pipelineStatus)) return 'fetch-results';
+    if (isFailedPipeline(data.pipelineStatus)) return 'show-error';
+    if (isCancelledPipeline(data.pipelineStatus)) return 'idle';
+    return null;
+};
+
+export const shouldHydrateWeaving = (
+    data: Pick<StatusResponse, 'isDone' | 'pending' | 'total'>
+) => !data.isDone && (data.pending > 0 || data.total > 0);
+
+export const shouldTriggerClusteringRecovery = (
+    data: Pick<StatusResponse, 'isDone' | 'total' | 'pending' | 'isIngesting' | 'isClusteringActive' | 'clusters' | 'remainingToAssign'>,
+    recoveryAlreadyTriggered: boolean
+) =>
+    !recoveryAlreadyTriggered &&
+    !data.isDone &&
+    data.total > 0 &&
+    data.pending === 0 &&
+    !data.isIngesting &&
+    !data.isClusteringActive &&
+    (data.clusters === 0 || (data.remainingToAssign ?? 0) > 0);
 
 type EnsureAnonymousSession = () => Promise<{
     user: { id: string; email?: string | null; isAnonymous?: boolean };
@@ -125,7 +156,7 @@ export const useWeaveRun = ({
                 if (data.isPremium) setIsPremium(true);
                 else setIsPremium(false);
 
-                if (data.pending > 0 || (data.total > 0 && !data.isDone)) {
+                if (shouldHydrateWeaving(data)) {
                     setStatus('weaving');
                     setProgress({
                         pending: data.pending,
@@ -143,9 +174,17 @@ export const useWeaveRun = ({
                         ingestTotal: data.ingestTotal || data.total || 0,
                         isClusteringActive: Boolean(data.isClusteringActive)
                     });
-                } else if (data.isDone) {
-                    setHasCachedResults(true);
-                    await fetchResults(resolvedUserId, true);
+                } else {
+                    const terminalAction = getTerminalWeavingAction(data);
+                    if (terminalAction === 'fetch-results') {
+                        setHasCachedResults(true);
+                        await fetchResults(resolvedUserId, true);
+                    } else if (terminalAction === 'show-error') {
+                        setErrorMessage('Link Loom could not finish organizing this run. Start again to retry.');
+                        setStatus('error');
+                    } else if (terminalAction === 'idle') {
+                        setStatus('idle');
+                    }
                 }
             } catch (e) {
                 if (isFailedFetchError(e)) {
@@ -165,6 +204,7 @@ export const useWeaveRun = ({
     }, [
         accountUserId,
         fetchResults,
+        setErrorMessage,
         setHasCachedResults,
         setIsPremium,
         setProgress,
@@ -204,14 +244,21 @@ export const useWeaveRun = ({
                     isClusteringActive: Boolean(data.isClusteringActive)
                 }));
 
-                if (
-                    !clusterRecoveryTriggered.current &&
-                    data.total > 0 &&
-                    data.pending === 0 &&
-                    !data.isIngesting &&
-                    !data.isClusteringActive &&
-                    (data.clusters === 0 || (data.remainingToAssign ?? 0) > 0)
-                ) {
+                const terminalAction = getTerminalWeavingAction(data);
+                if (terminalAction) {
+                    clearInterval(interval);
+                    if (terminalAction === 'fetch-results') {
+                        await fetchResults(userId);
+                    } else if (terminalAction === 'show-error') {
+                        setErrorMessage('Link Loom could not finish organizing this run. Start again to retry.');
+                        setStatus('error');
+                    } else if (terminalAction === 'idle') {
+                        setStatus('idle');
+                    }
+                    return;
+                }
+
+                if (shouldTriggerClusteringRecovery(data, clusterRecoveryTriggered.current)) {
                     clusterRecoveryTriggered.current = true;
                     structureClient
                         .triggerClustering(userId, effectiveClusteringSettings)
@@ -223,10 +270,6 @@ export const useWeaveRun = ({
                         );
                 }
 
-                if (data.isDone) {
-                    clearInterval(interval);
-                    await fetchResults(userId);
-                }
             } catch (e) {
                 if (isFailedFetchError(e)) {
                     console.warn(
@@ -245,6 +288,8 @@ export const useWeaveRun = ({
         fetchResults,
         setIsPremium,
         setProgress,
+        setErrorMessage,
+        setStatus,
         status,
         structureClient,
         userId

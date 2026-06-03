@@ -25,6 +25,38 @@ describe('StructureClient', () => {
         );
     });
 
+    it('sets Content-Type on POST when buildAuthHeaders omits it', async () => {
+        const fetchMock = vi.fn(async () => ({ ok: true }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        const client = new StructureClient({
+            backendUrl: 'https://backend.example',
+            buildAuthHeaders: () => ({ Authorization: 'Bearer token' }),
+            getAuthHeaders: () => ({ Authorization: 'Bearer token' }),
+        });
+
+        await client.ingest({
+            bookmarks: [{ id: '1', url: 'https://a.test', title: 'A' }],
+            clusteringSettings: {
+                folderDensity: 'medium',
+                namingTone: 'clear',
+                organizationMode: 'topic',
+                useEmojiNames: false,
+            },
+        });
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            'https://backend.example/ingest',
+            expect.objectContaining({
+                method: 'POST',
+                headers: {
+                    Authorization: 'Bearer token',
+                    'Content-Type': 'application/json',
+                },
+            })
+        );
+    });
+
     it('cancels without sending obsolete queue-clearing request bodies', async () => {
         const fetchMock = vi.fn(async () => ({
             ok: true,
