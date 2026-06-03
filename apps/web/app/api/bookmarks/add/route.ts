@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
+import { requireApiUser } from '@/utils/api/auth'
 
 const getBackendUrl = () =>
   (process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || '').replace(/\/$/, '')
@@ -7,15 +7,8 @@ const getBackendUrl = () =>
 const BACKEND_FETCH_TIMEOUT_MS = 15_000
 
 export async function POST(request: Request) {
-  const supabase = createClient()
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser()
-
-  if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const { supabase, response: unauthorizedResponse } = await requireApiUser()
+  if (unauthorizedResponse) return unauthorizedResponse
 
   const {
     data: { session },

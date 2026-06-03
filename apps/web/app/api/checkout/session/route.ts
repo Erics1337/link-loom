@@ -1,19 +1,12 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/utils/supabase/server'
 import { createAdminClient } from '@/utils/supabase/admin'
 import { stripe } from '@/utils/stripe/checkout'
 import { applyCheckoutSessionToUser } from '@/utils/stripe/pro'
+import { requireApiUser } from '@/utils/api/auth'
 
 export async function POST(request: Request) {
-  const supabase = createClient()
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser()
-
-  if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const { user, response: unauthorizedResponse } = await requireApiUser()
+  if (unauthorizedResponse) return unauthorizedResponse
 
   const { sessionId } = await request.json().catch(() => ({ sessionId: null }))
 

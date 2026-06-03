@@ -1,20 +1,11 @@
 import { createClient } from "@/utils/supabase/server";
 import { Link as LinkIcon, Search, Bookmark, FolderTree } from "lucide-react";
 import { AddLinkModal } from "@/components/AddLinkModal";
-
-// Helper to format relative time
-function formatRelativeTime(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffHours < 1) return "Just now";
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
-}
+import {
+  DashboardPanelHeader,
+  DashboardTopbar,
+  formatRelativeTime,
+} from "./dashboard-ui";
 
 export default async function Dashboard() {
   const supabase = createClient();
@@ -94,9 +85,7 @@ export default async function Dashboard() {
 
   return (
     <div>
-      {/* Topbar */}
-      <header className="ll-topbar">
-        <h1 className="text-xl font-semibold text-ll-text">Dashboard</h1>
+      <DashboardTopbar title="Dashboard">
         <div className="flex items-center gap-4">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ll-muted" />
@@ -108,7 +97,7 @@ export default async function Dashboard() {
           </div>
           <AddLinkModal />
         </div>
-      </header>
+      </DashboardTopbar>
 
       <div className="p-8 space-y-8">
         {/* Stats Grid */}
@@ -140,12 +129,10 @@ export default async function Dashboard() {
 
         {/* Recent Activity */}
         <div className="ll-panel">
-          <div className="ll-panel-header">
-            <h3 className="text-base font-semibold leading-6 text-ll-text">
-              Recent Bookmarks
-            </h3>
-            <span className="text-sm text-ll-muted">{bookmarkCount} total</span>
-          </div>
+          <DashboardPanelHeader
+            title="Recent Bookmarks"
+            summary={`${bookmarkCount} total`}
+          />
           {recentBookmarks.length === 0 ? (
             <div className="px-6 py-12 text-center text-ll-muted">
               <Bookmark className="w-12 h-12 mx-auto mb-4 opacity-50" />

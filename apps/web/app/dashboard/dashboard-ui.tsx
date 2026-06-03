@@ -1,0 +1,50 @@
+import type { ReactNode } from "react";
+
+export function formatRelativeTime(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffHours < 1) return "Just now";
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
+
+export function DashboardTopbar({
+  title,
+  children,
+}: {
+  title: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <header className="ll-topbar">
+      {typeof title === "string" ? (
+        <h1 className="text-xl font-semibold text-ll-text">{title}</h1>
+      ) : (
+        title
+      )}
+      {children}
+    </header>
+  );
+}
+
+export function DashboardPanelHeader({
+  title,
+  summary,
+}: {
+  title: ReactNode;
+  summary: ReactNode;
+}) {
+  return (
+    <div className="ll-panel-header">
+      <h3 className="text-base font-semibold leading-6 text-ll-text">
+        {title}
+      </h3>
+      <span className="text-sm text-ll-muted">{summary}</span>
+    </div>
+  );
+}

@@ -32,9 +32,6 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.38.4
         version: 2.86.2
-      axios:
-        specifier: ^1.6.0
-        version: 1.13.2
       cheerio:
         specifier: 1.0.0
         version: 1.0.0
@@ -84,9 +81,6 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.38.4
         version: 2.86.2
-      backend:
-        specifier: workspace:*
-        version: link:../backend
     devDependencies:
       '@link-loom/tsconfig':
         specifier: workspace:*
@@ -106,9 +100,6 @@ importers:
       '@link-loom/ui':
         specifier: workspace:*
         version: link:../../packages/ui
-      '@tanstack/react-query':
-        specifier: ^5.0.0
-        version: 5.90.12(react@18.3.1)
       lucide-react:
         specifier: ^0.555.0
         version: 0.555.0(react@18.3.1)
@@ -164,9 +155,6 @@ importers:
       '@link-loom/ui':
         specifier: workspace:*
         version: link:../../packages/ui
-      '@stripe/stripe-js':
-        specifier: ^8.5.3
-        version: 8.5.3
       '@supabase/ssr':
         specifier: ^0.8.0
         version: 0.8.0(@supabase/supabase-js@2.86.2)
@@ -176,9 +164,6 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
-      framer-motion:
-        specifier: ^12.23.25
-        version: 12.23.25(react-dom@18.3.1)(react@18.3.1)
       lucide-react:
         specifier: ^0.555.0
         version: 0.555.0(react@18.3.1)
@@ -230,10 +215,6 @@ importers:
         version: 5.9.3
 
   apps/web-e2e:
-    dependencies:
-      web:
-        specifier: workspace:*
-        version: link:../web
     devDependencies:
       '@link-loom/tsconfig':
         specifier: workspace:*

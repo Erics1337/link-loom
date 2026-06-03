@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { BookmarkNode } from '../components/BookmarkTree';
-import { ClusteringSettings, normalizeClusteringSettings } from '../lib/clusteringSettings';
+import {
+    ClusteringSettings,
+    normalizeClusteringSettings
+} from '../lib/clusteringSettings';
 import { BookmarkRootTitle } from '../lib/bookmarkImport';
 import {
     BookmarkStats,
@@ -8,13 +11,13 @@ import {
     collectDuplicateChromeIds,
     countDuplicateAssignments,
     normalizeBookmarkUrl,
-    pruneBookmarksFromTree,
+    pruneBookmarksFromTree
 } from '../lib/bookmarkStructure';
 import {
     BackupClient,
     deleteStructureVersion as deleteStoredStructureVersion,
     loadStructureVersions as loadStoredStructureVersions,
-    saveStructureVersion as saveStoredStructureVersion,
+    saveStructureVersion as saveStoredStructureVersion
 } from '../lib/backupClient';
 import { StructureClient, WeavingProgress } from '../lib/structureClient';
 import { buildStructurePreview } from '../lib/structurePreviewBuilder';
@@ -25,7 +28,7 @@ import {
     formatChromeApplyPlanPreview,
     loadActiveChromeApplyJournal,
     resumeChromeBookmarkApplyJournal,
-    rollbackChromeBookmarkApplyJournal,
+    rollbackChromeBookmarkApplyJournal
 } from '../lib/chromeApplyPlan';
 import {
     buildBookmarkRootSnapshot,
@@ -35,12 +38,19 @@ import {
     loadPersistedOverflowBookmarks,
     persistOverflowBookmarks,
     savePreOrganizeBackup,
-    ScannedBookmark,
+    ScannedBookmark
 } from '../lib/processingSession';
 
-export type { BookmarkBackupSnapshot, BookmarkStructureVersion } from '../lib/backupClient';
+export type {
+    BookmarkBackupSnapshot,
+    BookmarkStructureVersion
+} from '../lib/backupClient';
 
-const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+const BACKEND_URL =
+    (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(
+        /\/$/,
+        ''
+    ) ?? '';
 const BACKEND_UNAVAILABLE_MESSAGE = BACKEND_URL
     ? `Cannot reach Link Loom backend at ${BACKEND_URL}. Please try again later.`
     : 'Link Loom backend is not configured. Please reinstall the extension.';
@@ -49,7 +59,13 @@ const AUTO_RENAME_REQUEST_TIMEOUT_MS = 120000;
 const STRUCTURE_REQUEST_TIMEOUT_MS = 45000;
 const DEFAULT_FREE_TIER_LIMIT = 500;
 const DEFAULT_ROOT_TITLE: BookmarkRootTitle = 'Other Bookmarks';
-export type AppStatus = 'idle' | 'weaving' | 'ready' | 'done' | 'error' | 'limit_exceeded';
+export type AppStatus =
+    | 'idle'
+    | 'weaving'
+    | 'ready'
+    | 'done'
+    | 'error'
+    | 'limit_exceeded';
 export type WeavingPhase = 'backup' | 'ingest' | null;
 
 export type LimitExceededInfo = {
@@ -58,31 +74,50 @@ export type LimitExceededInfo = {
 };
 
 const isFailedFetchError = (error: unknown) =>
-    error instanceof TypeError && error.message.toLowerCase().includes('failed to fetch');
+    error instanceof TypeError &&
+    error.message.toLowerCase().includes('failed to fetch');
 
 const isAbortError = (error: unknown) =>
     error instanceof DOMException && error.name === 'AbortError';
+
+const getWeavingIngestErrorMessage = (error: unknown) =>
+    isFailedFetchError(error)
+        ? BACKEND_UNAVAILABLE_MESSAGE
+        : error instanceof Error
+          ? error.message
+          : 'Something went wrong while organizing bookmarks.';
 
 export const useBookmarkWeaver = (
     accountUserId?: string | null,
     clusteringSettings?: ClusteringSettings,
     authAccessToken?: string | null,
-    ensureAnonymousSession?: () => Promise<{ user: { id: string; email?: string | null; isAnonymous?: boolean }; accessToken: string }>,
+    ensureAnonymousSession?: () => Promise<{
+        user: { id: string; email?: string | null; isAnonymous?: boolean };
+        accessToken: string;
+    }>,
     canSaveAccountBackups = Boolean(accountUserId)
 ) => {
     const [status, setStatus] = useState<AppStatus>('idle');
     const [hasCachedResults, setHasCachedResults] = useState(false);
     const [weavingPhase, setWeavingPhase] = useState<WeavingPhase>(null);
-    const [limitExceededInfo, setLimitExceededInfo] = useState<LimitExceededInfo | null>(null);
+    const [limitExceededInfo, setLimitExceededInfo] =
+        useState<LimitExceededInfo | null>(null);
     const pendingBookmarksRef = useRef<ScannedBookmark[]>([]);
     const overflowBookmarksRef = useRef<ScannedBookmark[]>([]);
-    const [progress, setProgress] = useState<WeavingProgress>(createEmptyProgress());
+    const [progress, setProgress] = useState<WeavingProgress>(
+        createEmptyProgress()
+    );
     const [userId, setUserId] = useState<string>('');
     const [clusters, setClusters] = useState<BookmarkNode[]>([]);
-    const [stats, setStats] = useState<BookmarkStats>({ duplicates: 0, deadLinks: 0 });
+    const [stats, setStats] = useState<BookmarkStats>({
+        duplicates: 0,
+        deadLinks: 0
+    });
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [isAutoRenaming, setIsAutoRenaming] = useState(false);
-    const [structureAssignments, setStructureAssignments] = useState<StructureAssignment[]>([]);
+    const [structureAssignments, setStructureAssignments] = useState<
+        StructureAssignment[]
+    >([]);
     const [isScanningDeadLinks, setIsScanningDeadLinks] = useState(false);
     const [isDeletingDuplicates, setIsDeletingDuplicates] = useState(false);
     const [isDeletingDeadLinks, setIsDeletingDeadLinks] = useState(false);
@@ -91,12 +126,29 @@ export const useBookmarkWeaver = (
     const deadLinkScanTokenRef = useRef(0);
     const originalTreeRef = useRef<any[]>([]);
     const bookmarkRootMapRef = useRef<Record<string, BookmarkRootTitle>>({});
-    const bookmarkPreferredRootMapRef = useRef<Record<string, BookmarkRootTitle>>({});
+    const bookmarkPreferredRootMapRef = useRef<
+        Record<string, BookmarkRootTitle>
+    >({});
     const availableRootsRef = useRef<BookmarkRootTitle[]>([]);
     const authAccessTokenRef = useRef<string | null>(authAccessToken ?? null);
 
     const [isPremium, setIsPremium] = useState(false);
-    const effectiveClusteringSettings = normalizeClusteringSettings(clusteringSettings);
+    const effectiveClusteringSettings =
+        normalizeClusteringSettings(clusteringSettings);
+
+    const resetRunState = useCallback(() => {
+        setErrorMessage(null);
+        setStructureAssignments([]);
+        setProgress(createEmptyProgress());
+        setIsScanningDeadLinks(false);
+        setIsDeletingDuplicates(false);
+        setIsDeletingDeadLinks(false);
+        deadLinkChromeIdsRef.current = [];
+        deadLinkScanTokenRef.current += 1;
+        clusterRecoveryTriggered.current = false;
+        overflowBookmarksRef.current = [];
+        pendingBookmarksRef.current = [];
+    }, []);
 
     useEffect(() => {
         authAccessTokenRef.current = authAccessToken ?? null;
@@ -117,7 +169,9 @@ export const useBookmarkWeaver = (
         }
         if (!ensureAnonymousSession) {
             if (userId) return { userId, accessToken: '' };
-            throw new Error('Start a Link Loom session before organizing bookmarks.');
+            throw new Error(
+                'Start a Link Loom session before organizing bookmarks.'
+            );
         }
 
         const session = await ensureAnonymousSession();
@@ -126,27 +180,39 @@ export const useBookmarkWeaver = (
         return { userId: session.user.id, accessToken: session.accessToken };
     }, [accountUserId, authAccessToken, ensureAnonymousSession, userId]);
 
-    const buildAuthHeaders = useCallback((tokenOverride?: string): Record<string, string> => {
-        const token = tokenOverride || authAccessTokenRef.current || authAccessToken;
-        return {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {})
-        };
-    }, [authAccessToken]);
+    const buildAuthHeaders = useCallback(
+        (tokenOverride?: string): Record<string, string> => {
+            const token =
+                tokenOverride || authAccessTokenRef.current || authAccessToken;
+            return {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {})
+            };
+        },
+        [authAccessToken]
+    );
 
-    const structureClient = useMemo(() => new StructureClient({
-        backendUrl: BACKEND_URL,
-        buildAuthHeaders,
-        getAuthHeaders,
-    }), [buildAuthHeaders, getAuthHeaders]);
+    const structureClient = useMemo(
+        () =>
+            new StructureClient({
+                backendUrl: BACKEND_URL,
+                buildAuthHeaders,
+                getAuthHeaders
+            }),
+        [buildAuthHeaders, getAuthHeaders]
+    );
 
-    const backupClient = useMemo(() => new BackupClient({
-        backendUrl: BACKEND_URL,
-        accountUserId,
-        canSaveAccountBackups,
-        buildAuthHeaders,
-        getAuthHeaders,
-    }), [accountUserId, buildAuthHeaders, canSaveAccountBackups, getAuthHeaders]);
+    const backupClient = useMemo(
+        () =>
+            new BackupClient({
+                backendUrl: BACKEND_URL,
+                accountUserId,
+                canSaveAccountBackups,
+                buildAuthHeaders,
+                getAuthHeaders
+            }),
+        [accountUserId, buildAuthHeaders, canSaveAccountBackups, getAuthHeaders]
+    );
 
     const loadCurrentBookmarkTreeSnapshot = useCallback(async () => {
         if (typeof chrome === 'undefined' || !chrome.bookmarks) {
@@ -216,10 +282,12 @@ export const useBookmarkWeaver = (
                 }
             } catch (e) {
                 if (isFailedFetchError(e)) {
-                    console.warn('[STATUS] Backend not reachable during initial status check.');
+                    console.warn(
+                        '[STATUS] Backend not reachable during initial status check.'
+                    );
                     return;
                 }
-                console.error("Failed to check initial status", e);
+                console.error('Failed to check initial status', e);
             }
         };
 
@@ -235,19 +303,19 @@ export const useBookmarkWeaver = (
 
         // Mock for local dev polling
         if (typeof chrome === 'undefined' || !chrome.bookmarks) {
-             // Mock polling logic handled in startWeaving for now or ignore
-             return;
+            // Mock polling logic handled in startWeaving for now or ignore
+            return;
         }
 
         const interval = setInterval(async () => {
             try {
                 const data = await structureClient.getStatus(userId);
-                
+
                 if (data.isPremium) setIsPremium(true);
 
-                setProgress(prev => ({ 
-                    ...prev, 
-                    pending: data.pending, 
+                setProgress((prev) => ({
+                    ...prev,
+                    pending: data.pending,
                     pendingRaw: data.pendingRaw ?? data.pending ?? 0,
                     enriched: data.enriched ?? 0,
                     embedded: data.embedded ?? 0,
@@ -275,8 +343,14 @@ export const useBookmarkWeaver = (
                     (data.clusters === 0 || (data.remainingToAssign ?? 0) > 0)
                 ) {
                     clusterRecoveryTriggered.current = true;
-                    structureClient.triggerClustering(userId, effectiveClusteringSettings)
-                        .catch((err) => console.error('[WEAVING] Failed to trigger recovery clustering', err));
+                    structureClient
+                        .triggerClustering(userId, effectiveClusteringSettings)
+                        .catch((err) =>
+                            console.error(
+                                '[WEAVING] Failed to trigger recovery clustering',
+                                err
+                            )
+                        );
                 }
 
                 if (data.isDone) {
@@ -285,10 +359,12 @@ export const useBookmarkWeaver = (
                 }
             } catch (e) {
                 if (isFailedFetchError(e)) {
-                    console.warn('[STATUS] Polling skipped because backend is unavailable.');
+                    console.warn(
+                        '[STATUS] Polling skipped because backend is unavailable.'
+                    );
                     return;
                 }
-                console.error("Polling error", e);
+                console.error('Polling error', e);
             }
         }, 2000);
 
@@ -299,25 +375,19 @@ export const useBookmarkWeaver = (
         try {
             processingIdentity = await ensureProcessingIdentity();
         } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : 'Failed to start Link Loom session.');
+            setErrorMessage(
+                error instanceof Error
+                    ? error.message
+                    : 'Failed to start Link Loom session.'
+            );
             setStatus('error');
             return;
         }
 
         setWeavingPhase(null);
-        setErrorMessage(null);
         setClusters([]); // Reset clusters to avoid showing old results
         setHasCachedResults(false);
-        setStructureAssignments([]);
-        setProgress(createEmptyProgress()); // Reset progress
-        setIsScanningDeadLinks(false);
-        setIsDeletingDuplicates(false);
-        setIsDeletingDeadLinks(false);
-        deadLinkChromeIdsRef.current = [];
-        deadLinkScanTokenRef.current += 1;
-        clusterRecoveryTriggered.current = false;
-        overflowBookmarksRef.current = []; // Clear any previous overflow
-        pendingBookmarksRef.current = [];
+        resetRunState();
 
         if (processingIdentity.userId) {
             await clearPersistedOverflowBookmarks(processingIdentity.userId);
@@ -325,7 +395,7 @@ export const useBookmarkWeaver = (
 
         // Mock for local dev
         if (typeof chrome === 'undefined' || !chrome.bookmarks) {
-             console.log("Running in mock mode");
+            console.log('Running in mock mode');
             setStatus('weaving');
             setWeavingPhase('ingest');
             setTimeout(() => {
@@ -347,29 +417,53 @@ export const useBookmarkWeaver = (
                 });
             }, 1000);
             setTimeout(() => {
-                 setClusters([
+                setClusters([
                     {
-                        id: '1', title: 'Development', children: [
-                             {
-                                id: '1-1', title: 'AI Research', children: [
-                                    { id: '1-1-1', title: 'OpenAI Platform', url: 'https://platform.openai.com' },
-                                    { id: '1-1-2', title: 'LangChain', url: 'https://python.langchain.com' }
+                        id: '1',
+                        title: 'Development',
+                        children: [
+                            {
+                                id: '1-1',
+                                title: 'AI Research',
+                                children: [
+                                    {
+                                        id: '1-1-1',
+                                        title: 'OpenAI Platform',
+                                        url: 'https://platform.openai.com'
+                                    },
+                                    {
+                                        id: '1-1-2',
+                                        title: 'LangChain',
+                                        url: 'https://python.langchain.com'
+                                    }
                                 ]
                             },
-                             {
-                                id: '1-2', title: 'Frontend', children: [
-                                    { id: '1-2-1', title: 'React', url: 'https://react.dev' }
+                            {
+                                id: '1-2',
+                                title: 'Frontend',
+                                children: [
+                                    {
+                                        id: '1-2-1',
+                                        title: 'React',
+                                        url: 'https://react.dev'
+                                    }
                                 ]
                             }
                         ]
                     },
                     {
-                        id: '2', title: 'Inspiration', children: [
-                            { id: '2-1', title: 'Design Blog', url: 'https://example.com/design' }
+                        id: '2',
+                        title: 'Inspiration',
+                        children: [
+                            {
+                                id: '2-1',
+                                title: 'Design Blog',
+                                url: 'https://example.com/design'
+                            }
                         ]
                     }
                 ]);
-                 setStats({ duplicates: 7, deadLinks: 0 });
+                setStats({ duplicates: 7, deadLinks: 0 });
                 setStatus('ready');
             }, 3000);
             return;
@@ -386,7 +480,7 @@ export const useBookmarkWeaver = (
                 pendingBookmarksRef.current = bookmarks;
                 setLimitExceededInfo({
                     total: totalBookmarks,
-                    limit: DEFAULT_FREE_TIER_LIMIT,
+                    limit: DEFAULT_FREE_TIER_LIMIT
                 });
                 setStats({ duplicates: 0, deadLinks: 0 });
                 setWeavingPhase(null);
@@ -399,11 +493,13 @@ export const useBookmarkWeaver = (
 
             // 1a. Save a local backup before doing anything
             await savePreOrganizeBackup(tree);
-            console.log('[WEAVING] Pre-organize backup saved to chrome.storage.local');
+            console.log(
+                '[WEAVING] Pre-organize backup saved to chrome.storage.local'
+            );
 
             // Move to ingest phase now that backup is complete
             setWeavingPhase('ingest');
-            setProgress(prev => ({
+            setProgress((prev) => ({
                 ...prev,
                 total: totalBookmarks,
                 pending: totalBookmarks,
@@ -425,15 +521,17 @@ export const useBookmarkWeaver = (
                 const key = normalizeBookmarkUrl(bookmark.url);
                 urlCounts.set(key, (urlCounts.get(key) || 0) + 1);
             });
-            const duplicateCount = Array.from(urlCounts.values())
-                .reduce((sum, count) => sum + Math.max(0, count - 1), 0);
+            const duplicateCount = Array.from(urlCounts.values()).reduce(
+                (sum, count) => sum + Math.max(0, count - 1),
+                0
+            );
             setStats({ duplicates: duplicateCount, deadLinks: 0 });
 
             // 2. Send to Backend
             const response = await structureClient.ingest({
                 bookmarks,
                 clusteringSettings: effectiveClusteringSettings,
-                accessToken: processingIdentity.accessToken,
+                accessToken: processingIdentity.accessToken
             });
 
             // Handle 402 Payment Required (limit exceeded)
@@ -444,7 +542,7 @@ export const useBookmarkWeaver = (
                 pendingBookmarksRef.current = bookmarks;
                 setLimitExceededInfo({
                     total: bookmarks.length,
-                    limit: errorData.limit ?? 500,
+                    limit: errorData.limit ?? 500
                 });
                 setStats({ duplicates: 0, deadLinks: 0 });
                 setWeavingPhase(null);
@@ -455,23 +553,27 @@ export const useBookmarkWeaver = (
             if (!response.ok) {
                 throw new Error(`Backend error: ${response.status}`);
             }
-            
+
             // Polling is now handled by useEffect
         } catch (error) {
-            const message = isFailedFetchError(error)
-                ? BACKEND_UNAVAILABLE_MESSAGE
-                : error instanceof Error
-                    ? error.message
-                    : 'Something went wrong while organizing bookmarks.';
+            const message = getWeavingIngestErrorMessage(error);
             if (isFailedFetchError(error)) {
-                console.warn('[WEAVING] Backend unreachable while starting weave.');
+                console.warn(
+                    '[WEAVING] Backend unreachable while starting weave.'
+                );
             } else {
-                console.error("Weaving error", error);
+                console.error('Weaving error', error);
             }
             setErrorMessage(message);
             setStatus('error');
         }
-    }, [effectiveClusteringSettings, ensureProcessingIdentity, isPremium, structureClient]);
+    }, [
+        effectiveClusteringSettings,
+        ensureProcessingIdentity,
+        isPremium,
+        resetRunState,
+        structureClient
+    ]);
 
     const continueWithLimitedBookmarks = useCallback(async () => {
         const limit = limitExceededInfo?.limit ?? 500;
@@ -480,14 +582,17 @@ export const useBookmarkWeaver = (
         // Store the remaining bookmarks so they appear in the result preview
         overflowBookmarksRef.current = allBookmarks.slice(limit);
         if (userId) {
-            await persistOverflowBookmarks(userId, overflowBookmarksRef.current);
+            await persistOverflowBookmarks(
+                userId,
+                overflowBookmarksRef.current
+            );
         }
         pendingBookmarksRef.current = [];
         setLimitExceededInfo(null);
         setStatus('weaving');
         setWeavingPhase('ingest');
         setErrorMessage(null);
-        setProgress(prev => ({
+        setProgress((prev) => ({
             ...prev,
             total: slicedBookmarks.length,
             pending: slicedBookmarks.length,
@@ -504,7 +609,7 @@ export const useBookmarkWeaver = (
             const response = await structureClient.ingest({
                 bookmarks: slicedBookmarks,
                 clusteringSettings: effectiveClusteringSettings,
-                accessToken: processingIdentity.accessToken,
+                accessToken: processingIdentity.accessToken
             });
 
             if (response.status === 402) {
@@ -514,7 +619,7 @@ export const useBookmarkWeaver = (
                 overflowBookmarksRef.current = [];
                 setLimitExceededInfo({
                     total: slicedBookmarks.length,
-                    limit: errorData.limit ?? 500,
+                    limit: errorData.limit ?? 500
                 });
                 setWeavingPhase(null);
                 setStatus('limit_exceeded');
@@ -526,129 +631,171 @@ export const useBookmarkWeaver = (
             }
             // Polling takes over from here
         } catch (error) {
-            const message = isFailedFetchError(error)
-                ? BACKEND_UNAVAILABLE_MESSAGE
-                : error instanceof Error
-                    ? error.message
-                    : 'Something went wrong while organizing bookmarks.';
-            setErrorMessage(message);
+            setErrorMessage(getWeavingIngestErrorMessage(error));
             setStatus('error');
         }
-    }, [effectiveClusteringSettings, ensureProcessingIdentity, limitExceededInfo, structureClient, userId]);
+    }, [
+        effectiveClusteringSettings,
+        ensureProcessingIdentity,
+        limitExceededInfo,
+        structureClient,
+        userId
+    ]);
 
+    const updateStateAfterBookmarkRemoval = useCallback(
+        (removedChromeIds: Set<string>) => {
+            if (removedChromeIds.size === 0) return;
+            deadLinkScanTokenRef.current += 1;
 
+            const nextAssignments = structureAssignments.filter(
+                (assignment) => !removedChromeIds.has(assignment.chromeId)
+            );
+            setClusters((prev) =>
+                pruneBookmarksFromTree(prev, removedChromeIds)
+            );
+            setStructureAssignments(nextAssignments);
 
-    const updateStateAfterBookmarkRemoval = useCallback((removedChromeIds: Set<string>) => {
-        if (removedChromeIds.size === 0) return;
-        deadLinkScanTokenRef.current += 1;
-
-        const nextAssignments = structureAssignments.filter((assignment) => !removedChromeIds.has(assignment.chromeId));
-        setClusters((prev) => pruneBookmarksFromTree(prev, removedChromeIds));
-        setStructureAssignments(nextAssignments);
-
-        deadLinkChromeIdsRef.current = deadLinkChromeIdsRef.current.filter((chromeId) => !removedChromeIds.has(chromeId));
-        const deadChromeIdSet = new Set(deadLinkChromeIdsRef.current);
-        setStats({
-            duplicates: countDuplicateAssignments(nextAssignments),
-            deadLinks: nextAssignments.reduce(
-                (sum, assignment) => sum + (deadChromeIdSet.has(assignment.chromeId) ? 1 : 0),
-                0
-            )
-        });
-    }, [structureAssignments]);
-
-    const scanDeadLinks = useCallback(async (assignmentsOverride?: StructureAssignment[]) => {
-        if (!isPremium) {
-            setErrorMessage('Dead-link scanning requires Link Loom Pro.');
-            return [] as string[];
-        }
-
-        const assignmentsToScan = assignmentsOverride ?? structureAssignments;
-        const scanToken = deadLinkScanTokenRef.current + 1;
-        deadLinkScanTokenRef.current = scanToken;
-
-        if (assignmentsToScan.length === 0) {
-            deadLinkChromeIdsRef.current = [];
-            setStats((prev) => ({ ...prev, deadLinks: 0 }));
-            return [] as string[];
-        }
-
-        setIsScanningDeadLinks(true);
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), DEAD_LINK_SCAN_REQUEST_TIMEOUT_MS);
-        try {
-            const response = await structureClient.scanDeadLinks(assignmentsToScan, controller.signal);
-
-            if (!response.ok) {
-                throw new Error(`Dead-link scan failed: ${response.status}`);
-            }
-
-            const payload = await response.json();
-            const deadChromeIds = Array.isArray(payload.deadChromeIds)
-                ? payload.deadChromeIds.filter((id: unknown): id is string => typeof id === 'string')
-                : [];
-            if (deadLinkScanTokenRef.current !== scanToken) {
-                return [] as string[];
-            }
-            deadLinkChromeIdsRef.current = Array.from(new Set(deadChromeIds));
-
+            deadLinkChromeIdsRef.current = deadLinkChromeIdsRef.current.filter(
+                (chromeId) => !removedChromeIds.has(chromeId)
+            );
             const deadChromeIdSet = new Set(deadLinkChromeIdsRef.current);
-            setStats((prev) => ({
-                ...prev,
-                deadLinks: assignmentsToScan.reduce(
-                    (sum, assignment) => sum + (deadChromeIdSet.has(assignment.chromeId) ? 1 : 0),
+            setStats({
+                duplicates: countDuplicateAssignments(nextAssignments),
+                deadLinks: nextAssignments.reduce(
+                    (sum, assignment) =>
+                        sum +
+                        (deadChromeIdSet.has(assignment.chromeId) ? 1 : 0),
                     0
                 )
-            }));
+            });
+        },
+        [structureAssignments]
+    );
 
-            return deadLinkChromeIdsRef.current;
-        } catch (error) {
-            if (deadLinkScanTokenRef.current === scanToken) {
+    const scanDeadLinks = useCallback(
+        async (assignmentsOverride?: StructureAssignment[]) => {
+            if (!isPremium) {
+                setErrorMessage('Dead-link scanning requires Link Loom Pro.');
+                return [] as string[];
+            }
+
+            const assignmentsToScan =
+                assignmentsOverride ?? structureAssignments;
+            const scanToken = deadLinkScanTokenRef.current + 1;
+            deadLinkScanTokenRef.current = scanToken;
+
+            if (assignmentsToScan.length === 0) {
                 deadLinkChromeIdsRef.current = [];
                 setStats((prev) => ({ ...prev, deadLinks: 0 }));
+                return [] as string[];
             }
 
-            const isExpectedConnectivityIssue =
-                isFailedFetchError(error) || (error instanceof DOMException && error.name === 'AbortError');
+            setIsScanningDeadLinks(true);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(
+                () => controller.abort(),
+                DEAD_LINK_SCAN_REQUEST_TIMEOUT_MS
+            );
+            try {
+                const response = await structureClient.scanDeadLinks(
+                    assignmentsToScan,
+                    controller.signal
+                );
 
-            if (!isExpectedConnectivityIssue) {
-                console.error('[DEAD_LINKS] Failed to scan dead links', error);
-            }
+                if (!response.ok) {
+                    throw new Error(
+                        `Dead-link scan failed: ${response.status}`
+                    );
+                }
 
-            return [] as string[];
-        } finally {
-            clearTimeout(timeoutId);
-            if (deadLinkScanTokenRef.current === scanToken) {
-                setIsScanningDeadLinks(false);
+                const payload = await response.json();
+                const deadChromeIds = Array.isArray(payload.deadChromeIds)
+                    ? payload.deadChromeIds.filter(
+                          (id: unknown): id is string => typeof id === 'string'
+                      )
+                    : [];
+                if (deadLinkScanTokenRef.current !== scanToken) {
+                    return [] as string[];
+                }
+                deadLinkChromeIdsRef.current = Array.from(
+                    new Set(deadChromeIds)
+                );
+
+                const deadChromeIdSet = new Set(deadLinkChromeIdsRef.current);
+                setStats((prev) => ({
+                    ...prev,
+                    deadLinks: assignmentsToScan.reduce(
+                        (sum, assignment) =>
+                            sum +
+                            (deadChromeIdSet.has(assignment.chromeId) ? 1 : 0),
+                        0
+                    )
+                }));
+
+                return deadLinkChromeIdsRef.current;
+            } catch (error) {
+                if (deadLinkScanTokenRef.current === scanToken) {
+                    deadLinkChromeIdsRef.current = [];
+                    setStats((prev) => ({ ...prev, deadLinks: 0 }));
+                }
+
+                const isExpectedConnectivityIssue =
+                    isFailedFetchError(error) ||
+                    (error instanceof DOMException &&
+                        error.name === 'AbortError');
+
+                if (!isExpectedConnectivityIssue) {
+                    console.error(
+                        '[DEAD_LINKS] Failed to scan dead links',
+                        error
+                    );
+                }
+
+                return [] as string[];
+            } finally {
+                clearTimeout(timeoutId);
+                if (deadLinkScanTokenRef.current === scanToken) {
+                    setIsScanningDeadLinks(false);
+                }
             }
-        }
-    }, [isPremium, structureAssignments, structureClient]);
+        },
+        [isPremium, structureAssignments, structureClient]
+    );
 
     const fetchResults = async (idOverride?: string, silent = false) => {
         const targetId = idOverride || userId;
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), STRUCTURE_REQUEST_TIMEOUT_MS);
+        const timeoutId = setTimeout(
+            () => controller.abort(),
+            STRUCTURE_REQUEST_TIMEOUT_MS
+        );
         try {
             await ensureCurrentBookmarkTreeSnapshot();
             if (overflowBookmarksRef.current.length === 0 && targetId) {
-                overflowBookmarksRef.current = await loadPersistedOverflowBookmarks(targetId);
+                overflowBookmarksRef.current =
+                    await loadPersistedOverflowBookmarks(targetId);
             }
 
-            const res = await structureClient.fetchStructure(targetId, controller.signal);
+            const res = await structureClient.fetchStructure(
+                targetId,
+                controller.signal
+            );
             if (!res.ok) {
                 throw new Error(`Structure fetch failed: ${res.status}`);
             }
             const data = await res.json();
 
-            const { rootNodes, assignmentSummaries, duplicateCount } = buildStructurePreview({
-                data,
-                availableRoots: availableRootsRef.current,
-                bookmarkRootMap: bookmarkRootMapRef.current,
-                bookmarkPreferredRootMap: bookmarkPreferredRootMapRef.current,
-                overflowBookmarks: overflowBookmarksRef.current,
-                originalTree: originalTreeRef.current,
-                defaultRootTitle: DEFAULT_ROOT_TITLE,
-            });
+            const { rootNodes, assignmentSummaries, duplicateCount } =
+                buildStructurePreview({
+                    data,
+                    availableRoots: availableRootsRef.current,
+                    bookmarkRootMap: bookmarkRootMapRef.current,
+                    bookmarkPreferredRootMap:
+                        bookmarkPreferredRootMapRef.current,
+                    overflowBookmarks: overflowBookmarksRef.current,
+                    originalTree: originalTreeRef.current,
+                    defaultRootTitle: DEFAULT_ROOT_TITLE
+                });
 
             setClusters(rootNodes);
             setStructureAssignments(assignmentSummaries);
@@ -660,13 +807,19 @@ export const useBookmarkWeaver = (
             }
         } catch (error) {
             if (isFailedFetchError(error)) {
-                console.warn('[RESULTS] Backend unreachable while loading structure.');
+                console.warn(
+                    '[RESULTS] Backend unreachable while loading structure.'
+                );
                 setErrorMessage(BACKEND_UNAVAILABLE_MESSAGE);
             } else if (isAbortError(error)) {
-                console.warn(`[RESULTS] Structure request timed out after ${STRUCTURE_REQUEST_TIMEOUT_MS}ms.`);
-                setErrorMessage('Loading organized bookmark structure timed out. Try again.');
+                console.warn(
+                    `[RESULTS] Structure request timed out after ${STRUCTURE_REQUEST_TIMEOUT_MS}ms.`
+                );
+                setErrorMessage(
+                    'Loading organized bookmark structure timed out. Try again.'
+                );
             } else {
-                console.error("Fetch results error", error);
+                console.error('Fetch results error', error);
                 setErrorMessage('Failed to load organized bookmark structure.');
             }
             if (!silent) {
@@ -687,12 +840,19 @@ export const useBookmarkWeaver = (
         }
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), AUTO_RENAME_REQUEST_TIMEOUT_MS);
+        const timeoutId = setTimeout(
+            () => controller.abort(),
+            AUTO_RENAME_REQUEST_TIMEOUT_MS
+        );
         try {
             setIsAutoRenaming(true);
             setErrorMessage(null);
 
-            const response = await structureClient.autoRename(userId, effectiveClusteringSettings, controller.signal);
+            const response = await structureClient.autoRename(
+                userId,
+                effectiveClusteringSettings,
+                controller.signal
+            );
 
             if (!response.ok) {
                 throw new Error(`Auto rename failed: ${response.status}`);
@@ -701,11 +861,17 @@ export const useBookmarkWeaver = (
             await fetchResults(userId);
         } catch (error) {
             if (isFailedFetchError(error)) {
-                console.warn('[AUTO_RENAME] Backend unreachable while renaming.');
+                console.warn(
+                    '[AUTO_RENAME] Backend unreachable while renaming.'
+                );
                 setErrorMessage(BACKEND_UNAVAILABLE_MESSAGE);
             } else if (isAbortError(error)) {
-                console.warn(`[AUTO_RENAME] Request timed out after ${AUTO_RENAME_REQUEST_TIMEOUT_MS}ms.`);
-                setErrorMessage('Auto rename timed out. Try again in a moment.');
+                console.warn(
+                    `[AUTO_RENAME] Request timed out after ${AUTO_RENAME_REQUEST_TIMEOUT_MS}ms.`
+                );
+                setErrorMessage(
+                    'Auto rename timed out. Try again in a moment.'
+                );
             } else {
                 console.error('[AUTO_RENAME] Error:', error);
                 setErrorMessage('Failed to auto rename bookmarks.');
@@ -720,7 +886,8 @@ export const useBookmarkWeaver = (
         if (typeof chrome === 'undefined' || !chrome.bookmarks) return;
         if (isDeletingDuplicates || structureAssignments.length === 0) return;
 
-        const duplicateChromeIds = collectDuplicateChromeIds(structureAssignments);
+        const duplicateChromeIds =
+            collectDuplicateChromeIds(structureAssignments);
         if (duplicateChromeIds.length === 0) {
             setStats((prev) => ({ ...prev, duplicates: 0 }));
             return;
@@ -739,7 +906,10 @@ export const useBookmarkWeaver = (
                     await chrome.bookmarks.remove(chromeId);
                     removedChromeIds.add(chromeId);
                 } catch (error) {
-                    console.warn(`[DUPLICATES] Failed to delete bookmark ${chromeId}`, error);
+                    console.warn(
+                        `[DUPLICATES] Failed to delete bookmark ${chromeId}`,
+                        error
+                    );
                 }
             }
 
@@ -747,7 +917,11 @@ export const useBookmarkWeaver = (
         } finally {
             setIsDeletingDuplicates(false);
         }
-    }, [isDeletingDuplicates, structureAssignments, updateStateAfterBookmarkRemoval]);
+    }, [
+        isDeletingDuplicates,
+        structureAssignments,
+        updateStateAfterBookmarkRemoval
+    ]);
 
     const deleteAllDeadLinks = useCallback(async () => {
         if (typeof chrome === 'undefined' || !chrome.bookmarks) return;
@@ -771,7 +945,10 @@ export const useBookmarkWeaver = (
                     await chrome.bookmarks.remove(chromeId);
                     removedChromeIds.add(chromeId);
                 } catch (error) {
-                    console.warn(`[DEAD_LINKS] Failed to delete bookmark ${chromeId}`, error);
+                    console.warn(
+                        `[DEAD_LINKS] Failed to delete bookmark ${chromeId}`,
+                        error
+                    );
                 }
             }
 
@@ -789,18 +966,23 @@ export const useBookmarkWeaver = (
         return loadStoredStructureVersions();
     }, []);
 
-    const restoreStructureVersion = useCallback(async (versionId: string) => {
-        const versions = await loadStructureVersions();
-        const version = versions.find((item) => item.id === versionId);
-        if (!version) {
-            throw new Error('Selected version no longer exists.');
-        }
+    const restoreStructureVersion = useCallback(
+        async (versionId: string) => {
+            const versions = await loadStructureVersions();
+            const version = versions.find((item) => item.id === versionId);
+            if (!version) {
+                throw new Error('Selected version no longer exists.');
+            }
 
-        setClusters(Array.isArray(version.clusters) ? version.clusters : []);
-        setStats(version.stats || { duplicates: 0, deadLinks: 0 });
-        setStatus('ready');
-        return version;
-    }, [loadStructureVersions]);
+            setClusters(
+                Array.isArray(version.clusters) ? version.clusters : []
+            );
+            setStats(version.stats || { duplicates: 0, deadLinks: 0 });
+            setStatus('ready');
+            return version;
+        },
+        [loadStructureVersions]
+    );
 
     const deleteStructureVersion = useCallback(async (versionId: string) => {
         await deleteStoredStructureVersion(versionId);
@@ -810,24 +992,33 @@ export const useBookmarkWeaver = (
         return backupClient.loadBookmarkBackups();
     }, [backupClient]);
 
-    const saveCurrentBookmarkBackup = useCallback(async (customName?: string) => {
-        return backupClient.saveCurrentBookmarkBackup(customName);
-    }, [backupClient]);
+    const saveCurrentBookmarkBackup = useCallback(
+        async (customName?: string) => {
+            return backupClient.saveCurrentBookmarkBackup(customName);
+        },
+        [backupClient]
+    );
 
-    const deleteBookmarkBackup = useCallback(async (backupId: string) => {
-        await backupClient.deleteBookmarkBackup(backupId);
-    }, [backupClient]);
+    const deleteBookmarkBackup = useCallback(
+        async (backupId: string) => {
+            await backupClient.deleteBookmarkBackup(backupId);
+        },
+        [backupClient]
+    );
 
-    const restoreBookmarkBackup = useCallback(async (backupId: string) => {
-        await backupClient.restoreBookmarkBackup(backupId);
-        if (accountUserId) {
-            originalTreeRef.current = [];
-            bookmarkRootMapRef.current = {};
-            bookmarkPreferredRootMapRef.current = {};
-            availableRootsRef.current = [];
-            await fetchResults(accountUserId);
-        }
-    }, [accountUserId, backupClient, fetchResults]);
+    const restoreBookmarkBackup = useCallback(
+        async (backupId: string) => {
+            await backupClient.restoreBookmarkBackup(backupId);
+            if (accountUserId) {
+                originalTreeRef.current = [];
+                bookmarkRootMapRef.current = {};
+                bookmarkPreferredRootMapRef.current = {};
+                availableRootsRef.current = [];
+                await fetchResults(accountUserId);
+            }
+        },
+        [accountUserId, backupClient, fetchResults]
+    );
 
     const applyChanges = async () => {
         // Mock mode - just mark as done
@@ -844,7 +1035,8 @@ export const useBookmarkWeaver = (
                     'Link Loom found an unfinished bookmark apply from an earlier run. Resume it now? Choose Cancel to roll back the recorded changes instead.'
                 );
                 if (shouldResume) {
-                    const resumeResult = await resumeChromeBookmarkApplyJournal(activeJournal);
+                    const resumeResult =
+                        await resumeChromeBookmarkApplyJournal(activeJournal);
                     if (resumeResult.shouldWarnAboutPartialApply) {
                         window.alert(
                             'Link Loom resumed the apply, but some operations still could not be completed. The local apply journal was kept so you can try again or roll it back.'
@@ -856,25 +1048,32 @@ export const useBookmarkWeaver = (
                     return;
                 }
 
-                const rollbackResult = await rollbackChromeBookmarkApplyJournal(activeJournal);
+                const rollbackResult =
+                    await rollbackChromeBookmarkApplyJournal(activeJournal);
                 if (rollbackResult.skippedDeletedFolderCount > 0) {
                     window.alert(
                         `Link Loom rolled back the unfinished bookmark apply journal, but ${rollbackResult.skippedDeletedFolderCount} deleted folder${rollbackResult.skippedDeletedFolderCount === 1 ? '' : 's'} need a backup restore to recover nested contents.`
                     );
                 } else {
-                    window.alert('Link Loom rolled back the unfinished bookmark apply journal.');
+                    window.alert(
+                        'Link Loom rolled back the unfinished bookmark apply journal.'
+                    );
                 }
                 setStatus('ready');
                 return;
             }
 
             const rootNodes = clusters.filter(
-                (node): node is BookmarkNode & { rootTitle: BookmarkRootTitle } =>
+                (
+                    node
+                ): node is BookmarkNode & { rootTitle: BookmarkRootTitle } =>
                     node.nodeType === 'root' && Boolean(node.rootTitle)
             );
 
             if (rootNodes.length === 0) {
-                console.warn('[ApplyChanges] No root-aware structure is available to apply');
+                console.warn(
+                    '[ApplyChanges] No root-aware structure is available to apply'
+                );
                 setStatus('done');
                 return;
             }
@@ -896,7 +1095,9 @@ export const useBookmarkWeaver = (
                 await saveCurrentBookmarkBackup();
                 console.log('[ApplyChanges] Saved bookmark backup snapshot');
             } else {
-                console.log('[ApplyChanges] Skipped backup snapshot because user is not logged in');
+                console.log(
+                    '[ApplyChanges] Skipped backup snapshot because user is not logged in'
+                );
             }
 
             const applyResult = await applyChromeBookmarkPlan(applyPlan);
@@ -919,10 +1120,14 @@ export const useBookmarkWeaver = (
             );
             clusterRecoveryTriggered.current = false;
             setErrorMessage(null);
-            setStatus(applyResult.shouldWarnAboutPartialApply ? 'ready' : 'done');
+            setStatus(
+                applyResult.shouldWarnAboutPartialApply ? 'ready' : 'done'
+            );
         } catch (error) {
             if (isFailedFetchError(error)) {
-                console.warn('[ApplyChanges] Backend unreachable while applying changes.');
+                console.warn(
+                    '[ApplyChanges] Backend unreachable while applying changes.'
+                );
                 setErrorMessage(BACKEND_UNAVAILABLE_MESSAGE);
             } else {
                 console.error('[ApplyChanges] Error:', error);
@@ -938,21 +1143,11 @@ export const useBookmarkWeaver = (
             await clearPersistedOverflowBookmarks(userId);
             await structureClient.cancel(userId);
         } catch (error) {
-            console.error("Cancel error", error);
+            console.error('Cancel error', error);
         } finally {
             // Always reset UI state
             setStatus('idle');
-            setErrorMessage(null);
-            setProgress(createEmptyProgress());
-            setStructureAssignments([]);
-            setIsScanningDeadLinks(false);
-            setIsDeletingDuplicates(false);
-            setIsDeletingDeadLinks(false);
-            deadLinkChromeIdsRef.current = [];
-            deadLinkScanTokenRef.current += 1;
-            clusterRecoveryTriggered.current = false;
-            overflowBookmarksRef.current = [];
-            pendingBookmarksRef.current = [];
+            resetRunState();
         }
     };
 

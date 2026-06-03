@@ -1,25 +1,11 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { functionBlockFromSql, readMigrationSql } from './sqlTestUtils';
 
-const migrationPath = resolve(
-    __dirname,
-    '../../../../../supabase/migrations/20260529015351_harden_snapshot_rpc_search_path.sql'
+const sql = readMigrationSql(
+    '20260529015351_harden_snapshot_rpc_search_path.sql'
 );
 
-const sql = readFileSync(migrationPath, 'utf8');
-
-const functionBlock = (name: string) => {
-    const pattern = new RegExp(
-        `CREATE OR REPLACE FUNCTION public\\.${name}\\([\\s\\S]*?\\n\\$\\$;`,
-        'i'
-    );
-    const match = sql.match(pattern);
-    if (!match) {
-        throw new Error(`Could not find function ${name} in snapshot RPC hardening migration.`);
-    }
-    return match[0];
-};
+const functionBlock = (name: string) => functionBlockFromSql(sql, name);
 
 describe('snapshot RPC SQL hardening migration', () => {
     it('checks caller identity before creating or restoring snapshots', () => {

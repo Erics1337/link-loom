@@ -1,19 +1,11 @@
 import { createClient } from "@/utils/supabase/server";
 import { History, Save } from "lucide-react";
 import { BackupActions } from "@/components/BackupActions";
-
-function formatRelativeTime(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffHours < 1) return "Just now";
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
-}
+import {
+  DashboardPanelHeader,
+  DashboardTopbar,
+  formatRelativeTime,
+} from "../dashboard-ui";
 
 export default async function BackupsPage() {
   const supabase = createClient();
@@ -34,15 +26,16 @@ export default async function BackupsPage() {
 
   return (
     <div>
-      {/* Topbar */}
-      <header className="ll-topbar">
-        <div className="flex items-center gap-3">
-          <History className="h-5 w-5 text-ll-accent" />
-          <h1 className="text-xl font-semibold text-ll-text">
-            Structure Backups
-          </h1>
-        </div>
-      </header>
+      <DashboardTopbar
+        title={
+          <div className="flex items-center gap-3">
+            <History className="h-5 w-5 text-ll-accent" />
+            <h1 className="text-xl font-semibold text-ll-text">
+              Structure Backups
+            </h1>
+          </div>
+        }
+      />
 
       <div className="p-8">
         <div className="mb-8 max-w-3xl">
@@ -59,14 +52,10 @@ export default async function BackupsPage() {
         </div>
 
         <div className="ll-panel max-w-4xl">
-          <div className="ll-panel-header">
-            <h3 className="text-base font-semibold text-ll-text">
-              Saved Snapshots
-            </h3>
-            <span className="text-sm text-ll-muted">
-              {count || 0} backups limit of 10
-            </span>
-          </div>
+          <DashboardPanelHeader
+            title="Saved Snapshots"
+            summary={`${count || 0} backups limit of 10`}
+          />
 
           {!snapshots || snapshots.length === 0 ? (
             <div className="px-6 py-12 text-center text-ll-muted">

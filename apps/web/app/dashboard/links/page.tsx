@@ -6,19 +6,11 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { AddLinkModal } from "@/components/AddLinkModal";
-
-function formatRelativeTime(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffHours < 1) return "Just now";
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
-}
+import {
+  DashboardPanelHeader,
+  DashboardTopbar,
+  formatRelativeTime,
+} from "../dashboard-ui";
 
 export default async function LinksPage({
   searchParams,
@@ -72,9 +64,7 @@ export default async function LinksPage({
 
   return (
     <div>
-      {/* Topbar */}
-      <header className="ll-topbar">
-        <h1 className="text-xl font-semibold text-ll-text">My Links</h1>
+      <DashboardTopbar title="My Links">
         <div className="flex items-center gap-4">
           {/* Native HTML form for searchParams routing */}
           <form method="GET" action="/dashboard/links" className="relative">
@@ -89,16 +79,14 @@ export default async function LinksPage({
           </form>
           <AddLinkModal />
         </div>
-      </header>
+      </DashboardTopbar>
 
       <div className="p-8">
         <div className="ll-panel">
-          <div className="ll-panel-header">
-            <h3 className="text-base font-semibold leading-6 text-ll-text">
-              {query ? `Search Results for "${query}"` : "All Bookmarks"}
-            </h3>
-            <span className="text-sm text-ll-muted">{count} total</span>
-          </div>
+          <DashboardPanelHeader
+            title={query ? `Search Results for "${query}"` : "All Bookmarks"}
+            summary={`${count} total`}
+          />
 
           {!bookmarks || bookmarks.length === 0 ? (
             <div className="px-6 py-12 text-center text-ll-muted">

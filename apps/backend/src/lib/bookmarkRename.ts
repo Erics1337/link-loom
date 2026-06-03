@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { NamingTone } from './clusteringSettings';
 import { emojiPrefixLabel } from './emojiNaming';
+import { extractPrimaryDomainLabel, toTitleCase } from './textLabels';
 
 const OPENAI_RENAME_TIMEOUT_MS = 15000;
 const openai = new OpenAI({
@@ -10,20 +11,38 @@ const openai = new OpenAI({
 });
 
 const GENERIC_TITLES = new Set([
-    '', 'new tab', 'new page', 'bookmark', 'bookmarks', 'untitled', 'index', 'home', 'homepage'
+    '',
+    'new tab',
+    'new page',
+    'bookmark',
+    'bookmarks',
+    'untitled',
+    'index',
+    'home',
+    'homepage'
 ]);
 
 const stopWords = new Set([
-    'the', 'and', 'for', 'with', 'from', 'that', 'this', 'your', 'you', 'about',
-    'into', 'http', 'https', 'www', 'com', 'org', 'net', 'io', 'co'
+    'the',
+    'and',
+    'for',
+    'with',
+    'from',
+    'that',
+    'this',
+    'your',
+    'you',
+    'about',
+    'into',
+    'http',
+    'https',
+    'www',
+    'com',
+    'org',
+    'net',
+    'io',
+    'co'
 ]);
-
-const toTitleCase = (value: string) =>
-    value
-        .split(' ')
-        .filter(Boolean)
-        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(' ');
 
 const clean = (value: string | null | undefined) =>
     (value ?? '')
@@ -44,23 +63,13 @@ const looksGoodEnough = (value: string) => {
     const normalized = clean(value);
     if (looksGeneric(normalized)) return false;
     if (normalized.length > 90) return false;
-    if (/^[a-z0-9\s\-_.]+$/i.test(normalized) && normalized.split(' ').length <= 10) {
+    if (
+        /^[a-z0-9\s\-_.]+$/i.test(normalized) &&
+        normalized.split(' ').length <= 10
+    ) {
         return true;
     }
     return normalized.split(' ').length <= 12;
-};
-
-const extractDomainLabel = (rawUrl: string | null | undefined): string | null => {
-    if (!rawUrl) return null;
-    try {
-        const hostname = new URL(rawUrl).hostname.replace(/^www\./i, '');
-        const parts = hostname.split('.').filter(Boolean);
-        if (parts.length === 0) return null;
-        if (parts.length === 1) return parts[0];
-        return parts[parts.length - 2];
-    } catch {
-        return null;
-    }
 };
 
 const extractPathTokens = (rawUrl: string | null | undefined): string[] => {
@@ -73,22 +82,24 @@ const extractPathTokens = (rawUrl: string | null | undefined): string[] => {
             .filter(Boolean)
             .join(' ')
             .split(/[-_\s]+/g)
-            .map(token => token.toLowerCase())
-            .filter(token => token.length >= 3 && !stopWords.has(token))
+            .map((token) => token.toLowerCase())
+            .filter((token) => token.length >= 3 && !stopWords.has(token))
             .slice(0, 4);
     } catch {
         return [];
     }
 };
 
-const getDescriptionTokens = (rawDescription: string | null | undefined): string[] => {
+const getDescriptionTokens = (
+    rawDescription: string | null | undefined
+): string[] => {
     const description = clean(rawDescription);
     if (!description) return [];
 
     return description
         .toLowerCase()
         .split(/[^a-z0-9]+/g)
-        .filter(token => token.length >= 4 && !stopWords.has(token))
+        .filter((token) => token.length >= 4 && !stopWords.has(token))
         .slice(0, 4);
 };
 
@@ -115,15 +126,12 @@ const heuristicRename = (params: {
         return currentTitle;
     }
 
-    const domain = extractDomainLabel(params.url);
+    const domain = extractPrimaryDomainLabel(params.url);
     const pathTokens = extractPathTokens(params.url);
     const descriptionTokens = getDescriptionTokens(params.description);
     const cluster = clean(params.clusterName);
 
-    const titlePieces = [
-        ...pathTokens,
-        ...descriptionTokens,
-    ].slice(0, 3);
+    const titlePieces = [...pathTokens, ...descriptionTokens].slice(0, 3);
 
     if (titlePieces.length > 0) {
         return toTitleCase(titlePieces.join(' '));
@@ -153,17 +161,27 @@ export interface BookmarkRenameContext {
     useEmojiNames?: boolean;
 }
 
-export const generateBookmarkRename = async (context: BookmarkRenameContext): Promise<string> => {
+export const generateBookmarkRename = async (
+    context: BookmarkRenameContext
+): Promise<string> => {
     const currentTitle = clean(context.currentTitle);
     const fallback = heuristicRename(context);
     const finalize = (rawTitle: string) => {
         const cleanedTitle = clean(rawTitle);
         if (!cleanedTitle) return cleanedTitle;
         if (!context.useEmojiNames) return cleanedTitle;
-        return emojiPrefixLabel(cleanedTitle, `${clean(context.clusterName)} ${clean(context.url)}`, 'bookmark');
+        return emojiPrefixLabel(
+            cleanedTitle,
+            `${clean(context.clusterName)} ${clean(context.url)}`,
+            'bookmark'
+        );
     };
 
-    if (currentTitle && looksGoodEnough(currentTitle) && !context.useEmojiNames) {
+    if (
+        currentTitle &&
+        looksGoodEnough(currentTitle) &&
+        !context.useEmojiNames
+    ) {
         return currentTitle;
     }
 
@@ -183,13 +201,18 @@ export const generateBookmarkRename = async (context: BookmarkRenameContext): Pr
             `Current title: ${currentTitle || '(empty)'}`,
             `Folder context: ${clean(context.clusterName) || '(none)'}`,
             `Description: ${clean(context.description) || '(none)'}`,
-            `URL: ${clean(context.url) || '(none)'}`,
+            `URL: ${clean(context.url) || '(none)'}`
         ].join('\n');
 
         const response = await openai.chat.completions.create({
             model: 'gpt-4o-mini',
             messages: [{ role: 'user', content: prompt }],
-            temperature: context.namingTone === 'clear' ? 0.2 : context.namingTone === 'balanced' ? 0.5 : 0.8,
+            temperature:
+                context.namingTone === 'clear'
+                    ? 0.2
+                    : context.namingTone === 'balanced'
+                      ? 0.5
+                      : 0.8
         });
 
         const suggestion = clean(response.choices[0]?.message?.content);

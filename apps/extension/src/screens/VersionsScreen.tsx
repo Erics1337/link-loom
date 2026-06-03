@@ -1,5 +1,6 @@
 import React from 'react';
 import { BookmarkStructureVersion } from '../hooks/useBookmarkWeaver';
+import { formatTimestamp, useWorkingMessage } from './screenUtils';
 
 interface VersionsScreenProps {
     versions: BookmarkStructureVersion[];
@@ -8,43 +9,28 @@ interface VersionsScreenProps {
     onDelete: (versionId: string) => Promise<void>;
 }
 
-const formatTimestamp = (timestamp: string) => {
-    const parsed = new Date(timestamp);
-    if (Number.isNaN(parsed.getTime())) return 'Unknown date';
-    return parsed.toLocaleString();
-};
-
 export const VersionsScreen: React.FC<VersionsScreenProps> = ({
     versions,
     onBack,
     onRestore,
     onDelete
 }) => {
-    const [workingId, setWorkingId] = React.useState<string | null>(null);
-    const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+    const {
+        workingId,
+        message: errorMessage,
+        runWithWorkingId
+    } = useWorkingMessage();
 
     const handleRestore = async (versionId: string) => {
-        try {
-            setWorkingId(versionId);
-            setErrorMessage(null);
-            await onRestore(versionId);
-        } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : 'Failed to restore version.');
-        } finally {
-            setWorkingId(null);
-        }
+        await runWithWorkingId(versionId, () => onRestore(versionId), {
+            failure: 'Failed to restore version.'
+        });
     };
 
     const handleDelete = async (versionId: string) => {
-        try {
-            setWorkingId(versionId);
-            setErrorMessage(null);
-            await onDelete(versionId);
-        } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : 'Failed to delete version.');
-        } finally {
-            setWorkingId(null);
-        }
+        await runWithWorkingId(versionId, () => onDelete(versionId), {
+            failure: 'Failed to delete version.'
+        });
     };
 
     return (
@@ -69,18 +55,30 @@ export const VersionsScreen: React.FC<VersionsScreenProps> = ({
 
             <div className="card flex-1 min-h-0 overflow-y-auto">
                 {versions.length === 0 && (
-                    <p className="text-sm text-secondary">No saved versions yet.</p>
+                    <p className="text-sm text-secondary">
+                        No saved versions yet.
+                    </p>
                 )}
 
                 {versions.map((version) => {
                     const isWorking = workingId === version.id;
-                    const summary = version.summary || { folders: 0, bookmarks: 0 };
+                    const summary = version.summary || {
+                        folders: 0,
+                        bookmarks: 0
+                    };
                     return (
-                        <div key={version.id} className="stat-row border-b border-white-10" style={{ padding: '10px 0' }}>
+                        <div
+                            key={version.id}
+                            className="stat-row border-b border-white-10"
+                            style={{ padding: '10px 0' }}
+                        >
                             <div>
-                                <div className="text-sm text-primary">{formatTimestamp(version.createdAt)}</div>
+                                <div className="text-sm text-primary">
+                                    {formatTimestamp(version.createdAt)}
+                                </div>
                                 <div className="text-xs text-secondary">
-                                    {summary.folders} folders • {summary.bookmarks} bookmarks
+                                    {summary.folders} folders •{' '}
+                                    {summary.bookmarks} bookmarks
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">

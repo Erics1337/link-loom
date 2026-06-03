@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { BookmarkTree, BookmarkNode } from '../components/BookmarkTree';
-import { PopOutButton } from '../components/PopOutButton';
-import { useVersion } from '../hooks/useVersion';
 import { Check } from 'lucide-react';
+import { ScreenHeader } from './ScreenHeader';
 
 interface ImportStructureScreenProps {
     fileName: string;
@@ -26,26 +25,13 @@ export const ImportStructureScreen: React.FC<ImportStructureScreenProps> = ({
     onApply,
     onBack,
     isApplying,
-    message,
+    message
 }) => {
-    const version = useVersion();
     const [expandAll, setExpandAll] = useState(true);
 
     return (
         <div className="app-shell" style={{ gap: 10, padding: 10 }}>
-            <div className="app-header">
-                <div className="brand-lockup">
-                    <img src="/icons/icon-48.png" alt="Link Loom" className="brand-icon" />
-                    <div>
-                        <p className="eyebrow">Import preview</p>
-                        <h1 className="brand-title">Structure</h1>
-                    </div>
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="badge">v {version}</span>
-                    <PopOutButton />
-                </div>
-            </div>
+            <ScreenHeader eyebrow="Import preview" title="Structure" />
 
             <div className="flex gap-2">
                 <button
@@ -57,7 +43,9 @@ export const ImportStructureScreen: React.FC<ImportStructureScreenProps> = ({
             </div>
 
             {message && (
-                <div className={`message ${message.kind === 'error' ? 'message-error' : 'message-success'}`}>
+                <div
+                    className={`message ${message.kind === 'error' ? 'message-error' : 'message-success'}`}
+                >
                     {message.text}
                 </div>
             )}
@@ -83,13 +71,31 @@ export const ImportStructureScreen: React.FC<ImportStructureScreenProps> = ({
                     <span className="text-secondary text-sm">Folders</span>
                     <span className="badge-count">{folderCount}</span>
                 </div>
-
             </div>
 
-            <div className="grid" style={{ gridTemplateColumns: '0.7fr 1.3fr', gap: 8 }}>
-                <button onClick={onBack} className="btn btn-secondary" disabled={isApplying}>Back</button>
-                <button onClick={() => void onApply()} className="btn btn-primary" disabled={isApplying}>
-                    {isApplying ? 'Applying...' : <><Check size={15} /> Apply Structure</>}
+            <div
+                className="grid"
+                style={{ gridTemplateColumns: '0.7fr 1.3fr', gap: 8 }}
+            >
+                <button
+                    onClick={onBack}
+                    className="btn btn-secondary"
+                    disabled={isApplying}
+                >
+                    Back
+                </button>
+                <button
+                    onClick={() => void onApply()}
+                    className="btn btn-primary"
+                    disabled={isApplying}
+                >
+                    {isApplying ? (
+                        'Applying...'
+                    ) : (
+                        <>
+                            <Check size={15} /> Apply Structure
+                        </>
+                    )}
                 </button>
             </div>
         </div>
