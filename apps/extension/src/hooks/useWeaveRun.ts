@@ -539,6 +539,12 @@ export const useWeaveRun = ({
                 const errorData = await response.json().catch(() => ({}));
                 pendingBookmarksRef.current = slicedBookmarks;
                 overflowBookmarksRef.current = [];
+                if (userId) {
+                    await persistOverflowBookmarks(
+                        userId,
+                        overflowBookmarksRef.current
+                    );
+                }
                 setLimitExceededInfo({
                     total: slicedBookmarks.length,
                     limit: errorData.limit ?? 500
