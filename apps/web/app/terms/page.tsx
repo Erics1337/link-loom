@@ -8,7 +8,7 @@ export const metadata = {
 
 export default function TermsPage() {
   return (
-    <LegalPage title="Terms of Service">
+    <LegalPage title="Terms of Service" effectiveDate="February 22, 2026">
       <LegalSection title="Overview">
         <p>
           These Terms of Service govern access to and use of Link Loom, a

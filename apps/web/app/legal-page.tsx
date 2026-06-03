@@ -18,21 +18,40 @@ export function LegalSection({
   );
 }
 
+function formatEffectiveDate(effectiveDate: string | Date): string {
+  if (typeof effectiveDate === "string") {
+    return effectiveDate.trim();
+  }
+  return effectiveDate.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
 export function LegalPage({
   title,
+  effectiveDate,
   children,
 }: {
   title: string;
+  effectiveDate?: string | Date;
   children: ReactNode;
 }) {
+  const effectiveDateLabel = effectiveDate
+    ? formatEffectiveDate(effectiveDate)
+    : "";
+
   return (
     <main className="ll-field-bg min-h-screen">
       <div className="mx-auto max-w-4xl px-6 py-12 sm:py-16">
         <div className="mb-8 flex items-center justify-between gap-4">
           <div>
-            <p className="text-sm text-ll-muted">
-              Effective date: February 22, 2026
-            </p>
+            {effectiveDateLabel ? (
+              <p className="text-sm text-ll-muted">
+                Effective date: {effectiveDateLabel}
+              </p>
+            ) : null}
             <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">
               {title}
             </h1>

@@ -7,7 +7,10 @@ export const metadata = {
 
 export default function RefundPolicyPage() {
   return (
-    <LegalPage title="Refund and Cancellation Policy">
+    <LegalPage
+      title="Refund and Cancellation Policy"
+      effectiveDate="February 22, 2026"
+    >
       <LegalSection title="Digital Product Delivery">
         <p>
           Link Loom is a digital software product. Paid access is delivered

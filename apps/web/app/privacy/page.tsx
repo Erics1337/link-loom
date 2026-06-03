@@ -7,7 +7,7 @@ export const metadata = {
 
 export default function PrivacyPage() {
   return (
-    <LegalPage title="Privacy Policy">
+    <LegalPage title="Privacy Policy" effectiveDate="February 22, 2026">
       <LegalSection title="What Link Loom Does">
         <p>
           Link Loom is a software service (Chrome extension + web app) that
