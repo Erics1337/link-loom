@@ -106,7 +106,7 @@ export const collectScannedBookmarks = (tree: any[]) => {
     const traverse = (node: any) => {
         if (!node) return;
         if (node.url) {
-            bookmarks.push({ id: node.id, url: node.url, title: node.title });
+            bookmarks.push({ id: node.id, url: node.url, title: node.title ?? '' });
         }
         if (node.children) {
             node.children.forEach(traverse);

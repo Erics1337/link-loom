@@ -81,6 +81,9 @@ describe('processingSession', () => {
             { id: 'a', title: 'A', url: 'https://a.example' },
             { id: 'b', title: 'B', url: 'https://b.example' },
         ]);
+        expect(collectScannedBookmarks([
+            { id: 'root', children: [{ id: 'c', url: 'https://c.example' }] },
+        ])).toEqual([{ id: 'c', title: '', url: 'https://c.example' }]);
     });
 
     it('persists overflow bookmarks and Safety Backups through chrome storage', async () => {
