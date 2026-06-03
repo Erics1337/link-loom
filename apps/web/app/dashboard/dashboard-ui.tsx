@@ -2,8 +2,21 @@ import type { ReactNode } from "react";
 
 export function formatRelativeTime(dateString: string): string {
   const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return "Invalid date";
+
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
+
+  if (diffMs < 0) {
+    const aheadMs = -diffMs;
+    const aheadHours = Math.floor(aheadMs / (1000 * 60 * 60));
+    const aheadDays = Math.floor(aheadMs / (1000 * 60 * 60 * 24));
+    if (aheadHours < 1) return "Just now";
+    if (aheadHours < 24) return `In ${aheadHours}h`;
+    if (aheadDays < 7) return `In ${aheadDays}d`;
+    return date.toLocaleDateString();
+  }
+
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 

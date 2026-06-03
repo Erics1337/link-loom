@@ -85,7 +85,7 @@ export default async function LinksPage({
         <div className="ll-panel">
           <DashboardPanelHeader
             title={query ? `Search Results for "${query}"` : "All Bookmarks"}
-            summary={`${count} total`}
+            summary={`${count ?? 0} total`}
           />
 
           {!bookmarks || bookmarks.length === 0 ? (
