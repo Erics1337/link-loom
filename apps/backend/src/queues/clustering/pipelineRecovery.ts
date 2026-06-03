@@ -1,0 +1,121 @@
+import { supabase } from '../../db';
+import { queues } from '../../lib/queue';
+import { parseBookmarkVector } from './vectorParsing';
+
+export const recoverStalePipelineState = async (
+    userId: string,
+    pipelineRunId: string | undefined,
+    log: (msg: string) => void
+) => {
+    const { data: inflightBookmarks, error: inflightError } = await supabase
+        .from('bookmarks')
+        .select(
+            `
+            id,
+            status,
+            title,
+            description,
+            url,
+            shared_links!content_hash (vector)
+        `
+        )
+        .eq('user_id', userId)
+        .in('status', ['pending', 'enriched']);
+
+    if (inflightError) {
+        log(
+            `[CLUSTERING] Recovery query failed for user ${userId}: ${JSON.stringify(inflightError)}`
+        );
+        return;
+    }
+
+    if (!inflightBookmarks || inflightBookmarks.length === 0) return;
+
+    const toMarkEmbedded: string[] = [];
+    const toQueueEnrichment: Array<{ bookmarkId: string; url: string }> = [];
+    const toQueueEmbedding: Array<{
+        bookmarkId: string;
+        url: string;
+        text: string;
+    }> = [];
+
+    for (const bookmark of inflightBookmarks as Array<{
+        id: string;
+        status: string;
+        title?: string | null;
+        description?: string | null;
+        url?: string | null;
+        shared_links?: unknown;
+    }>) {
+        const parsedVector = parseBookmarkVector(bookmark.shared_links, (e) =>
+            log(`Failed to parse vector JSON: ${e}`)
+        );
+
+        if (parsedVector) {
+            toMarkEmbedded.push(bookmark.id);
+            continue;
+        }
+
+        if (!bookmark.url) continue;
+
+        if (bookmark.status === 'enriched') {
+            const title = bookmark.title ?? '';
+            const description = bookmark.description ?? '';
+            toQueueEmbedding.push({
+                bookmarkId: bookmark.id,
+                url: bookmark.url,
+                text: `${title} ${description} ${bookmark.url}`
+            });
+            continue;
+        }
+
+        if (bookmark.status === 'pending') {
+            toQueueEnrichment.push({
+                bookmarkId: bookmark.id,
+                url: bookmark.url
+            });
+        }
+    }
+
+    if (toMarkEmbedded.length > 0) {
+        const { error: markEmbeddedError } = await supabase
+            .from('bookmarks')
+            .update({ status: 'embedded' })
+            .in('id', toMarkEmbedded);
+
+        if (markEmbeddedError) {
+            log(
+                `[CLUSTERING] Recovery failed to mark embedded for user ${userId}: ${JSON.stringify(markEmbeddedError)}`
+            );
+        } else {
+            log(
+                `[CLUSTERING] Recovery marked ${toMarkEmbedded.length} stale bookmarks as embedded for user ${userId}`
+            );
+        }
+    }
+
+    for (const enrichmentJob of toQueueEnrichment) {
+        await queues.enrichment.add('enrich', {
+            userId,
+            pipelineRunId,
+            bookmarkId: enrichmentJob.bookmarkId,
+            url: enrichmentJob.url
+        });
+    }
+
+    for (const embeddingJob of toQueueEmbedding) {
+        await queues.embedding.add('embed', {
+            userId,
+            pipelineRunId,
+            bookmarkId: embeddingJob.bookmarkId,
+            url: embeddingJob.url,
+            text: embeddingJob.text
+        });
+    }
+
+    if (toQueueEnrichment.length > 0 || toQueueEmbedding.length > 0) {
+        log(
+            `[CLUSTERING] Recovery queued enrichment=${toQueueEnrichment.length}, embedding=${toQueueEmbedding.length} for user ${userId}`
+        );
+    }
+};

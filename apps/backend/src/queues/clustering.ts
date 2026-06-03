@@ -1,22 +1,30 @@
-import { QueueJob } from '../lib/queue';
-import { supabase } from '../db';
-import { kmeans } from 'ml-kmeans';
-import OpenAI from 'openai';
-import { createLimit } from '../lib/limit';
-import { completePipelineRun, isUserCancelled } from '../lib/cancellation';
-import {
-    ClusteringDensityProfile,
-    ClusteringSettings,
-    getDensityProfile,
-    normalizeClusteringSettings
-} from '../lib/clusteringSettings';
-import { emojiPrefixLabel } from '../lib/emojiNaming';
-import { extractPrimaryDomainLabel, toTitleCase } from '../lib/textLabels';
-import { queues } from '../lib/queue';
-import { recordPipelineClusteringCompleted } from '../lib/pipelineCoordinator';
-
 import fs from 'fs';
 import path from 'path';
+
+import { QueueJob } from '../lib/queue';
+import { completePipelineRun, isUserCancelled } from '../lib/cancellation';
+import {
+    ClusteringSettings,
+    normalizeClusteringSettings
+} from '../lib/clusteringSettings';
+import { recordPipelineClusteringCompleted } from '../lib/pipelineCoordinator';
+import {
+    shouldAssignLeaf,
+    splitClusterGroups
+} from './clustering/clusterAlgorithm';
+import {
+    assignBookmarksToCluster,
+    createCluster,
+    fetchUserBookmarkVectorRows
+} from './clustering/clusterPersistence';
+import {
+    generateClusterName,
+    limitClusterNaming
+} from './clustering/clusterNaming';
+import {
+    normalizeVector,
+    parseBookmarkVector
+} from './clustering/vectorParsing';
 
 const logFile = path.resolve(process.cwd(), 'clustering-debug.log');
 
@@ -26,10 +34,6 @@ function log(msg: string) {
     console.log(msg);
 }
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-});
-
 export interface ClusteringJobData {
     userId: string;
     clusteringSettings?: ClusteringSettings;
@@ -37,473 +41,25 @@ export interface ClusteringJobData {
     jobGeneration?: number;
 }
 
-interface ClusterGroup {
-    ids: string[];
-    vecs: number[][];
-}
+const parseVectorWithLogging = (joined: unknown): number[] | null =>
+    parseBookmarkVector(joined, (e) => log(`Failed to parse vector JSON: ${e}`));
 
-const parsePositiveInt = (raw: string | undefined, fallback: number) => {
-    const parsed = Number.parseInt(raw ?? `${fallback}`, 10);
-    if (Number.isNaN(parsed) || parsed <= 0) return fallback;
-    return parsed;
-};
-
-const CLUSTER_NAME_CONCURRENCY = parsePositiveInt(
-    process.env.CLUSTER_NAME_CONCURRENCY,
-    4
-);
-const CLUSTER_NAME_MAX_RETRIES = parsePositiveInt(
-    process.env.CLUSTER_NAME_MAX_RETRIES,
-    5
-);
-const CLUSTER_NAME_BASE_BACKOFF_MS = parsePositiveInt(
-    process.env.CLUSTER_NAME_BASE_BACKOFF_MS,
-    400
-);
-const CLUSTER_NAME_MIN_BOOKMARKS_FOR_AI = parsePositiveInt(
-    process.env.CLUSTER_NAME_MIN_BOOKMARKS_FOR_AI,
-    12
-);
-const CLUSTER_NAME_CONTEXT_SAMPLE_SIZE = parsePositiveInt(
-    process.env.CLUSTER_NAME_CONTEXT_SAMPLE_SIZE,
-    20
-);
-
-// Concurrency limit for cluster naming and cluster creation requests.
-const limit = createLimit(CLUSTER_NAME_CONCURRENCY);
-
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const clusterNameCache = new Map<string, string>();
-let nextAllowedOpenAIRequestAt = 0;
-
-const TITLE_TOKEN_STOP_WORDS = new Set([
-    'and',
-    'for',
-    'the',
-    'with',
-    'from',
-    'that',
-    'this',
-    'your',
-    'you',
-    'are',
-    'how',
-    'why',
-    'what',
-    'when',
-    'where',
-    'best',
-    'guide',
-    'tips',
-    'new',
-    'bookmark',
-    'bookmarks',
-    'folder',
-    'page',
-    'home',
-    'official'
-]);
-
-const GENERIC_TITLES = new Set(['new folder', 'untitled', 'bookmark', '']);
-const GENERIC_RESPONSES = new Set([
-    'new folder',
-    'untitled',
-    'bookmarks',
-    'miscellaneous',
-    'folder',
-    'general',
-    ''
-]);
-
-const normalizeVector = (vector: number[]): number[] => {
-    const norm = Math.sqrt(
-        vector.reduce((sum, value) => sum + value * value, 0)
-    );
-    if (norm <= Number.EPSILON) return vector;
-    return vector.map((value) => value / norm);
-};
-
-const parseVector = (raw: unknown): number[] | null => {
-    let candidate: unknown = raw;
-    if (typeof raw === 'string') {
-        try {
-            candidate = JSON.parse(raw);
-        } catch (e) {
-            log(`Failed to parse vector JSON: ${e}`);
-            return null;
-        }
-    }
-
-    if (!Array.isArray(candidate) || candidate.length === 0) return null;
-
-    const values: number[] = [];
-    for (const value of candidate) {
-        if (typeof value !== 'number' || !Number.isFinite(value)) {
-            return null;
-        }
-        values.push(value);
-    }
-
-    return values;
-};
-
-const getJoinedSharedVector = (joined: unknown): unknown => {
-    if (!joined) return null;
-    if (Array.isArray(joined)) {
-        if (joined.length === 0) return null;
-        const first = joined[0] as { vector?: unknown };
-        return first?.vector ?? null;
-    }
-
-    if (typeof joined === 'object') {
-        return (joined as { vector?: unknown }).vector ?? null;
-    }
-
-    return null;
-};
-
-const recoverStalePipelineState = async (
+const completeEmptyPipeline = async (
     userId: string,
-    pipelineRunId?: string,
-    jobGeneration?: number
+    jobGeneration: number | undefined,
+    pipelineRunId: string | undefined,
+    totals: {
+        totalBookmarks: number;
+        embeddedBookmarks: number;
+        assignedBookmarks: number;
+    }
 ) => {
-    const { data: inflightBookmarks, error: inflightError } = await supabase
-        .from('bookmarks')
-        .select(
-            `
-            id,
-            status,
-            title,
-            description,
-            url,
-            shared_links!content_hash (vector)
-        `
-        )
-        .eq('user_id', userId)
-        .in('status', ['pending', 'enriched']);
-
-    if (inflightError) {
-        log(
-            `[CLUSTERING] Recovery query failed for user ${userId}: ${JSON.stringify(inflightError)}`
-        );
-        return;
-    }
-
-    if (!inflightBookmarks || inflightBookmarks.length === 0) return;
-
-    const toMarkEmbedded: string[] = [];
-    const toQueueEnrichment: Array<{ bookmarkId: string; url: string }> = [];
-    const toQueueEmbedding: Array<{
-        bookmarkId: string;
-        url: string;
-        text: string;
-    }> = [];
-
-    for (const bookmark of inflightBookmarks as Array<{
-        id: string;
-        status: string;
-        title?: string | null;
-        description?: string | null;
-        url?: string | null;
-        shared_links?: unknown;
-    }>) {
-        const rawVector = getJoinedSharedVector(bookmark.shared_links);
-        const parsedVector = parseVector(rawVector);
-
-        if (parsedVector) {
-            toMarkEmbedded.push(bookmark.id);
-            continue;
-        }
-
-        if (!bookmark.url) continue;
-
-        if (bookmark.status === 'enriched') {
-            const title = bookmark.title ?? '';
-            const description = bookmark.description ?? '';
-            toQueueEmbedding.push({
-                bookmarkId: bookmark.id,
-                url: bookmark.url,
-                text: `${title} ${description} ${bookmark.url}`
-            });
-            continue;
-        }
-
-        if (bookmark.status === 'pending') {
-            toQueueEnrichment.push({
-                bookmarkId: bookmark.id,
-                url: bookmark.url
-            });
-        }
-    }
-
-    if (toMarkEmbedded.length > 0) {
-        const { error: markEmbeddedError } = await supabase
-            .from('bookmarks')
-            .update({ status: 'embedded' })
-            .in('id', toMarkEmbedded);
-
-        if (markEmbeddedError) {
-            log(
-                `[CLUSTERING] Recovery failed to mark embedded for user ${userId}: ${JSON.stringify(markEmbeddedError)}`
-            );
-        } else {
-            log(
-                `[CLUSTERING] Recovery marked ${toMarkEmbedded.length} stale bookmarks as embedded for user ${userId}`
-            );
-        }
-    }
-
-    for (const enrichmentJob of toQueueEnrichment) {
-        await queues.enrichment.add('enrich', {
-            userId,
-            pipelineRunId,
-            bookmarkId: enrichmentJob.bookmarkId,
-            url: enrichmentJob.url
-        });
-    }
-
-    for (const embeddingJob of toQueueEmbedding) {
-        await queues.embedding.add('embed', {
-            userId,
-            pipelineRunId,
-            bookmarkId: embeddingJob.bookmarkId,
-            url: embeddingJob.url,
-            text: embeddingJob.text
-        });
-    }
-
-    if (toQueueEnrichment.length > 0 || toQueueEmbedding.length > 0) {
-        log(
-            `[CLUSTERING] Recovery queued enrichment=${toQueueEnrichment.length}, embedding=${toQueueEmbedding.length} for user ${userId}`
-        );
-    }
-};
-
-const sampleBookmarkIds = (
-    bookmarkIds: string[],
-    sampleSize: number
-): string[] => {
-    if (bookmarkIds.length <= sampleSize) return bookmarkIds;
-
-    const step = bookmarkIds.length / sampleSize;
-    const sampled = new Set<string>();
-
-    for (let i = 0; i < sampleSize; i++) {
-        const idx = Math.min(Math.floor(i * step), bookmarkIds.length - 1);
-        sampled.add(bookmarkIds[idx]);
-    }
-
-    return Array.from(sampled);
-};
-
-const getNamingToneInstruction = (settings: ClusteringSettings): string => {
-    switch (settings.namingTone) {
-        case 'balanced':
-            return 'Tone: concise and modern. Slight personality is allowed, but keep the category obvious.';
-        case 'playful':
-            return 'Tone: creative and witty, but keep findability high by including a clear topic anchor, ideally like "Creative Name (Topic)".';
-        case 'clear':
-        default:
-            return 'Tone: clear and literal. Prefer obvious category labels over clever wording.';
-    }
-};
-
-const getOrganizationInstruction = (settings: ClusteringSettings): string => {
-    if (settings.organizationMode === 'category') {
-        return 'Organization mode: category-first. Prefer broad categories over niche topics.';
-    }
-
-    return 'Organization mode: topic-first. Prefer specific topics over broad categories.';
-};
-
-const finalizeClusterName = (
-    name: string,
-    settings: ClusteringSettings,
-    contextText: string
-): string => {
-    if (!settings.useEmojiNames) return name;
-    return emojiPrefixLabel(name, contextText, 'folder');
-};
-
-const chooseSplitK = (
-    count: number,
-    profile: ClusteringDensityProfile
-): number => {
-    if (count <= profile.targetLeafSize) return 1;
-
-    const estimated = Math.ceil(count / profile.targetLeafSize);
-    return Math.max(2, Math.min(profile.maxChildren, estimated, count));
-};
-
-const computeDistance = (a: number[], b: number[]): number => {
-    let sum = 0;
-    for (let i = 0; i < a.length; i++) {
-        const diff = a[i] - b[i];
-        sum += diff * diff;
-    }
-    return sum;
-};
-
-const computeCentroid = (vecs: number[][]): number[] => {
-    if (vecs.length === 0) return [];
-    if (vecs.length === 1) return vecs[0];
-
-    const dimensions = vecs[0].length;
-    const centroid = new Array(dimensions).fill(0);
-    for (const vec of vecs) {
-        for (let i = 0; i < dimensions; i++) {
-            centroid[i] += vec[i];
-        }
-    }
-    return centroid.map((v) => v / vecs.length);
-};
-
-const rebalanceSmallGroups = (
-    groups: ClusterGroup[],
-    minChildSize: number
-): ClusterGroup[] => {
-    if (groups.length <= 1) return groups;
-
-    const largeGroups = groups.filter(
-        (group) => group.ids.length >= minChildSize
+    await recordPipelineClusteringCompleted(
+        userId,
+        jobGeneration,
+        pipelineRunId
     );
-    const smallGroups = groups.filter(
-        (group) => group.ids.length < minChildSize
-    );
-
-    if (smallGroups.length === 0 || largeGroups.length === 0) {
-        return groups;
-    }
-
-    const largeGroupCentroids = largeGroups.map((g) => computeCentroid(g.vecs));
-
-    for (const small of smallGroups) {
-        for (let i = 0; i < small.ids.length; i++) {
-            const id = small.ids[i];
-            const vec = small.vecs[i];
-
-            let closestIdx = 0;
-            let minDistance = Infinity;
-
-            for (let j = 0; j < largeGroups.length; j++) {
-                const distance = computeDistance(vec, largeGroupCentroids[j]);
-                if (distance < minDistance) {
-                    minDistance = distance;
-                    closestIdx = j;
-                }
-            }
-
-            largeGroups[closestIdx].ids.push(id);
-            largeGroups[closestIdx].vecs.push(vec);
-        }
-    }
-
-    return largeGroups;
-};
-
-const generateHeuristicClusterName = (
-    bookmarks: Array<{
-        title?: string | null;
-        description?: string | null;
-        url?: string | null;
-    }>
-) => {
-    const domainCounts = new Map<string, number>();
-    const tokenCounts = new Map<string, number>();
-
-    for (const bookmark of bookmarks) {
-        const domain = extractPrimaryDomainLabel(bookmark.url);
-        if (domain) {
-            domainCounts.set(domain, (domainCounts.get(domain) ?? 0) + 1);
-        }
-
-        const combinedText =
-            `${bookmark.title ?? ''} ${bookmark.description ?? ''}`.toLowerCase();
-        const tokens = combinedText.match(/[a-z0-9]{3,}/g) ?? [];
-        for (const token of tokens) {
-            if (TITLE_TOKEN_STOP_WORDS.has(token)) continue;
-            tokenCounts.set(token, (tokenCounts.get(token) ?? 0) + 1);
-        }
-    }
-
-    const dominantDomain = Array.from(domainCounts.entries()).sort(
-        (a, b) => b[1] - a[1]
-    )[0];
-    if (
-        dominantDomain &&
-        dominantDomain[1] >= Math.max(2, Math.ceil(bookmarks.length * 0.45))
-    ) {
-        return toTitleCase(dominantDomain[0]);
-    }
-
-    const topTokens = Array.from(tokenCounts.entries())
-        .sort((a, b) => b[1] - a[1])
-        .filter(([, count]) => count >= 2)
-        .slice(0, 2)
-        .map(([token]) => token);
-
-    if (topTokens.length > 0) {
-        return toTitleCase(topTokens.join(' '));
-    }
-
-    if (dominantDomain) {
-        return toTitleCase(dominantDomain[0]);
-    }
-
-    return 'General';
-};
-
-const getRetryAfterMs = (err: any): number | null => {
-    const retryAfterHeader =
-        err?.headers?.['retry-after'] ?? err?.headers?.get?.('retry-after');
-
-    if (!retryAfterHeader) return null;
-    const parsed = Number.parseInt(retryAfterHeader, 10);
-    if (Number.isNaN(parsed)) return null;
-    return parsed * 1000;
-};
-
-const createCluster = async (
-    userId: string,
-    parentId: string | null,
-    name: string
-): Promise<string | null> => {
-    const { data: newCluster, error } = await supabase
-        .from('clusters')
-        .insert({
-            user_id: userId,
-            name,
-            parent_id: parentId
-        })
-        .select('id')
-        .single();
-
-    if (error || !newCluster?.id) {
-        log(`Error creating cluster: ${JSON.stringify(error)}`);
-        return null;
-    }
-
-    return newCluster.id;
-};
-
-const assignBookmarksToCluster = async (
-    bookmarkIds: string[],
-    clusterId: string
-) => {
-    if (bookmarkIds.length === 0) return;
-
-    const assignments = bookmarkIds.map((bookmarkId) => ({
-        cluster_id: clusterId,
-        bookmark_id: bookmarkId
-    }));
-
-    const { error } = await supabase
-        .from('cluster_assignments')
-        .insert(assignments);
-
-    if (error) {
-        log(`Batch insert error: ${JSON.stringify(error)}`);
-    }
+    await completePipelineRun(pipelineRunId ?? '', totals);
 };
 
 const assignLeafGroup = async (
@@ -517,14 +73,18 @@ const assignLeafGroup = async (
     let leafClusterId = parentId;
 
     if (!leafClusterId) {
-        const fallbackName = await generateClusterName(bookmarkIds, settings);
+        const fallbackName = await generateClusterName(
+            bookmarkIds,
+            settings,
+            log
+        );
         if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
             log(
                 `[CLUSTERING] Cancelled before leaf cluster creation for user ${userId}`
             );
             return;
         }
-        leafClusterId = await createCluster(userId, null, fallbackName);
+        leafClusterId = await createCluster(userId, null, fallbackName, log);
     }
 
     if (!leafClusterId) {
@@ -541,197 +101,9 @@ const assignLeafGroup = async (
         return;
     }
 
-    await assignBookmarksToCluster(bookmarkIds, leafClusterId);
+    await assignBookmarksToCluster(bookmarkIds, leafClusterId, log);
 };
 
-async function generateClusterName(
-    bookmarkIds: string[],
-    settings: ClusteringSettings
-): Promise<string> {
-    const sampledIds = sampleBookmarkIds(
-        bookmarkIds,
-        CLUSTER_NAME_CONTEXT_SAMPLE_SIZE
-    );
-
-    // Fetch bookmark data including URL for fallback.
-    const { data: bks } = await supabase
-        .from('bookmarks')
-        .select('title, description, url')
-        .in('id', sampledIds);
-
-    if (!bks || bks.length === 0) return 'General';
-
-    const meaningfulBookmarks = bks.filter((bookmark) => {
-        const title = (bookmark.title || '').toLowerCase().trim();
-        return title && !GENERIC_TITLES.has(title);
-    });
-
-    const bookmarkInfoList =
-        meaningfulBookmarks.length > 0 ? meaningfulBookmarks : bks;
-
-    const contextLines = bookmarkInfoList
-        .map((bookmark) => {
-            const title = bookmark.title?.trim() || '';
-            const description = bookmark.description?.trim() || '';
-            const url = bookmark.url || '';
-
-            let domain = '';
-            try {
-                domain = new URL(url).hostname.replace(/^www\./i, '');
-            } catch {
-                // ignored: best-effort extraction only
-            }
-
-            if (title && description) {
-                return `- ${title}: ${description}`;
-            }
-
-            if (title) {
-                return `- ${title}${domain ? ` (${domain})` : ''}`;
-            }
-
-            if (domain) {
-                return `- ${domain}${description ? `: ${description}` : ''}`;
-            }
-
-            return null;
-        })
-        .filter((line): line is string => Boolean(line));
-    const contextText = contextLines.join(' ');
-
-    if (contextLines.length === 0) {
-        const heuristicName = generateHeuristicClusterName(
-            bks as Array<{
-                title?: string | null;
-                description?: string | null;
-                url?: string | null;
-            }>
-        );
-        return finalizeClusterName(heuristicName, settings, '');
-    }
-
-    const cacheKey = `${settings.namingTone}|${settings.organizationMode}|${settings.useEmojiNames ? 'emoji' : 'plain'}|${contextLines.join('\n').toLowerCase()}`;
-    const cachedName = clusterNameCache.get(cacheKey);
-    if (cachedName) return cachedName;
-
-    // Avoid expensive naming calls for smaller groups where local heuristics are good enough.
-    if (
-        bookmarkIds.length < CLUSTER_NAME_MIN_BOOKMARKS_FOR_AI ||
-        !process.env.OPENAI_API_KEY
-    ) {
-        const heuristicName = generateHeuristicClusterName(
-            bks as Array<{
-                title?: string | null;
-                description?: string | null;
-                url?: string | null;
-            }>
-        );
-        const finalized = finalizeClusterName(
-            heuristicName,
-            settings,
-            contextText
-        );
-        clusterNameCache.set(cacheKey, finalized);
-        return finalized;
-    }
-
-    const prompt = [
-        'Generate a short, descriptive folder name for the bookmark group below.',
-        getOrganizationInstruction(settings),
-        getNamingToneInstruction(settings),
-        'Constraints:',
-        '- Return plain text only (no quotes, markdown, or numbering).',
-        '- Keep it concise (max 5 words).',
-        '- Avoid generic names like "New Folder" or "Miscellaneous".',
-        '- The result must be easy to scan and find later.',
-        '- If the bookmarks cover diverse topics, prioritize naming the most dominant topic rather than trying to combine disparate words.',
-        'Bookmarks:',
-        ...contextLines
-    ].join('\n');
-
-    let retries = 0;
-
-    while (retries < CLUSTER_NAME_MAX_RETRIES) {
-        try {
-            const waitForSharedWindow = Math.max(
-                0,
-                nextAllowedOpenAIRequestAt - Date.now()
-            );
-            if (waitForSharedWindow > 0) {
-                await delay(waitForSharedWindow);
-            }
-
-            const response = await openai.chat.completions.create({
-                model: 'gpt-4o-mini',
-                messages: [{ role: 'user', content: prompt }]
-            });
-
-            let name = response.choices[0].message.content?.trim() || '';
-            name = name
-                .replace(/^\s*["']|["']\s*$/g, '')
-                .replace(/\*\*/g, '')
-                .trim();
-
-            if (!name || GENERIC_RESPONSES.has(name.toLowerCase())) {
-                const heuristicName = generateHeuristicClusterName(
-                    bks as Array<{
-                        title?: string | null;
-                        description?: string | null;
-                        url?: string | null;
-                    }>
-                );
-                const finalizedFallback = finalizeClusterName(
-                    heuristicName,
-                    settings,
-                    contextText
-                );
-                clusterNameCache.set(cacheKey, finalizedFallback);
-                return finalizedFallback;
-            }
-
-            const finalized = finalizeClusterName(name, settings, contextText);
-            clusterNameCache.set(cacheKey, finalized);
-            return finalized;
-        } catch (e: any) {
-            if (e.status === 429) {
-                retries++;
-                const retryAfterMs = getRetryAfterMs(e);
-                const exponentialMs =
-                    CLUSTER_NAME_BASE_BACKOFF_MS * Math.pow(2, retries - 1);
-                const jitterMs = Math.floor(Math.random() * 250);
-                const wait =
-                    Math.max(retryAfterMs ?? 0, exponentialMs) + jitterMs;
-                nextAllowedOpenAIRequestAt = Date.now() + wait;
-                log(
-                    `OpenAI rate-limited cluster naming (attempt ${retries}/${CLUSTER_NAME_MAX_RETRIES}). Retrying in ${wait}ms...`
-                );
-                await delay(wait);
-                continue;
-            }
-
-            log(`OpenAI naming error: ${JSON.stringify(e)}`);
-            const heuristicName = generateHeuristicClusterName(
-                bks as Array<{
-                    title?: string | null;
-                    description?: string | null;
-                    url?: string | null;
-                }>
-            );
-            return finalizeClusterName(heuristicName, settings, contextText);
-        }
-    }
-
-    const heuristicName = generateHeuristicClusterName(
-        bks as Array<{
-            title?: string | null;
-            description?: string | null;
-            url?: string | null;
-        }>
-    );
-    return finalizeClusterName(heuristicName, settings, contextText);
-}
-
-// Recursive function to cluster bookmarks.
 async function recursiveCluster(
     bookmarkIds: string[],
     vectors: number[][],
@@ -746,23 +118,7 @@ async function recursiveCluster(
         return;
     }
 
-    const profile = getDensityProfile(settings);
-
-    // Base case: stop splitting when node is already small enough for selected density.
-    if (bookmarkIds.length <= profile.targetLeafSize) {
-        await assignLeafGroup(
-            bookmarkIds,
-            parentId,
-            userId,
-            settings,
-            pipelineRunId,
-            jobGeneration
-        );
-        return;
-    }
-
-    const k = chooseSplitK(bookmarkIds.length, profile);
-    if (k < 2) {
+    if (shouldAssignLeaf(bookmarkIds.length, settings)) {
         await assignLeafGroup(
             bookmarkIds,
             parentId,
@@ -775,25 +131,14 @@ async function recursiveCluster(
     }
 
     try {
-        log(`Running k-means on ${bookmarkIds.length} items with k=${k}`);
-        const result = kmeans(vectors, k, { initialization: 'kmeans++' });
+        const groups = splitClusterGroups({
+            bookmarkIds,
+            vectors,
+            settings,
+            log
+        });
 
-        const groupsByCluster: Record<number, ClusterGroup> = {};
-        for (let i = 0; i < result.clusters.length; i++) {
-            const clusterIdx = result.clusters[i];
-            if (!groupsByCluster[clusterIdx]) {
-                groupsByCluster[clusterIdx] = { ids: [], vecs: [] };
-            }
-
-            groupsByCluster[clusterIdx].ids.push(bookmarkIds[i]);
-            groupsByCluster[clusterIdx].vecs.push(vectors[i]);
-        }
-
-        let groups = Object.values(groupsByCluster);
-        groups = rebalanceSmallGroups(groups, profile.minChildSize);
-
-        // If split collapses to one group, treat as a leaf to avoid useless folder depth.
-        if (groups.length <= 1) {
+        if (!groups) {
             await assignLeafGroup(
                 bookmarkIds,
                 parentId,
@@ -807,8 +152,12 @@ async function recursiveCluster(
 
         const createdClusters = await Promise.all(
             groups.map((group) =>
-                limit(async () => {
-                    const name = await generateClusterName(group.ids, settings);
+                limitClusterNaming(async () => {
+                    const name = await generateClusterName(
+                        group.ids,
+                        settings,
+                        log
+                    );
                     if (
                         await isUserCancelled(
                             userId,
@@ -818,10 +167,12 @@ async function recursiveCluster(
                     ) {
                         return { clusterId: null, group };
                     }
+
                     const clusterId = await createCluster(
                         userId,
                         parentId,
-                        name
+                        name,
+                        log
                     );
                     return { clusterId, group };
                 })
@@ -879,50 +230,16 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         return;
     }
 
-    // Fetch all embedded bookmarks for user with their vectors via join.
-    let userBookmarks: any[] = [];
-    let from = 0;
-    const size = 1000;
+    const userBookmarks = await fetchUserBookmarkVectorRows(
+        userId,
+        () => isUserCancelled(userId, jobGeneration, pipelineRunId),
+        log
+    );
+    if (!userBookmarks) return;
 
-    while (true) {
-        log(`Fetching bookmarks range ${from}-${from + size - 1}...`);
-        const { data: chunk, error } = await supabase
-            .from('bookmarks')
-            .select(
-                `
-                id,
-                shared_links!content_hash (vector)
-            `
-            )
-            .eq('user_id', userId)
-            .range(from, from + size - 1);
-
-        if (error) {
-            log(`DB Error ${JSON.stringify(error)}`);
-            return;
-        }
-
-        if (!chunk || chunk.length === 0) break;
-
-        userBookmarks = userBookmarks.concat(chunk);
-
-        if (chunk.length < size) break;
-        from += size;
-
-        if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
-            log(`[CLUSTERING] Cancelled during fetch for user ${userId}`);
-            return;
-        }
-    }
-
-    if (!userBookmarks || userBookmarks.length === 0) {
+    if (userBookmarks.length === 0) {
         log('No user bookmarks found');
-        await recordPipelineClusteringCompleted(
-            userId,
-            jobGeneration,
-            pipelineRunId
-        );
-        await completePipelineRun(pipelineRunId ?? '', {
+        await completeEmptyPipeline(userId, jobGeneration, pipelineRunId, {
             totalBookmarks: 0,
             embeddedBookmarks: 0,
             assignedBookmarks: 0
@@ -932,31 +249,9 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
 
     log(`Fetched ${userBookmarks.length} bookmarks from DB`);
 
-    const validBookmarks = userBookmarks.filter((bookmark) =>
-        Boolean(parseVector(getJoinedSharedVector(bookmark.shared_links)))
-    );
-    log(`Valid bookmarks with vectors: ${validBookmarks.length}`);
-
-    if (validBookmarks.length === 0) {
-        log('No valid bookmarks with vectors found');
-        await recordPipelineClusteringCompleted(
-            userId,
-            jobGeneration,
-            pipelineRunId
-        );
-        await completePipelineRun(pipelineRunId ?? '', {
-            totalBookmarks: userBookmarks.length,
-            embeddedBookmarks: 0,
-            assignedBookmarks: 0
-        });
-        return;
-    }
-
     const parsedRows: Array<{ id: string; vector: number[] }> = [];
-
-    for (const bookmark of validBookmarks) {
-        const rawVector = getJoinedSharedVector(bookmark.shared_links);
-        const parsedVector = parseVector(rawVector);
+    for (const bookmark of userBookmarks) {
+        const parsedVector = parseVectorWithLogging(bookmark.shared_links);
         if (!parsedVector) continue;
 
         parsedRows.push({
@@ -965,16 +260,13 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         });
     }
 
+    log(`Valid bookmarks with vectors: ${parsedRows.length}`);
+
     if (parsedRows.length === 0) {
-        log('No parseable vectors were available after normalization step');
-        await recordPipelineClusteringCompleted(
-            userId,
-            jobGeneration,
-            pipelineRunId
-        );
-        await completePipelineRun(pipelineRunId ?? '', {
+        log('No valid bookmarks with vectors found');
+        await completeEmptyPipeline(userId, jobGeneration, pipelineRunId, {
             totalBookmarks: userBookmarks.length,
-            embeddedBookmarks: validBookmarks.length,
+            embeddedBookmarks: 0,
             assignedBookmarks: 0
         });
         return;
@@ -1004,7 +296,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
     );
     await completePipelineRun(pipelineRunId ?? '', {
         totalBookmarks: userBookmarks.length,
-        embeddedBookmarks: validBookmarks.length,
+        embeddedBookmarks: parsedRows.length,
         assignedBookmarks: ids.length
     });
     log('Clustering completed');
