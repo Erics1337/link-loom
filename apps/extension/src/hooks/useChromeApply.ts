@@ -1,10 +1,18 @@
-import { Dispatch, MutableRefObject, SetStateAction, useCallback } from 'react';
+import {
+    Dispatch,
+    MutableRefObject,
+    SetStateAction,
+    useCallback,
+    useEffect,
+    useState
+} from 'react';
 import { BookmarkNode } from '../components/BookmarkTree';
 import { BookmarkRootTitle } from '../lib/bookmarkImport';
 import {
     applyChromeBookmarkPlan,
     buildChromeBookmarkApplyPlan,
     clearChromeApplyJournal,
+    ChromeApplyJournal,
     formatChromeApplyPlanPreview,
     loadActiveChromeApplyJournal,
     resumeChromeBookmarkApplyJournal,
@@ -22,27 +30,163 @@ import {
 
 type UseChromeApplyArgs = {
     accountUserId?: string | null;
-    canSaveAccountBackups: boolean;
+    canSaveCloudSnapshots: boolean;
     userId: string;
     clusters: BookmarkNode[];
     overflowBookmarksRef: MutableRefObject<ScannedBookmark[]>;
     clusterRecoveryTriggered: MutableRefObject<boolean>;
-    saveCurrentBookmarkBackup: () => Promise<unknown>;
+    saveCurrentCloudSnapshot: () => Promise<unknown>;
     setStatus: Dispatch<SetStateAction<AppStatus>>;
     setErrorMessage: Dispatch<SetStateAction<string | null>>;
 };
 
+export type ChromeApplyRecoveryState = {
+    activeJournal: ChromeApplyJournal | null;
+    isLoading: boolean;
+    isResolving: boolean;
+    message: {
+        kind: 'success' | 'error';
+        text: string;
+    } | null;
+    refresh: () => Promise<void>;
+    resume: () => Promise<void>;
+    rollback: () => Promise<void>;
+};
+
 export const useChromeApply = ({
     accountUserId,
-    canSaveAccountBackups,
+    canSaveCloudSnapshots,
     userId,
     clusters,
     overflowBookmarksRef,
     clusterRecoveryTriggered,
-    saveCurrentBookmarkBackup,
+    saveCurrentCloudSnapshot,
     setStatus,
     setErrorMessage
 }: UseChromeApplyArgs) => {
+    const [activeJournal, setActiveJournal] =
+        useState<ChromeApplyJournal | null>(null);
+    const [isLoadingJournal, setIsLoadingJournal] = useState(false);
+    const [isResolvingJournal, setIsResolvingJournal] = useState(false);
+    const [recoveryMessage, setRecoveryMessage] = useState<{
+        kind: 'success' | 'error';
+        text: string;
+    } | null>(null);
+
+    const refreshActiveJournal = useCallback(async () => {
+        if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+            setActiveJournal(null);
+            return;
+        }
+
+        setIsLoadingJournal(true);
+        try {
+            setActiveJournal(await loadActiveChromeApplyJournal());
+        } finally {
+            setIsLoadingJournal(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        void refreshActiveJournal();
+    }, [refreshActiveJournal]);
+
+    const getRecoveredStatus = useCallback(
+        () => (clusters.length > 0 ? 'ready' : 'idle'),
+        [clusters.length]
+    );
+
+    const resumeActiveJournal = useCallback(async () => {
+        const journal = activeJournal || (await loadActiveChromeApplyJournal());
+        if (!journal) {
+            setRecoveryMessage(null);
+            setActiveJournal(null);
+            return;
+        }
+
+        setIsResolvingJournal(true);
+        setRecoveryMessage(null);
+        setStatus('weaving');
+        try {
+            const resumeResult = await resumeChromeBookmarkApplyJournal(journal);
+            if (resumeResult.shouldWarnAboutPartialApply) {
+                setActiveJournal(await loadActiveChromeApplyJournal());
+                setRecoveryMessage({
+                    kind: 'error',
+                    text: 'Resume ran, but some bookmark operations still could not be completed. The journal is still available.'
+                });
+                setStatus(getRecoveredStatus());
+            } else {
+                setActiveJournal(null);
+                setRecoveryMessage({
+                    kind: 'success',
+                    text: 'Recovered and finished the unfinished bookmark apply.'
+                });
+                setStatus('done');
+            }
+        } catch (error) {
+            console.error('[ApplyRecovery] Resume failed:', error);
+            setActiveJournal(await loadActiveChromeApplyJournal());
+            setRecoveryMessage({
+                kind: 'error',
+                text:
+                    error instanceof Error
+                        ? error.message
+                        : 'Failed to resume the unfinished bookmark apply.'
+            });
+            setStatus(getRecoveredStatus());
+        } finally {
+            setIsResolvingJournal(false);
+        }
+    }, [activeJournal, getRecoveredStatus, setStatus]);
+
+    const rollbackActiveJournal = useCallback(async () => {
+        const journal = activeJournal || (await loadActiveChromeApplyJournal());
+        if (!journal) {
+            setRecoveryMessage(null);
+            setActiveJournal(null);
+            return;
+        }
+
+        const confirmed = window.confirm(
+            'Roll back the unfinished bookmark apply? Link Loom will undo the recorded changes from this journal. This cannot restore deleted folder contents unless a Cloud Snapshot has them.'
+        );
+        if (!confirmed) return;
+
+        setIsResolvingJournal(true);
+        setRecoveryMessage(null);
+        setStatus('weaving');
+        try {
+            const rollbackResult =
+                await rollbackChromeBookmarkApplyJournal(journal);
+            setActiveJournal(null);
+            setRecoveryMessage({
+                kind:
+                    rollbackResult.skippedDeletedFolderCount > 0
+                        ? 'error'
+                        : 'success',
+                text:
+                    rollbackResult.skippedDeletedFolderCount > 0
+                        ? `Rolled back the journal, but ${rollbackResult.skippedDeletedFolderCount} deleted folder${rollbackResult.skippedDeletedFolderCount === 1 ? '' : 's'} need a Cloud Snapshot restore to recover nested contents.`
+                        : 'Rolled back the unfinished bookmark apply.'
+            });
+            setStatus(getRecoveredStatus());
+        } catch (error) {
+            console.error('[ApplyRecovery] Rollback failed:', error);
+            setActiveJournal(await loadActiveChromeApplyJournal());
+            setRecoveryMessage({
+                kind: 'error',
+                text:
+                    error instanceof Error
+                        ? error.message
+                        : 'Failed to roll back the unfinished bookmark apply.'
+            });
+            setStatus(getRecoveredStatus());
+        } finally {
+            setIsResolvingJournal(false);
+        }
+    }, [activeJournal, getRecoveredStatus, setStatus]);
+
     const applyChanges = useCallback(async () => {
         if (typeof chrome === 'undefined' || !chrome.bookmarks) {
             console.log('[ApplyChanges] Mock mode - simulating success');
@@ -51,36 +195,13 @@ export const useChromeApply = ({
         }
 
         try {
-            const activeJournal = await loadActiveChromeApplyJournal();
-            if (activeJournal) {
-                const shouldResume = window.confirm(
-                    'Link Loom found an unfinished bookmark apply from an earlier run. Resume it now? Choose Cancel to roll back the recorded changes instead.'
-                );
-                if (shouldResume) {
-                    const resumeResult =
-                        await resumeChromeBookmarkApplyJournal(activeJournal);
-                    if (resumeResult.shouldWarnAboutPartialApply) {
-                        window.alert(
-                            'Link Loom resumed the apply, but some operations still could not be completed. The local apply journal was kept so you can try again or roll it back.'
-                        );
-                        setStatus('ready');
-                    } else {
-                        setStatus('done');
-                    }
-                    return;
-                }
-
-                const rollbackResult =
-                    await rollbackChromeBookmarkApplyJournal(activeJournal);
-                if (rollbackResult.skippedDeletedFolderCount > 0) {
-                    window.alert(
-                        `Link Loom rolled back the unfinished bookmark apply journal, but ${rollbackResult.skippedDeletedFolderCount} deleted folder${rollbackResult.skippedDeletedFolderCount === 1 ? '' : 's'} need a backup restore to recover nested contents.`
-                    );
-                } else {
-                    window.alert(
-                        'Link Loom rolled back the unfinished bookmark apply journal.'
-                    );
-                }
+            const fetchedActiveJournal = await loadActiveChromeApplyJournal();
+            if (fetchedActiveJournal) {
+                setActiveJournal(fetchedActiveJournal);
+                setRecoveryMessage({
+                    kind: 'error',
+                    text: 'Resolve the unfinished apply journal before starting a new apply.'
+                });
                 setStatus('ready');
                 return;
             }
@@ -103,40 +224,44 @@ export const useChromeApply = ({
             const applyPlan = await buildChromeBookmarkApplyPlan(rootNodes);
             const planPreview = formatChromeApplyPlanPreview(applyPlan);
             const confirmed = window.confirm(
-                accountUserId && canSaveAccountBackups
-                    ? `Apply changes will rewrite the displayed structure directly inside your Chrome bookmark folders. A backup snapshot will be created first.
+                accountUserId && canSaveCloudSnapshots
+                    ? `Apply changes will rewrite the displayed structure directly inside your Chrome bookmark folders. A Cloud Snapshot will be created first.
 
 ${planPreview}
 
 Continue?`
-                    : `Apply changes will rewrite the displayed structure directly inside your Chrome bookmark folders. Create a free account to save cloud backups first.
+                    : `Apply changes will rewrite the displayed structure directly inside your Chrome bookmark folders. Sign in to save Cloud Snapshots first.
 
 ${planPreview}
 
-Continue without backup?`
+Continue without a Cloud Snapshot?`
             );
             if (!confirmed) return;
 
             setStatus('weaving');
             console.log('[ApplyChanges] Starting to apply changes...');
 
-            if (accountUserId && canSaveAccountBackups) {
-                await saveCurrentBookmarkBackup();
-                console.log('[ApplyChanges] Saved bookmark backup snapshot');
+            if (accountUserId && canSaveCloudSnapshots) {
+                await saveCurrentCloudSnapshot();
+                console.log('[ApplyChanges] Saved Cloud Snapshot');
             } else {
                 console.log(
-                    '[ApplyChanges] Skipped backup snapshot because user is not logged in'
+                    '[ApplyChanges] Skipped Cloud Snapshot because user is not logged in'
                 );
             }
 
             const applyResult = await applyChromeBookmarkPlan(applyPlan);
 
             if (applyResult.shouldWarnAboutPartialApply) {
-                window.alert(
-                    'Link Loom applied the structure, but some operations could not be completed. A local apply journal was kept so the next apply can resume or roll back safely.'
-                );
+                setActiveJournal(await loadActiveChromeApplyJournal());
+                setRecoveryMessage({
+                    kind: 'error',
+                    text: 'Some bookmark operations could not be completed. The local apply journal is available to resume or roll back.'
+                });
             } else {
                 await clearChromeApplyJournal();
+                setActiveJournal(null);
+                setRecoveryMessage(null);
             }
 
             if (userId) {
@@ -153,6 +278,21 @@ Continue without backup?`
                 applyResult.shouldWarnAboutPartialApply ? 'ready' : 'done'
             );
         } catch (error) {
+            const journalAfterError = await loadActiveChromeApplyJournal();
+            if (journalAfterError) {
+                setActiveJournal(journalAfterError);
+                setRecoveryMessage({
+                    kind: 'error',
+                    text:
+                        error instanceof Error
+                            ? error.message
+                            : 'Failed to apply changes. The local apply journal is available to resume or roll back.'
+                });
+                setErrorMessage(null);
+                setStatus(getRecoveredStatus());
+                return;
+            }
+
             if (isFailedFetchError(error)) {
                 console.warn(
                     '[ApplyChanges] Backend unreachable while applying changes.'
@@ -166,15 +306,27 @@ Continue without backup?`
         }
     }, [
         accountUserId,
-        canSaveAccountBackups,
+        canSaveCloudSnapshots,
         clusterRecoveryTriggered,
         clusters,
+        getRecoveredStatus,
         overflowBookmarksRef,
-        saveCurrentBookmarkBackup,
+        saveCurrentCloudSnapshot,
         setErrorMessage,
         setStatus,
         userId
     ]);
 
-    return { applyChanges };
+    return {
+        applyChanges,
+        applyRecovery: {
+            activeJournal,
+            isLoading: isLoadingJournal,
+            isResolving: isResolvingJournal,
+            message: recoveryMessage,
+            refresh: refreshActiveJournal,
+            resume: resumeActiveJournal,
+            rollback: rollbackActiveJournal
+        } satisfies ChromeApplyRecoveryState
+    };
 };

@@ -10,7 +10,7 @@ interface StartScreenProps {
     onImportStructure: (file: File) => Promise<void>;
     onOpenSettings: () => void;
     onOpenLogin: () => void;
-    onOpenBackups: () => void;
+    onOpenCloudSnapshots: () => void;
     onSignOut: () => void;
     isLoggedIn: boolean;
     isPremium: boolean;
@@ -22,6 +22,7 @@ interface StartScreenProps {
         text: string;
     } | null;
     onResume: () => void;
+    recoveryCard?: React.ReactNode;
 }
 
 export const StartScreen: React.FC<StartScreenProps> = ({
@@ -29,7 +30,7 @@ export const StartScreen: React.FC<StartScreenProps> = ({
     onImportStructure,
     onOpenSettings,
     onOpenLogin,
-    onOpenBackups,
+    onOpenCloudSnapshots,
     onSignOut,
     isLoggedIn,
     isPremium,
@@ -37,7 +38,8 @@ export const StartScreen: React.FC<StartScreenProps> = ({
     hasCachedResults,
     isImportingStructure,
     importStructureMessage,
-    onResume
+    onResume,
+    recoveryCard
 }) => {
     const version = useVersion();
     const fileInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -81,6 +83,8 @@ export const StartScreen: React.FC<StartScreenProps> = ({
                     Turn saved links into a searchable folder map before bookmark clutter takes over.
                 </p>
             </section>
+
+            {recoveryCard}
 
             <section className="card space-y-3">
                 <input
@@ -128,8 +132,8 @@ export const StartScreen: React.FC<StartScreenProps> = ({
                         )}
 
                         <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                            <button onClick={onOpenBackups} className="btn btn-secondary">
-                                <Archive size={15} /> Backups
+                            <button onClick={onOpenCloudSnapshots} className="btn btn-secondary">
+                                <Archive size={15} /> Cloud Snapshots
                             </button>
                             <button onClick={onSignOut} className="btn btn-secondary">
                                 <LogOut size={15} /> Sign out
@@ -140,7 +144,7 @@ export const StartScreen: React.FC<StartScreenProps> = ({
                     <div className="space-y-3">
                         <div>
                             <p className="eyebrow">Free tier</p>
-                            <p className="screen-copy">Organize up to 500 bookmarks. Sign in for backups and plan sync.</p>
+                            <p className="screen-copy">Organize up to 500 bookmarks. Sign in for Cloud Snapshots and plan sync.</p>
                         </div>
                         <button onClick={onOpenLogin} className="btn btn-primary w-full">
                             Log In / Sign Up

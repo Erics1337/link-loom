@@ -4,10 +4,11 @@ import { WeavingScreen } from './screens/WeavingScreen';
 import { ResultsScreen } from './screens/ResultsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { LoginScreen, SignUpPlan } from './screens/LoginScreen';
-import { BackupsScreen } from './screens/BackupsScreen';
+import { CloudSnapshotsScreen } from './screens/BackupsScreen';
 import { ImportStructureScreen } from './screens/ImportStructureScreen';
+import { ApplyRecoveryCard } from './screens/ApplyRecoveryCard';
 import { Layout } from './components/Layout';
-import { BookmarkBackupSnapshot, useBookmarkWeaver } from './hooks/useBookmarkWeaver';
+import { CloudSnapshot, useBookmarkWeaver } from './hooks/useBookmarkWeaver';
 import { useDeviceAuth } from './hooks/useDeviceAuth';
 import { useClusteringSettings } from './hooks/useClusteringSettings';
 import { useExtensionAuth } from './hooks/useExtensionAuth';
@@ -52,10 +53,10 @@ const App = () => {
         isPremium,
         startWeaving,
         cancelWeaving,
-        loadBookmarkBackups,
-        saveCurrentBookmarkBackup,
-        deleteBookmarkBackup,
-        restoreBookmarkBackup,
+        loadCloudSnapshots,
+        saveCurrentCloudSnapshot,
+        deleteCloudSnapshot,
+        restoreCloudSnapshot,
         autoRenameBookmarks,
         isAutoRenaming,
         deleteAllDuplicates,
@@ -65,6 +66,7 @@ const App = () => {
         isDeletingDeadLinks,
         isScanningDeadLinks,
         applyChanges,
+        applyRecovery,
         setStatus,
         errorMessage
     } = useBookmarkWeaver(
@@ -74,8 +76,8 @@ const App = () => {
         ensureAnonymousSession,
         isPermanentUser
     );
-    const [view, setView] = useState<'main' | 'settings' | 'login' | 'backups' | 'import-preview'>('main');
-    const [backups, setBackups] = useState<BookmarkBackupSnapshot[]>([]);
+    const [view, setView] = useState<'main' | 'settings' | 'login' | 'cloud-snapshots' | 'import-preview'>('main');
+    const [cloudSnapshots, setCloudSnapshots] = useState<CloudSnapshot[]>([]);
     const [isImportingStructure, setIsImportingStructure] = useState(false);
     const [isApplyingImportedStructure, setIsApplyingImportedStructure] = useState(false);
     const [importStructureMessage, setImportStructureMessage] = useState<{
@@ -95,16 +97,17 @@ const App = () => {
     useTheme();
 
     const { authStatus, errorMsg } = useDeviceAuth(isPermanentUser ? authUser?.id || '' : '', accessToken);
+    const applyRecoveryCard = <ApplyRecoveryCard recovery={applyRecovery} />;
 
-    const handleOpenBackups = async () => {
+    const handleOpenCloudSnapshots = async () => {
         if (!authUser) {
             setView('login');
             return;
         }
 
-        const list = await loadBookmarkBackups();
-        setBackups(list);
-        setView('backups');
+        const list = await loadCloudSnapshots();
+        setCloudSnapshots(list);
+        setView('cloud-snapshots');
     };
 
     const startPaidCheckout = async (
@@ -164,20 +167,22 @@ const App = () => {
         await startWeaving();
     };
 
-    const handleRestoreBackup = async (backupId: string) => {
-        await restoreBookmarkBackup(backupId);
+    const handleRestoreCloudSnapshot = async (snapshotId: string) => {
+        await restoreCloudSnapshot(snapshotId);
+        const list = await loadCloudSnapshots();
+        setCloudSnapshots(list);
     };
 
-    const handleDeleteBackup = async (backupId: string) => {
-        await deleteBookmarkBackup(backupId);
-        const list = await loadBookmarkBackups();
-        setBackups(list);
+    const handleDeleteCloudSnapshot = async (snapshotId: string) => {
+        await deleteCloudSnapshot(snapshotId);
+        const list = await loadCloudSnapshots();
+        setCloudSnapshots(list);
     };
 
-    const handleSaveCurrentBackup = async () => {
-        await saveCurrentBookmarkBackup();
-        const list = await loadBookmarkBackups();
-        setBackups(list);
+    const handleSaveCurrentCloudSnapshot = async () => {
+        await saveCurrentCloudSnapshot();
+        const list = await loadCloudSnapshots();
+        setCloudSnapshots(list);
     };
 
     const handleImportStructure = async (file: File) => {
@@ -310,14 +315,14 @@ const App = () => {
             );
         }
 
-        if (view === 'backups') {
+        if (view === 'cloud-snapshots') {
             return (
-                <BackupsScreen
-                    backups={backups}
+                <CloudSnapshotsScreen
+                    snapshots={cloudSnapshots}
                     onBack={() => setView('main')}
-                    onSaveCurrent={handleSaveCurrentBackup}
-                    onRestore={handleRestoreBackup}
-                    onDelete={handleDeleteBackup}
+                    onSaveCurrent={handleSaveCurrentCloudSnapshot}
+                    onRestore={handleRestoreCloudSnapshot}
+                    onDelete={handleDeleteCloudSnapshot}
                 />
             );
         }
@@ -350,7 +355,7 @@ const App = () => {
                         onImportStructure={handleImportStructure}
                         onOpenSettings={() => setView('settings')}
                         onOpenLogin={() => setView('login')}
-                        onOpenBackups={handleOpenBackups}
+                        onOpenCloudSnapshots={handleOpenCloudSnapshots}
                         onSignOut={signOut}
                         isLoggedIn={isPermanentUser}
                         isPremium={Boolean(isPermanentUser && isPremium)}
@@ -359,9 +364,24 @@ const App = () => {
                         isImportingStructure={isImportingStructure}
                         importStructureMessage={importStructureMessage}
                         onResume={resumeWeavingSession}
+                        recoveryCard={applyRecoveryCard}
                     />
                 );
             case 'weaving':
+                if (applyRecovery.isResolving) {
+                    return (
+                        <WeavingScreen
+                            progress={24}
+                            eyebrow="Apply recovery"
+                            title="Recovering bookmark changes"
+                            description="Link Loom is resolving the unfinished apply journal in Chrome bookmarks."
+                            statusMessage="Working through the local apply journal..."
+                            statusDetail="Keep this popup open until recovery finishes."
+                            footerMessage="Resume and rollback cannot be canceled once they start."
+                        />
+                    );
+                }
+
                 let progressPercent = 5;
                 let statusMessage = "Analyzing bookmark graph...";
                 let statusDetail = "";
@@ -370,11 +390,11 @@ const App = () => {
                 const safeEmbedded = Math.min(progress.embedded || 0, totalBookmarks);
                 const safeAssigned = Math.min(progress.assigned || 0, totalBookmarks);
 
-                // Backup phase — show before any processing starts
-                if (weavingPhase === 'backup') {
+                // Safety Backup phase - show before any processing starts
+                if (weavingPhase === 'safety-backup') {
                     progressPercent = 3;
-                    statusMessage = "Saving a backup of your bookmarks...";
-                    statusDetail = "A local backup is being saved before organizing begins.";
+                    statusMessage = "Creating Safety Backup...";
+                    statusDetail = "Your current Chrome bookmark tree is being saved locally before organizing begins.";
                 } else if (progress.isIngesting && progress.assigned === 0 && progress.clusters === 0) {
                     const ingestTotal = Math.max(progress.ingestTotal || progress.total || 0, 1);
                     const ingestProcessed = Math.min(progress.ingestProcessed || 0, ingestTotal);
@@ -455,6 +475,7 @@ const App = () => {
                         isScanningDeadLinks={isScanningDeadLinks}
                         onApply={applyChanges}
                         onBack={() => setStatus('idle')}
+                        recoveryCard={applyRecoveryCard}
                     />
                 );
             case 'done':

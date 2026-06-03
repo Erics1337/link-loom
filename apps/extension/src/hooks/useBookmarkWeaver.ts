@@ -5,10 +5,10 @@ import {
     normalizeClusteringSettings
 } from '../lib/clusteringSettings';
 import { BookmarkStats, StructureAssignment } from '../lib/bookmarkStructure';
-import { BackupClient } from '../lib/backupClient';
+import { CloudSnapshotClient } from '../lib/backupClient';
 import { StructureClient, WeavingProgress } from '../lib/structureClient';
 import { createEmptyProgress } from '../lib/processingSession';
-import { useBookmarkBackups } from './useBookmarkBackups';
+import { useBookmarkPersistence } from './useBookmarkBackups';
 import { useBookmarkScanSession } from './useBookmarkScanSession';
 import { useBookmarkTools } from './useBookmarkTools';
 import { useChromeApply } from './useChromeApply';
@@ -22,7 +22,7 @@ import {
 } from './useBookmarkWeaverTypes';
 
 export type {
-    BookmarkBackupSnapshot,
+    CloudSnapshot,
     BookmarkStructureVersion
 } from '../lib/backupClient';
 
@@ -36,7 +36,7 @@ export const useBookmarkWeaver = (
         user: { id: string; email?: string | null; isAnonymous?: boolean };
         accessToken: string;
     }>,
-    canSaveAccountBackups = Boolean(accountUserId)
+    canSaveCloudSnapshots = Boolean(accountUserId)
 ) => {
     const [status, setStatus] = useState<AppStatus>('idle');
     const [hasCachedResults, setHasCachedResults] = useState(false);
@@ -108,16 +108,16 @@ export const useBookmarkWeaver = (
         [buildAuthHeaders, getAuthHeaders]
     );
 
-    const backupClient = useMemo(
+    const cloudSnapshotClient = useMemo(
         () =>
-            new BackupClient({
+            new CloudSnapshotClient({
                 backendUrl: BACKEND_URL,
                 accountUserId,
-                canSaveAccountBackups,
+                canSaveCloudSnapshots,
                 buildAuthHeaders,
                 getAuthHeaders
             }),
-        [accountUserId, buildAuthHeaders, canSaveAccountBackups, getAuthHeaders]
+        [accountUserId, buildAuthHeaders, canSaveCloudSnapshots, getAuthHeaders]
     );
 
     const { fetchResults } = useStructureResults({
@@ -204,13 +204,13 @@ export const useBookmarkWeaver = (
         loadStructureVersions,
         restoreStructureVersion,
         deleteStructureVersion,
-        loadBookmarkBackups,
-        saveCurrentBookmarkBackup,
-        deleteBookmarkBackup,
-        restoreBookmarkBackup
-    } = useBookmarkBackups({
+        loadCloudSnapshots,
+        saveCurrentCloudSnapshot,
+        deleteCloudSnapshot,
+        restoreCloudSnapshot
+    } = useBookmarkPersistence({
         accountUserId,
-        backupClient,
+        cloudSnapshotClient,
         clusters,
         stats,
         fetchResults,
@@ -220,14 +220,14 @@ export const useBookmarkWeaver = (
         setStatus
     });
 
-    const { applyChanges } = useChromeApply({
+    const { applyChanges, applyRecovery } = useChromeApply({
         accountUserId,
-        canSaveAccountBackups,
+        canSaveCloudSnapshots,
         userId,
         clusters,
         overflowBookmarksRef: scanSession.overflowBookmarksRef,
         clusterRecoveryTriggered: scanSession.clusterRecoveryTriggered,
-        saveCurrentBookmarkBackup,
+        saveCurrentCloudSnapshot,
         setStatus,
         setErrorMessage
     });
@@ -248,10 +248,10 @@ export const useBookmarkWeaver = (
         loadStructureVersions,
         restoreStructureVersion,
         deleteStructureVersion,
-        loadBookmarkBackups,
-        saveCurrentBookmarkBackup,
-        deleteBookmarkBackup,
-        restoreBookmarkBackup,
+        loadCloudSnapshots,
+        saveCurrentCloudSnapshot,
+        deleteCloudSnapshot,
+        restoreCloudSnapshot,
         autoRenameBookmarks,
         isAutoRenaming,
         deleteAllDuplicates,
@@ -261,6 +261,7 @@ export const useBookmarkWeaver = (
         isDeletingDeadLinks,
         isScanningDeadLinks,
         applyChanges,
+        applyRecovery,
         setStatus,
         isPremium,
         errorMessage

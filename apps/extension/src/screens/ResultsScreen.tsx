@@ -22,6 +22,7 @@ interface ResultsScreenProps {
     isScanningDeadLinks: boolean;
     onApply: () => void;
     onBack: () => void;
+    recoveryCard?: React.ReactNode;
 }
 
 export const ResultsScreen: React.FC<ResultsScreenProps> = ({
@@ -39,7 +40,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     isDeletingDeadLinks,
     isScanningDeadLinks,
     onApply,
-    onBack
+    onBack,
+    recoveryCard
 }) => {
     const [expandAll, setExpandAll] = useState(false);
     const requirePro = (action: () => void) => {
@@ -80,6 +82,8 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     return (
         <div className="app-shell" style={{ gap: 10, padding: 10 }}>
             <ScreenHeader eyebrow="Review structure" title="Results" />
+
+            {recoveryCard}
 
             <div
                 className="grid"

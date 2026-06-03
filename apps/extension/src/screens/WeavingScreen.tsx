@@ -5,28 +5,33 @@ import { ScreenHeader } from './ScreenHeader';
 
 interface WeavingScreenProps {
     progress: number;
+    eyebrow?: string;
+    title?: string;
+    description?: string;
     statusMessage?: string;
     statusDetail?: string;
-    onCancel: () => void;
+    footerMessage?: string;
+    onCancel?: () => void;
 }
 
 export const WeavingScreen: React.FC<WeavingScreenProps> = ({
     progress,
+    eyebrow = 'Processing',
+    title = 'Building your map',
+    description = 'AI is grouping bookmarks, naming folders, and checking structure.',
     statusMessage = 'Analyzing bookmark graph and building clusters.',
     statusDetail,
+    footerMessage = 'Runs in background. Reopen popup anytime to check progress.',
     onCancel
 }) => {
     return (
         <div className="app-shell">
-            <ScreenHeader eyebrow="Processing" title="Link Loom" />
+            <ScreenHeader eyebrow={eyebrow} title="Link Loom" />
 
             <section className="panel">
                 <Loader2 size={26} className="text-accent" />
-                <h2 className="screen-title mt-3">Building your map</h2>
-                <p className="screen-copy mt-2">
-                    AI is grouping bookmarks, naming folders, and checking
-                    structure.
-                </p>
+                <h2 className="screen-title mt-3">{title}</h2>
+                <p className="screen-copy mt-2">{description}</p>
             </section>
 
             <section className="card space-y-3">
@@ -50,15 +55,17 @@ export const WeavingScreen: React.FC<WeavingScreenProps> = ({
             </section>
 
             <div className="message mt-auto">
-                Runs in background. Reopen popup anytime to check progress.
+                {footerMessage}
             </div>
 
-            <button
-                onClick={onCancel}
-                className="btn btn-secondary text-danger"
-            >
-                Cancel Processing
-            </button>
+            {onCancel && (
+                <button
+                    onClick={onCancel}
+                    className="btn btn-secondary text-danger"
+                >
+                    Cancel Processing
+                </button>
+            )}
         </div>
     );
 };

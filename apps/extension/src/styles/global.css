@@ -415,6 +415,21 @@ body.light-mode .select-menu {
   color: color-mix(in oklab, var(--success) 86%, white);
 }
 
+.apply-recovery-card {
+  border: 1px solid color-mix(in oklab, var(--warning) 48%, var(--border-color));
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--warning) 12%, var(--bg-secondary));
+  padding: 12px;
+}
+
+.apply-recovery-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .tree-node {
   display: flex;
   align-items: center;
