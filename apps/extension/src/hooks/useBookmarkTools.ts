@@ -63,26 +63,29 @@ export const useBookmarkTools = ({
             if (removedChromeIds.size === 0) return;
             deadLinkScanTokenRef.current += 1;
 
-            const nextAssignments = structureAssignments.filter(
-                (assignment) => !removedChromeIds.has(assignment.chromeId)
-            );
             setClusters((prev) =>
                 pruneBookmarksFromTree(prev, removedChromeIds)
             );
-            setStructureAssignments(nextAssignments);
 
             deadLinkChromeIdsRef.current = deadLinkChromeIdsRef.current.filter(
                 (chromeId) => !removedChromeIds.has(chromeId)
             );
             const deadChromeIdSet = new Set(deadLinkChromeIdsRef.current);
-            setStats({
-                duplicates: countDuplicateAssignments(nextAssignments),
-                deadLinks: nextAssignments.reduce(
-                    (sum, assignment) =>
-                        sum +
-                        (deadChromeIdSet.has(assignment.chromeId) ? 1 : 0),
-                    0
-                )
+
+            setStructureAssignments((prev) => {
+                const nextAssignments = prev.filter(
+                    (assignment) => !removedChromeIds.has(assignment.chromeId)
+                );
+                setStats({
+                    duplicates: countDuplicateAssignments(nextAssignments),
+                    deadLinks: nextAssignments.reduce(
+                        (sum, assignment) =>
+                            sum +
+                            (deadChromeIdSet.has(assignment.chromeId) ? 1 : 0),
+                        0
+                    )
+                });
+                return nextAssignments;
             });
         },
         [
@@ -90,8 +93,7 @@ export const useBookmarkTools = ({
             deadLinkScanTokenRef,
             setClusters,
             setStats,
-            setStructureAssignments,
-            structureAssignments
+            setStructureAssignments
         ]
     );
 
