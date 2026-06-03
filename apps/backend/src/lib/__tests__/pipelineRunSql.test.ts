@@ -7,6 +7,11 @@ const pipelineSql = readMigrationSql(
 const followupSql = readMigrationSql(
     '20260602120000_fix_pipeline_run_readiness.sql'
 );
+const idempotentErrorsSql = readMigrationSql(
+    '20260602123000_idempotent_pipeline_untracked_errors.sql'
+);
+
+const runReadinessSql = [pipelineSql, followupSql, idempotentErrorsSql];
 
 describe('pipeline run SQL migrations', () => {
     it('links bookmarks to pipeline runs for run-scoped readiness checks', () => {
@@ -17,16 +22,34 @@ describe('pipeline run SQL migrations', () => {
     });
 
     it('claims clustering only after bookmarks for the current run are terminal', () => {
-        for (const sql of [pipelineSql, followupSql]) {
+        for (const sql of runReadinessSql) {
             const block = functionBlockFromSql(sql, 'claim_user_pipeline_clustering');
-            expect(block).toContain('current_run_id UUID;');
-            expect(block).toContain('pipeline_run_id = current_run_id');
+            expect(block).toContain('current_run public.pipeline_runs%ROWTYPE;');
+            expect(block).toContain('WHERE id = control_row.current_pipeline_run_id');
+            expect(block).toContain('pipeline_run_id = current_run.id');
             expect(block).toContain("status IN ('embedded', 'error')");
             expect(block).toContain("AND status = 'running'");
-            expect(block).not.toContain('total_bookmarks <= 0');
-            expect(block).toContain('IF current_run_id IS NULL THEN');
+            expect(block).toContain("current_run.totals->>'ingestCompletedAt' IS NULL");
+            expect(block).toContain("current_run.totals->>'clusteringEnqueuedAt' IS NOT NULL");
+            expect(block).toContain("current_run.totals->>'total'");
+            expect(block).toContain("current_run.totals->>'untrackedErrors'");
             expect(block).toContain('RETURN FALSE;');
             expect(block).not.toContain('WHERE user_id = p_user_id\n      AND status IN');
+        }
+    });
+
+    it('keeps run telemetry out of user pipeline controls', () => {
+        expect(pipelineSql).toContain('current_pipeline_run_id UUID REFERENCES public.pipeline_runs(id)');
+        expect(pipelineSql).not.toContain('ADD COLUMN IF NOT EXISTS total_bookmarks INTEGER');
+        expect(pipelineSql).not.toContain('ADD COLUMN IF NOT EXISTS untracked_error_count INTEGER');
+        expect(pipelineSql).not.toContain('ADD COLUMN IF NOT EXISTS clustering_settings JSONB');
+        expect(followupSql).toContain('DROP COLUMN IF EXISTS total_bookmarks');
+
+        for (const sql of runReadinessSql) {
+            const untrackedBlock = functionBlockFromSql(sql, 'record_user_pipeline_untracked_error');
+            const claimBlock = functionBlockFromSql(sql, 'claim_user_pipeline_clustering');
+            expect(untrackedBlock).not.toContain('UPDATE public.user_pipeline_controls');
+            expect(claimBlock).not.toContain('SET clustering_enqueued_at');
         }
     });
 

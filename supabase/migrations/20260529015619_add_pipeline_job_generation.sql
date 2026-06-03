@@ -1,14 +1,6 @@
 ALTER TABLE public.user_pipeline_controls
 ADD COLUMN IF NOT EXISTS job_generation BIGINT NOT NULL DEFAULT 0;
 
-ALTER TABLE public.user_pipeline_controls
-ADD COLUMN IF NOT EXISTS total_bookmarks INTEGER NOT NULL DEFAULT 0,
-ADD COLUMN IF NOT EXISTS untracked_error_count INTEGER NOT NULL DEFAULT 0,
-ADD COLUMN IF NOT EXISTS clustering_settings JSONB NOT NULL DEFAULT '{}'::jsonb,
-ADD COLUMN IF NOT EXISTS ingest_completed_at TIMESTAMPTZ,
-ADD COLUMN IF NOT EXISTS clustering_enqueued_at TIMESTAMPTZ,
-ADD COLUMN IF NOT EXISTS clustering_completed_at TIMESTAMPTZ;
-
 DROP INDEX IF EXISTS public.idx_user_pipeline_controls_cancelled;
 
 CREATE TABLE IF NOT EXISTS public.pipeline_runs (
@@ -33,6 +25,9 @@ CREATE TABLE IF NOT EXISTS public.pipeline_run_untracked_errors (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (user_id, job_generation, error_key)
 );
+
+ALTER TABLE public.user_pipeline_controls
+ADD COLUMN IF NOT EXISTS current_pipeline_run_id UUID REFERENCES public.pipeline_runs(id) ON DELETE SET NULL;
 
 ALTER TABLE public.bookmarks
 ADD COLUMN IF NOT EXISTS pipeline_run_id UUID REFERENCES public.pipeline_runs(id) ON DELETE SET NULL;
@@ -77,12 +72,7 @@ BEGIN
   ON CONFLICT (user_id) DO UPDATE
     SET job_generation = public.user_pipeline_controls.job_generation + 1,
         is_cancelled = FALSE,
-        total_bookmarks = 0,
-        untracked_error_count = 0,
-        clustering_settings = '{}'::jsonb,
-        ingest_completed_at = NULL,
-        clustering_enqueued_at = NULL,
-        clustering_completed_at = NULL,
+        current_pipeline_run_id = NULL,
         updated_at = NOW()
   RETURNING job_generation INTO next_generation;
 
@@ -95,6 +85,12 @@ BEGIN
   INSERT INTO public.pipeline_runs (user_id, generation, status, started_at)
   VALUES (p_user_id, next_generation, 'running', NOW())
   RETURNING id INTO next_run_id;
+
+  UPDATE public.user_pipeline_controls
+  SET current_pipeline_run_id = next_run_id,
+      updated_at = NOW()
+  WHERE user_id = p_user_id
+    AND job_generation = next_generation;
 
   RETURN jsonb_build_object(
     'id', next_run_id,
@@ -115,20 +111,12 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  UPDATE public.user_pipeline_controls
-  SET total_bookmarks = GREATEST(p_total_bookmarks, 0),
-      untracked_error_count = 0,
-      clustering_settings = COALESCE(p_clustering_settings, '{}'::jsonb),
-      ingest_completed_at = NULL,
-      clustering_enqueued_at = NULL,
-      clustering_completed_at = NULL,
-      updated_at = NOW()
-  WHERE user_id = p_user_id
-    AND job_generation = p_job_generation;
-
   UPDATE public.pipeline_runs
   SET settings = COALESCE(p_clustering_settings, '{}'::jsonb),
-      totals = jsonb_build_object('total', GREATEST(p_total_bookmarks, 0))
+      totals = jsonb_build_object(
+        'total', GREATEST(p_total_bookmarks, 0),
+        'untrackedErrors', 0
+      )
   WHERE user_id = p_user_id
     AND generation = p_job_generation
     AND status = 'running';
@@ -145,12 +133,6 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  UPDATE public.user_pipeline_controls
-  SET ingest_completed_at = NOW(),
-      updated_at = NOW()
-  WHERE user_id = p_user_id
-    AND job_generation = p_job_generation;
-
   UPDATE public.pipeline_runs
   SET totals = totals || jsonb_build_object('ingestCompletedAt', NOW())
   WHERE user_id = p_user_id
@@ -184,12 +166,6 @@ BEGIN
     END IF;
   END IF;
 
-  UPDATE public.user_pipeline_controls
-  SET untracked_error_count = untracked_error_count + 1,
-      updated_at = NOW()
-  WHERE user_id = p_user_id
-    AND job_generation = p_job_generation;
-
   UPDATE public.pipeline_runs
   SET totals = totals || jsonb_build_object(
         'untrackedErrors',
@@ -212,8 +188,10 @@ SET search_path = public
 AS $$
 DECLARE
   control_row public.user_pipeline_controls%ROWTYPE;
-  current_run_id UUID;
+  current_run public.pipeline_runs%ROWTYPE;
   terminal_count INTEGER;
+  total_bookmarks INTEGER;
+  untracked_error_count INTEGER;
 BEGIN
   SELECT *
   INTO control_row
@@ -227,19 +205,22 @@ BEGIN
   END IF;
 
   IF control_row.is_cancelled
-     OR control_row.ingest_completed_at IS NULL
-     OR control_row.clustering_enqueued_at IS NOT NULL THEN
+     OR control_row.current_pipeline_run_id IS NULL THEN
     RETURN FALSE;
   END IF;
 
-  SELECT id
-  INTO current_run_id
+  SELECT *
+  INTO current_run
   FROM public.pipeline_runs
-  WHERE user_id = p_user_id
+  WHERE id = control_row.current_pipeline_run_id
+    AND user_id = p_user_id
     AND generation = p_job_generation
-    AND status = 'running';
+    AND status = 'running'
+  FOR UPDATE;
 
-  IF current_run_id IS NULL THEN
+  IF current_run.id IS NULL
+     OR current_run.totals->>'ingestCompletedAt' IS NULL
+     OR current_run.totals->>'clusteringEnqueuedAt' IS NOT NULL THEN
     RETURN FALSE;
   END IF;
 
@@ -247,23 +228,19 @@ BEGIN
   INTO terminal_count
   FROM public.bookmarks
   WHERE user_id = p_user_id
-    AND pipeline_run_id = current_run_id
+    AND pipeline_run_id = current_run.id
     AND status IN ('embedded', 'error');
 
-  IF (terminal_count + control_row.untracked_error_count) < control_row.total_bookmarks THEN
+  total_bookmarks := COALESCE((current_run.totals->>'total')::integer, 0);
+  untracked_error_count := COALESCE((current_run.totals->>'untrackedErrors')::integer, 0);
+
+  IF (terminal_count + untracked_error_count) < total_bookmarks THEN
     RETURN FALSE;
   END IF;
 
-  UPDATE public.user_pipeline_controls
-  SET clustering_enqueued_at = NOW(),
-      updated_at = NOW()
-  WHERE user_id = p_user_id
-    AND job_generation = p_job_generation;
-
   UPDATE public.pipeline_runs
   SET totals = totals || jsonb_build_object('clusteringEnqueuedAt', NOW())
-  WHERE user_id = p_user_id
-    AND generation = p_job_generation
+  WHERE id = current_run.id
     AND status = 'running';
 
   RETURN TRUE;
@@ -280,12 +257,6 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  UPDATE public.user_pipeline_controls
-  SET clustering_completed_at = NOW(),
-      updated_at = NOW()
-  WHERE user_id = p_user_id
-    AND job_generation = p_job_generation;
-
   UPDATE public.pipeline_runs
   SET totals = totals || jsonb_build_object('clusteringCompletedAt', NOW())
   WHERE user_id = p_user_id
@@ -310,9 +281,8 @@ BEGIN
   UPDATE public.pipeline_runs
   SET status = 'cancelled',
       cancelled_at = COALESCE(cancelled_at, NOW())
-  WHERE user_id = p_user_id
-    AND generation = (
-      SELECT job_generation
+  WHERE id = (
+      SELECT current_pipeline_run_id
       FROM public.user_pipeline_controls
       WHERE user_id = p_user_id
     )

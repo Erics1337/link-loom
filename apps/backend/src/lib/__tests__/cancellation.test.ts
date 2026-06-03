@@ -9,6 +9,7 @@ type ControlRow = {
     user_id: string;
     is_cancelled: boolean;
     job_generation: number;
+    current_pipeline_run_id: string | null;
     updated_at: string;
 };
 
@@ -30,12 +31,6 @@ vi.mock('../../db', () => ({
             if (fn === 'begin_user_pipeline_run') {
                 const current = controls.get(userId);
                 const nextGeneration = (current?.job_generation ?? 0) + 1;
-                controls.set(userId, {
-                    user_id: userId,
-                    is_cancelled: false,
-                    job_generation: nextGeneration,
-                    updated_at: new Date().toISOString(),
-                });
                 const run = {
                     id: `run-${nextGeneration}`,
                     user_id: userId,
@@ -43,6 +38,13 @@ vi.mock('../../db', () => ({
                     status: 'running' as const,
                 };
                 runs.set(run.id, run);
+                controls.set(userId, {
+                    user_id: userId,
+                    is_cancelled: false,
+                    job_generation: nextGeneration,
+                    current_pipeline_run_id: run.id,
+                    updated_at: new Date().toISOString(),
+                });
                 return { data: { id: run.id, generation: nextGeneration }, error: null };
             }
 
@@ -52,6 +54,7 @@ vi.mock('../../db', () => ({
                     user_id: userId,
                     is_cancelled: true,
                     job_generation: current?.job_generation ?? 0,
+                    current_pipeline_run_id: current?.current_pipeline_run_id ?? null,
                     updated_at: new Date().toISOString(),
                 });
                 for (const run of Array.from(runs.values())) {
@@ -102,6 +105,7 @@ describe('durable cancellation controls', () => {
             user_id: 'user-1',
             is_cancelled: true,
             job_generation: 3,
+            current_pipeline_run_id: 'run-3',
             updated_at: '2026-01-01T00:00:00.000Z',
         });
 
@@ -112,15 +116,17 @@ describe('durable cancellation controls', () => {
             user_id: 'user-1',
             is_cancelled: false,
             job_generation: 4,
+            current_pipeline_run_id: 'run-4',
         });
     });
 
     it('treats older queued work as cancelled after a new generation starts', async () => {
-        await beginUserPipelineRun('user-1');
+        const staleRun = await beginUserPipelineRun('user-1');
         const currentRun = await beginUserPipelineRun('user-1');
 
         expect(currentRun.generation).toBe(2);
         expect(await isUserCancelled('user-1', 1)).toBe(true);
+        expect(await isUserCancelled('user-1', staleRun.generation, staleRun.id)).toBe(true);
         expect(await isUserCancelled('user-1', 2)).toBe(false);
         expect(await isUserCancelled('user-1', 2, currentRun.id)).toBe(false);
     });
@@ -133,6 +139,7 @@ describe('durable cancellation controls', () => {
         expect(controls.get('user-1')).toMatchObject({
             is_cancelled: true,
             job_generation: run.generation,
+            current_pipeline_run_id: run.id,
         });
         expect(await isUserCancelled('user-1', run.generation, run.id)).toBe(true);
     });

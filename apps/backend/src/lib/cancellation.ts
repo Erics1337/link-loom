@@ -3,6 +3,7 @@ import { supabase } from '../db';
 type PipelineControlRow = {
     is_cancelled: boolean;
     job_generation: number;
+    current_pipeline_run_id: string | null;
 };
 
 export type PipelineRunRef = {
@@ -15,7 +16,7 @@ export type PipelineControlCache = Map<string, PipelineControlRow | null>;
 const readPipelineControl = async (userId: string): Promise<PipelineControlRow | null> => {
     const { data, error } = await supabase
         .from('user_pipeline_controls')
-        .select('is_cancelled, job_generation')
+        .select('is_cancelled, job_generation, current_pipeline_run_id')
         .eq('user_id', userId)
         .maybeSingle();
 
@@ -29,6 +30,7 @@ const readPipelineControl = async (userId: string): Promise<PipelineControlRow |
     return {
         is_cancelled: Boolean(data.is_cancelled),
         job_generation: Number(data.job_generation ?? 0),
+        current_pipeline_run_id: data.current_pipeline_run_id == null ? null : String(data.current_pipeline_run_id),
     };
 };
 
@@ -88,6 +90,13 @@ export const isUserCancelled = async (
         if (!current) return false;
 
         if (pipelineRunId) {
+            if (current.current_pipeline_run_id !== pipelineRunId) {
+                console.log(
+                    `[CANCEL] Stale pipeline run for user ${userId}: run=${pipelineRunId}, current=${current.current_pipeline_run_id ?? 'none'}`
+                );
+                return true;
+            }
+
             const { data: run, error: runError } = await supabase
                 .from('pipeline_runs')
                 .select('generation, status')

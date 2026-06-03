@@ -38,12 +38,6 @@ BEGIN
     END IF;
   END IF;
 
-  UPDATE public.user_pipeline_controls
-  SET untracked_error_count = untracked_error_count + 1,
-      updated_at = NOW()
-  WHERE user_id = p_user_id
-    AND job_generation = p_job_generation;
-
   UPDATE public.pipeline_runs
   SET totals = totals || jsonb_build_object(
         'untrackedErrors',
@@ -66,8 +60,10 @@ SET search_path = public
 AS $$
 DECLARE
   control_row public.user_pipeline_controls%ROWTYPE;
-  current_run_id UUID;
+  current_run public.pipeline_runs%ROWTYPE;
   terminal_count INTEGER;
+  total_bookmarks INTEGER;
+  untracked_error_count INTEGER;
 BEGIN
   SELECT *
   INTO control_row
@@ -81,19 +77,22 @@ BEGIN
   END IF;
 
   IF control_row.is_cancelled
-     OR control_row.ingest_completed_at IS NULL
-     OR control_row.clustering_enqueued_at IS NOT NULL THEN
+     OR control_row.current_pipeline_run_id IS NULL THEN
     RETURN FALSE;
   END IF;
 
-  SELECT id
-  INTO current_run_id
+  SELECT *
+  INTO current_run
   FROM public.pipeline_runs
-  WHERE user_id = p_user_id
+  WHERE id = control_row.current_pipeline_run_id
+    AND user_id = p_user_id
     AND generation = p_job_generation
-    AND status = 'running';
+    AND status = 'running'
+  FOR UPDATE;
 
-  IF current_run_id IS NULL THEN
+  IF current_run.id IS NULL
+     OR current_run.totals->>'ingestCompletedAt' IS NULL
+     OR current_run.totals->>'clusteringEnqueuedAt' IS NOT NULL THEN
     RETURN FALSE;
   END IF;
 
@@ -101,23 +100,19 @@ BEGIN
   INTO terminal_count
   FROM public.bookmarks
   WHERE user_id = p_user_id
-    AND pipeline_run_id = current_run_id
+    AND pipeline_run_id = current_run.id
     AND status IN ('embedded', 'error');
 
-  IF (terminal_count + control_row.untracked_error_count) < control_row.total_bookmarks THEN
+  total_bookmarks := COALESCE((current_run.totals->>'total')::integer, 0);
+  untracked_error_count := COALESCE((current_run.totals->>'untrackedErrors')::integer, 0);
+
+  IF (terminal_count + untracked_error_count) < total_bookmarks THEN
     RETURN FALSE;
   END IF;
 
-  UPDATE public.user_pipeline_controls
-  SET clustering_enqueued_at = NOW(),
-      updated_at = NOW()
-  WHERE user_id = p_user_id
-    AND job_generation = p_job_generation;
-
   UPDATE public.pipeline_runs
   SET totals = totals || jsonb_build_object('clusteringEnqueuedAt', NOW())
-  WHERE user_id = p_user_id
-    AND generation = p_job_generation
+  WHERE id = current_run.id
     AND status = 'running';
 
   RETURN TRUE;
