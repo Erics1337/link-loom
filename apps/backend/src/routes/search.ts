@@ -5,9 +5,14 @@ import { supabase } from '../db';
 import { requireRequestUserId } from '../lib/userContext';
 import { errorResponseSchema, looseObjectBodySchema } from './schemas';
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
+let openai: OpenAI | undefined;
+
+const getOpenAIClient = (): OpenAI | null => {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return null;
+    openai ??= new OpenAI({ apiKey });
+    return openai;
+};
 
 type SearchBody = {
     query?: unknown;
@@ -41,9 +46,15 @@ export const registerSearchRoutes = async (fastify: FastifyInstance) => {
         }
         const input = trimmed.substring(0, 8000);
 
+        const openaiClient = getOpenAIClient();
+        if (!openaiClient) {
+            fastify.log.error('[SEARCH] OPENAI_API_KEY is not configured');
+            return reply.code(500).send({ error: 'Search is not configured' });
+        }
+
         let queryVector: number[];
         try {
-            const response = await openai.embeddings.create({
+            const response = await openaiClient.embeddings.create({
                 model: 'text-embedding-3-small',
                 input,
             });

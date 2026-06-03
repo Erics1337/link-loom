@@ -24,6 +24,50 @@ type SupabaseEnv = {
   url: string;
 };
 
+type QueueName = "ingest" | "enrichment" | "embedding" | "clustering";
+
+interface QueuedJobBookmark {
+  chromeId?: string;
+  id: string;
+  title: string;
+  url: string;
+}
+
+interface QueuedJobData {
+  userId: string;
+  jobGeneration?: number;
+  pipelineRunId?: string;
+  bookmarkId?: string;
+  bookmarks?: QueuedJobBookmark[];
+}
+
+interface QueuedJob {
+  id: string;
+  queue: QueueName;
+  jobName: string;
+  data: QueuedJobData;
+  jobId?: string;
+  attempts: number;
+  backoffMs: number;
+  delay?: number;
+}
+
+interface ProcessedJob {
+  queue: QueueName;
+  jobName: string;
+  jobId?: string;
+}
+
+interface Bookmark {
+  id: string;
+  user_id: string;
+  chrome_id: string;
+  url: string;
+  title: string;
+  status: string;
+  description: string | null;
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../../..");
 const e2ePort = process.env.BACKEND_E2E_PORT ?? process.env.PORT ?? "3334";
@@ -329,11 +373,31 @@ before(async () => {
 
 after(async () => {
   if (server) {
-    server.kill("SIGTERM");
-    await new Promise<void>((resolve) => {
-      server?.once("exit", () => resolve());
-      setTimeout(resolve, 5000);
-    });
+    const proc = server;
+    if (proc.exitCode === null && proc.signalCode === null) {
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        let timeout: NodeJS.Timeout;
+
+        const settle = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          resolve();
+        };
+
+        timeout = setTimeout(() => {
+          if (proc.exitCode !== null || proc.signalCode !== null) {
+            settle();
+            return;
+          }
+          proc.kill("SIGKILL");
+        }, 5000);
+
+        proc.once("exit", settle);
+        proc.kill("SIGTERM");
+      });
+    }
   }
 
   await cleanupDatabase();
@@ -355,10 +419,10 @@ describe("backend HTTP contract", () => {
     });
   };
 
-  const readQueuedJobs = async () => {
+  const readQueuedJobs = async (): Promise<{ jobs: QueuedJob[] }> => {
     const response = await request("/__e2e/queues", { headers: e2eHeaders() });
     assert.equal(response.status, 200);
-    return response.json() as Promise<{ jobs: Array<any> }>;
+    return response.json() as Promise<{ jobs: QueuedJob[] }>;
   };
 
   const clearQueuedJobs = async () => {
@@ -369,7 +433,9 @@ describe("backend HTTP contract", () => {
     assert.equal(response.status, 200);
   };
 
-  const drainQueuedJobs = async (maxJobs: number) => {
+  const drainQueuedJobs = async (
+    maxJobs: number,
+  ): Promise<{ processed: ProcessedJob[]; remaining: number }> => {
     const response = await request("/__e2e/queues/drain", {
       method: "POST",
       headers: { ...e2eHeaders(), "content-type": "application/json" },
@@ -377,17 +443,19 @@ describe("backend HTTP contract", () => {
     });
     assert.equal(response.status, 200);
     return response.json() as Promise<{
-      processed: Array<{ queue: string; jobName: string; jobId?: string }>;
+      processed: ProcessedJob[];
       remaining: number;
     }>;
   };
 
-  const readBookmarks = async (userName: string) => {
+  const readBookmarks = async (
+    userName: string,
+  ): Promise<{ bookmarks: Bookmark[] }> => {
     const response = await request(`/__e2e/bookmarks/${user(userName).id}`, {
       headers: e2eHeaders(),
     });
     assert.equal(response.status, 200);
-    return response.json() as Promise<{ bookmarks: Array<any> }>;
+    return response.json() as Promise<{ bookmarks: Bookmark[] }>;
   };
 
   it("reports health", async () => {
@@ -560,10 +628,13 @@ describe("backend HTTP contract", () => {
     assert.equal(ingestJob.jobName, "ingest");
     assert.equal(ingestJob.attempts, 5);
     assert.equal(typeof ingestJob.data.jobGeneration, "number");
-    assert.equal(ingestJob.data.bookmarks[0].chromeId, undefined);
-    assert.equal(ingestJob.data.bookmarks[0].id, body.chromeId);
-    assert.equal(ingestJob.data.bookmarks[0].title, "Saved Example");
-    assert.equal(ingestJob.data.bookmarks[0].url, "https://example.com/saved");
+    assert.ok(ingestJob.data.bookmarks?.[0]);
+    const queuedBookmark = ingestJob.data.bookmarks[0];
+    assert.equal(queuedBookmark.chromeId, undefined);
+    assert.equal(queuedBookmark.id, body.chromeId);
+    assert.equal(queuedBookmark.title, "Saved Example");
+    assert.equal(queuedBookmark.url, "https://example.com/saved");
+    assert.ok(ingestJob.jobId);
     assert.match(
       ingestJob.jobId,
       new RegExp(`^ingest-${user("bookmark").id}-manual-run-`),
@@ -596,9 +667,14 @@ describe("backend HTTP contract", () => {
 
     assert.equal(duplicateJobs.length, 2);
     assert.deepEqual(
-      duplicateJobs.map((job) => job.data.bookmarks[0].url),
+      duplicateJobs.map((job) => {
+        assert.ok(job.data.bookmarks?.[0]);
+        return job.data.bookmarks[0].url;
+      }),
       ["https://example.com/duplicate", "https://example.com/duplicate"],
     );
+    assert.ok(duplicateJobs[0].data.bookmarks?.[0]);
+    assert.ok(duplicateJobs[1].data.bookmarks?.[0]);
     assert.notEqual(
       duplicateJobs[0].data.bookmarks[0].id,
       duplicateJobs[1].data.bookmarks[0].id,
@@ -667,6 +743,7 @@ describe("backend HTTP contract", () => {
       );
       assert.ok(embeddingJob);
       assert.equal(embeddingJob.jobName, "embed");
+      assert.ok(embeddingJob.jobId);
       assert.match(
         embeddingJob.jobId,
         new RegExp(`^embed-${user("ssrf-enrichment").id}-run-`),
@@ -704,12 +781,12 @@ describe("backend HTTP contract", () => {
     assert.equal(body.error, "User id does not match authenticated session.");
   });
 
-  it("creates, lists, restores, and deletes backup snapshots", async () => {
+  it("creates, lists, restores, and deletes Cloud Snapshots", async () => {
     const createResponse = await jsonRequest(
       `/backups/${user("status").id}`,
       "status",
       {
-        name: "E2E Snapshot",
+        name: "E2E Cloud Snapshot",
       },
     );
     const createBody = await createResponse.json();
@@ -726,7 +803,7 @@ describe("backend HTTP contract", () => {
     assert.equal(listResponse.status, 200);
     assert.ok(
       listBody.backups.some(
-        (backup: any) => backup.id === createBody.snapshotId,
+        (snapshot: any) => snapshot.id === createBody.snapshotId,
       ),
     );
 
@@ -751,7 +828,7 @@ describe("backend HTTP contract", () => {
     assert.deepEqual(await deleteResponse.json(), { status: "deleted" });
   });
 
-  it("prevents backup access for a different user id", async () => {
+  it("prevents Cloud Snapshot access for a different user id", async () => {
     const response = await request(`/backups/${user("status").id}`, {
       headers: authHeader("other"),
     });
@@ -833,8 +910,8 @@ describe("backend HTTP contract", () => {
         job.queue === "ingest" && job.data.userId === user("cancel-worker").id,
     );
     assert.ok(queuedIngest);
-    assert.equal(typeof queuedIngest.data.pipelineRunId, "string");
-    assert.ok(queuedIngest.data.pipelineRunId.length > 0);
+    const pipelineRunId = queuedIngest.data.pipelineRunId;
+    assert.ok(typeof pipelineRunId === "string" && pipelineRunId.length > 0);
 
     const cancelResponse = await request(
       `/cancel/${user("cancel-worker").id}`,

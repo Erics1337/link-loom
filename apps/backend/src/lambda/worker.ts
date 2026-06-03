@@ -11,6 +11,7 @@ import {
     notifyPipelineBookmarkTerminal,
     recordPipelineUntrackedError,
 } from '../lib/pipelineCoordinator';
+import { prepareQueueJobFailureError } from '../lib/sanitizeQueueError';
 
 const processors = {
     ingest: ingestProcessor,
@@ -21,9 +22,6 @@ const processors = {
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const getErrorMessage = (error: unknown) =>
-    error instanceof Error ? error.message : String(error);
 
 const getReceiveCount = (record: SQSEvent['Records'][number]) => {
     const raw = record.attributes?.ApproximateReceiveCount;
@@ -58,7 +56,7 @@ const recordQueueJobFailure = async (
 ) => {
     const { userId, pipelineRunId, jobGeneration, clusteringSettings, bookmarkId, chromeIds } = getFailureScope(message);
     const jobId = message.jobId ?? fallbackJobId;
-    const errorMessage = getErrorMessage(error).slice(0, 1000);
+    const { error_message_sanitized, error_message_hash } = prepareQueueJobFailureError(error);
 
     const { error: failureError } = await supabase
         .from('queue_job_failures')
@@ -71,7 +69,8 @@ const recordQueueJobFailure = async (
             bookmark_id: bookmarkId,
             attempts: message.attempts,
             receive_count: receiveCount,
-            error_message: errorMessage,
+            error_message_sanitized,
+            error_message_hash,
             failed_at: new Date().toISOString(),
         }, { onConflict: 'queue_name,job_id' });
 
@@ -98,7 +97,7 @@ const recordQueueJobFailure = async (
         if (bookmarkError) {
             console.error(`[LAMBDA:${queueName}] Failed to mark bookmark ${bookmarkId} as error`, bookmarkError);
         } else if (userId) {
-            await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, clusteringSettings);
+            await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings);
         }
     } else if (userId && chromeIds && chromeIds.length > 0) {
         let updateQuery = supabase
@@ -115,13 +114,20 @@ const recordQueueJobFailure = async (
         if (bookmarkError) {
             console.error(`[LAMBDA:${queueName}] Failed to mark exhausted ingest bookmarks as error`, bookmarkError);
         } else {
-            for (const chromeId of chromeIds) {
-                await recordPipelineUntrackedError(
-                    userId,
-                    jobGeneration,
-                    pipelineRunId,
-                    clusteringSettings,
-                    `exhausted:${jobId}:${chromeId}`
+            try {
+                await Promise.all(chromeIds.map((chromeId) =>
+                    recordPipelineUntrackedError(
+                        userId,
+                        jobGeneration,
+                        pipelineRunId,
+                        clusteringSettings,
+                        `exhausted:${jobId}:${chromeId}`,
+                    ),
+                ));
+            } catch (untrackedError) {
+                console.error(
+                    `[LAMBDA:${queueName}] Failed to record exhausted ingest untracked errors for ${jobId}`,
+                    untrackedError,
                 );
             }
         }

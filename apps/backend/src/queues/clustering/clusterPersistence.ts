@@ -1,15 +1,22 @@
 import { supabase } from '../../db';
 
+const CLUSTER_ASSIGNMENT_BATCH_SIZE = 500;
+
 export interface BookmarkVectorRow {
     id: string;
     shared_links?: unknown;
 }
 
+export type FetchBookmarkVectorsResult =
+    | { status: 'ok'; rows: BookmarkVectorRow[] }
+    | { status: 'error'; error: unknown }
+    | { status: 'cancelled' };
+
 export const fetchUserBookmarkVectorRows = async (
     userId: string,
     shouldCancel: () => Promise<boolean>,
     log: (msg: string) => void
-): Promise<BookmarkVectorRow[] | null> => {
+): Promise<FetchBookmarkVectorsResult> => {
     let userBookmarks: BookmarkVectorRow[] = [];
     let from = 0;
     const size = 1000;
@@ -29,7 +36,7 @@ export const fetchUserBookmarkVectorRows = async (
 
         if (error) {
             log(`DB Error ${JSON.stringify(error)}`);
-            return null;
+            return { status: 'error', error };
         }
 
         if (!chunk || chunk.length === 0) break;
@@ -41,11 +48,11 @@ export const fetchUserBookmarkVectorRows = async (
 
         if (await shouldCancel()) {
             log(`[CLUSTERING] Cancelled during fetch for user ${userId}`);
-            return null;
+            return { status: 'cancelled' };
         }
     }
 
-    return userBookmarks;
+    return { status: 'ok', rows: userBookmarks };
 };
 
 export const createCluster = async (
@@ -79,16 +86,28 @@ export const assignBookmarksToCluster = async (
 ) => {
     if (bookmarkIds.length === 0) return;
 
-    const assignments = bookmarkIds.map((bookmarkId) => ({
-        cluster_id: clusterId,
-        bookmark_id: bookmarkId
-    }));
+    for (
+        let from = 0;
+        from < bookmarkIds.length;
+        from += CLUSTER_ASSIGNMENT_BATCH_SIZE
+    ) {
+        const batchBookmarkIds = bookmarkIds.slice(
+            from,
+            from + CLUSTER_ASSIGNMENT_BATCH_SIZE
+        );
+        const assignments = batchBookmarkIds.map((bookmarkId) => ({
+            cluster_id: clusterId,
+            bookmark_id: bookmarkId
+        }));
 
-    const { error } = await supabase
-        .from('cluster_assignments')
-        .insert(assignments);
+        const { error } = await supabase
+            .from('cluster_assignments')
+            .insert(assignments);
 
-    if (error) {
-        log(`Batch insert error: ${JSON.stringify(error)}`);
+        if (error) {
+            log(
+                `Batch insert error for cluster ${clusterId}, assignments ${from}-${from + batchBookmarkIds.length - 1}: ${JSON.stringify(error)}`
+            );
+        }
     }
 };

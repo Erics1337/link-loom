@@ -157,6 +157,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                     userId,
                     jobGeneration,
                     pipelineRunId,
+                    inserted.id,
                     clusteringSettings
                 );
                 await updateIngestProgress(job, handled, rawBookmarks.length);
@@ -184,6 +185,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                     userId,
                     jobGeneration,
                     pipelineRunId,
+                    inserted.id,
                     clusteringSettings
                 );
             } else {
@@ -193,6 +195,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                     {
                         userId,
                         pipelineRunId,
+                        jobGeneration,
                         clusteringSettings,
                         bookmarkId: inserted.id,
                         url: inserted.url

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import * as dotenv from "dotenv";
@@ -14,7 +15,7 @@ import { embeddingProcessor } from "./queues/embedding";
 import { clusteringProcessor } from "./queues/clustering";
 import { FREE_TIER_LIMIT } from "./lib/userContext";
 import { registerAuthRoutes } from "./routes/auth";
-import { registerBackupRoutes } from "./routes/backups";
+import { registerCloudSnapshotRoutes } from "./routes/backups";
 import { registerBookmarkRoutes } from "./routes/bookmarks";
 import { registerHealthRoutes } from "./routes/health";
 import { registerIngestRoutes } from "./routes/ingest";
@@ -70,7 +71,7 @@ export const buildApp = async () => {
     await registerStatusRoutes(fastify);
     await registerStructureRoutes(fastify);
     await registerToolRoutes(fastify);
-    await registerBackupRoutes(fastify);
+    await registerCloudSnapshotRoutes(fastify);
     await registerSearchRoutes(fastify);
 
     const enableE2ETestEndpoints =
@@ -92,7 +93,15 @@ export const buildApp = async () => {
             .send({ error: "E2E_SECRET is not configured" });
         }
 
-        if (req.headers["x-e2e-secret"] !== expectedSecret) {
+        const providedSecret = req.headers["x-e2e-secret"];
+        const provided =
+          typeof providedSecret === "string" ? providedSecret : "";
+        const expectedBuf = Buffer.from(expectedSecret);
+        const providedBuf = Buffer.from(provided);
+        if (
+          providedBuf.length !== expectedBuf.length ||
+          !timingSafeEqual(providedBuf, expectedBuf)
+        ) {
           return reply.code(401).send({ error: "Invalid e2e secret" });
         }
 
@@ -118,10 +127,15 @@ export const buildApp = async () => {
         const authError = verifyE2ESecret(req, reply);
         if (authError) return authError;
         const { userId } = req.params as { userId: string };
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from("bookmarks")
           .select("*")
           .eq("user_id", userId);
+        if (error) {
+          return reply.code(500).send({
+            error: error.message || "Failed to fetch bookmarks",
+          });
+        }
         return { bookmarks: data ?? [] };
       });
       fastify.delete("/__e2e/queues", async (req, reply) => {

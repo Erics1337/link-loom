@@ -1,6 +1,10 @@
 import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 
-export type QueueName = 'ingest' | 'enrichment' | 'embedding' | 'clustering';
+const QUEUE_NAMES = ['ingest', 'enrichment', 'embedding', 'clustering'] as const;
+
+export type QueueName = (typeof QUEUE_NAMES)[number];
+
+export const queueNames = new Set<QueueName>(QUEUE_NAMES);
 
 export type QueueJob<T = unknown> = {
     data: T;
@@ -126,13 +130,25 @@ class AppQueue<T = unknown> {
 
         return { id: jobId, data, attempts, backoffMs };
     }
+
+    async remove(jobId: string) {
+        if (queueDriver !== 'test') {
+            return false;
+        }
+
+        const index = testQueuedJobs.findIndex(
+            (job) => job.queue === this.name && job.jobId === jobId
+        );
+        if (index === -1) return false;
+
+        testQueuedJobs.splice(index, 1);
+        return true;
+    }
 }
 
 export const createWorker = <T>(name: QueueName, processor: QueueProcessor<T>, _options: unknown = {}) => {
     queues[name].registerProcessor(processor);
 };
-
-const queueNames = new Set<QueueName>(['ingest', 'enrichment', 'embedding', 'clustering']);
 
 export const parseQueuedMessage = (raw: string): QueuedMessage => {
     const message = JSON.parse(raw) as Partial<QueuedMessage>;

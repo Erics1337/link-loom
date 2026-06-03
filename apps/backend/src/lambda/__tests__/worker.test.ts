@@ -1,4 +1,5 @@
 import { SQSEvent } from 'aws-lambda';
+import { createHash } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
@@ -100,7 +101,8 @@ describe('lambda queue worker', () => {
             bookmark_id: '00000000-0000-0000-0000-000000000002',
             attempts: 3,
             receive_count: 3,
-            error_message: 'scrape exploded',
+            error_message_sanitized: 'scrape exploded',
+            error_message_hash: createHash('sha256').update('scrape exploded').digest('hex'),
         }), { onConflict: 'queue_name,job_id' });
         expect(mocks.update).toHaveBeenCalledWith({ status: 'error' });
         expect(mocks.eq).toHaveBeenCalledWith('id', '00000000-0000-0000-0000-000000000002');
@@ -109,6 +111,7 @@ describe('lambda queue worker', () => {
             '00000000-0000-0000-0000-000000000001',
             undefined,
             '00000000-0000-0000-0000-000000000003',
+            '00000000-0000-0000-0000-000000000002',
             expect.any(Object),
         );
     });

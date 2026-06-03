@@ -39,6 +39,12 @@ const CLUSTER_NAME_CONTEXT_SAMPLE_SIZE = parsePositiveInt(
 export const limitClusterNaming = createLimit(CLUSTER_NAME_CONCURRENCY);
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// In-process only: survives warm Lambda/container reuse within one worker, but not
+// cold starts or other instances. clusterNameCache dedupes repeated names in a single
+// clustering run; nextAllowedOpenAIRequestAt coordinates 429 backoff for concurrent
+// naming calls in this process only. For cross-instance cache or rate limits, use an
+// external store (e.g. Redis with TTL keys) or a distributed rate limiter.
 const clusterNameCache = new Map<string, string>();
 let nextAllowedOpenAIRequestAt = 0;
 
@@ -353,7 +359,19 @@ export async function generateClusterName(
                 continue;
             }
 
-            log(`OpenAI naming error: ${JSON.stringify(e)}`);
+            const namingErrorMessage =
+                e instanceof Error
+                    ? e.message
+                    : typeof e?.message === 'string'
+                      ? e.message
+                      : 'unknown';
+            const namingErrorStatus =
+                typeof e?.status === 'number' || typeof e?.status === 'string'
+                    ? String(e.status)
+                    : 'unknown';
+            log(
+                `OpenAI naming error: message=${namingErrorMessage}, status=${namingErrorStatus}`
+            );
             const heuristicName = generateHeuristicClusterName(
                 bks as Array<{
                     title?: string | null;

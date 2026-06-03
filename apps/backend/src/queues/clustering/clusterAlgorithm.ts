@@ -87,6 +87,9 @@ const rebalanceSmallGroups = (
 
             largeGroups[closestIdx].ids.push(id);
             largeGroups[closestIdx].vecs.push(vec);
+            largeGroupCentroids[closestIdx] = computeCentroid(
+                largeGroups[closestIdx].vecs
+            );
         }
     }
 

@@ -35,7 +35,12 @@ const requestJson = async (path: string, init: RequestInit = {}, timeoutMs = DEF
         return { response, body };
     } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') {
-            throw new Error(`request timeout after ${timeoutMs} ms`);
+            if (init.signal?.aborted) {
+                throw error;
+            }
+            if (controller.signal.aborted) {
+                throw new Error(`request timeout after ${timeoutMs} ms`);
+            }
         }
         throw error;
     } finally {

@@ -35,7 +35,7 @@ Key properties of current implementation:
 - Cluster naming uses mixed strategy:
   - heuristic naming for smaller groups
   - OpenAI naming for larger groups
-- Backup snapshots are **extension-local** (Chrome storage), not stored in backend DB.
+- Link Loom uses distinct persistence concepts: local Safety Backups, local Structure Versions, backend Cloud Snapshots, and Overflow Bookmarks.
 
 ---
 
@@ -81,11 +81,24 @@ Primary tables from migrations:
   - mapping bookmark -> cluster (PK `(cluster_id, bookmark_id)`)
 - `user_devices`
   - per-user registered devices, constrained to 3 via policy/app checks
+- `structure_snapshots`, `snapshot_clusters`, `snapshot_assignments`
+  - backend Cloud Snapshots of generated clusters and assignments
 
-Important note on backups:
+## Persistence Vocabulary
 
-- There is currently **no** backend table for bookmark backups.
-- Backups are stored in extension `chrome.storage.local`, keyed by `bookmarkBackups:<accountUserId>`.
+- Safety Backup:
+  - raw Chrome bookmark tree saved locally before organization begins
+  - stored in extension `chrome.storage.local` under the legacy `preOrganizeBackup` key
+- Structure Version:
+  - locally saved proposed organization preview
+  - stored in extension `chrome.storage.local` under `bookmarkStructureVersions`
+- Cloud Snapshot:
+  - backend snapshot of generated clusters and assignments
+  - stored in Supabase `structure_snapshots`, `snapshot_clusters`, and `snapshot_assignments`
+  - exposed through the compatibility `/backups` API routes and snapshot RPCs
+- Overflow Bookmarks:
+  - bookmarks beyond the free-tier run limit
+  - kept locally so previews can show which bookmarks remain untouched
 
 ---
 
@@ -146,6 +159,7 @@ Folder naming strategy:
 - For small groups (`CLUSTER_NAME_MIN_BOOKMARKS_FOR_AI`, default 12): heuristic naming (domain/token frequency).
 - For larger groups: OpenAI chat completion (`gpt-4o-mini`) with retry/backoff for 429s.
 - Naming calls are concurrency-limited (`CLUSTER_NAME_CONCURRENCY`, default 4).
+- `clusterNaming.ts` keeps an in-memory name cache and OpenAI 429 backoff window per worker process only (effective within one Lambda/container execution context, not across cold starts or concurrent instances). Cross-instance dedupe or shared rate limiting would need an external store (e.g. Redis) or a distributed limiter.
 
 ---
 
@@ -174,18 +188,16 @@ Polling frequency: every 2 seconds while weaving.
 When user clicks "Apply Changes":
 
 1. Confirm dialog in extension.
-2. If logged in: auto-save current bookmark backup snapshot locally.
-3. Fetch `/structure/:userId` from backend.
-4. Create root folder in "Other Bookmarks":
-   - `Link Loom - <date>`
-5. Create cluster folder hierarchy (parent-first topological order).
-6. Move Chrome bookmarks into assigned folders.
+2. If logged in: create a backend Cloud Snapshot before Chrome is mutated.
+3. Build an apply plan from the displayed structure.
+4. Create cluster folder hierarchy in the relevant Chrome bookmark roots.
+5. Move/update/delete Chrome bookmarks according to the apply plan.
 
 This write phase happens fully in extension using Chrome APIs.
 
 ---
 
-## 8. Auth, Device, Billing, and Backups
+## 8. Auth, Device, Billing, and Persistence
 
 ## Auth
 
@@ -208,17 +220,20 @@ This write phase happens fully in extension using Chrome APIs.
   - `/api/checkout` (also exists; separate path)
 - Stripe webhook updates `users.is_premium` and subscription fields.
 
-## Backups and Versions
+## Safety Backups, Structure Versions, and Cloud Snapshots
 
-- Bookmark backups:
-  - saved in extension local storage
-  - require login in extension UI
-  - can be manually saved, restored, deleted
-  - auto-saved before apply when logged in
-- Structure versions:
-  - also local extension storage
+- Safety Backups:
+  - raw Chrome tree saved locally before organize starts
+  - protect against local Chrome write/apply risk
+- Structure Versions:
+  - saved proposed organizations in extension local storage
   - save/load/restore/delete functions exist
   - currently not exposed in main extension navigation flow
+- Cloud Snapshots:
+  - backend cluster/assignment snapshots
+  - require login in extension UI
+  - can be manually saved, restored, deleted
+  - auto-created before apply when logged in
 
 ---
 
@@ -232,7 +247,7 @@ The following items in older docs are now outdated or only partially true:
 - Root README is broadly correct but does not capture newer features:
   - extension login flow
   - device registration limits
-  - local backup management
+  - Cloud Snapshot management
   - current stage/progress semantics
 
 Also, extension/web app currently do not have dedicated README files in this repo snapshot.
@@ -251,19 +266,20 @@ Also, extension/web app currently do not have dedicated README files in this rep
 - Free-tier gate + premium flag integration
 - Supabase login in extension
 - Device registration and 3-device ceiling
-- Local backup snapshots with restore/delete
+- Safety Backup creation before organize
+- Cloud Snapshots with restore/delete
 
 ### Implemented but With Known Constraints
 
 - Stage 3 can be long for large libraries due recursive clustering and naming throughput.
 - Clustering worker still holds many vectors in Node memory.
-- Backups are local-only; no cross-device/server backup history.
+- Safety Backups and Structure Versions are local-only; Cloud Snapshots are backend-backed.
 - Cancellation sets bookmark status to `idle` even though status enum/commenting is inconsistent across code/docs.
 - Two web checkout endpoints can cause product-flow drift if not standardized.
 
 ### Not Fully Productized Yet
 
-- Structure versions screen exists but is not wired into main extension navigation.
+- Structure Versions screen exists but is not wired into main extension navigation.
 - Dead-link cleanup and duplicate deletion are mostly UI placeholders.
 - No websocket push; status is polling-based.
 

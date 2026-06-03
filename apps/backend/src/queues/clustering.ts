@@ -44,7 +44,7 @@ export interface ClusteringJobData {
 const parseVectorWithLogging = (joined: unknown): number[] | null =>
     parseBookmarkVector(joined, (e) => log(`Failed to parse vector JSON: ${e}`));
 
-const completeEmptyPipeline = async (
+const finalizePipelineRun = async (
     userId: string,
     jobGeneration: number | undefined,
     pipelineRunId: string | undefined,
@@ -230,16 +230,30 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         return;
     }
 
-    const userBookmarks = await fetchUserBookmarkVectorRows(
+    const fetchResult = await fetchUserBookmarkVectorRows(
         userId,
         () => isUserCancelled(userId, jobGeneration, pipelineRunId),
         log
     );
-    if (!userBookmarks) return;
+    if (fetchResult.status === 'cancelled') {
+        return;
+    }
+    if (fetchResult.status === 'error') {
+        const message =
+            fetchResult.error &&
+            typeof fetchResult.error === 'object' &&
+            'message' in fetchResult.error &&
+            typeof fetchResult.error.message === 'string'
+                ? fetchResult.error.message
+                : JSON.stringify(fetchResult.error);
+        throw new Error(`Failed to fetch bookmarks for clustering: ${message}`);
+    }
+
+    const userBookmarks = fetchResult.rows;
 
     if (userBookmarks.length === 0) {
         log('No user bookmarks found');
-        await completeEmptyPipeline(userId, jobGeneration, pipelineRunId, {
+        await finalizePipelineRun(userId, jobGeneration, pipelineRunId, {
             totalBookmarks: 0,
             embeddedBookmarks: 0,
             assignedBookmarks: 0
@@ -264,7 +278,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
 
     if (parsedRows.length === 0) {
         log('No valid bookmarks with vectors found');
-        await completeEmptyPipeline(userId, jobGeneration, pipelineRunId, {
+        await finalizePipelineRun(userId, jobGeneration, pipelineRunId, {
             totalBookmarks: userBookmarks.length,
             embeddedBookmarks: 0,
             assignedBookmarks: 0
@@ -289,12 +303,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         pipelineRunId,
         jobGeneration
     );
-    await recordPipelineClusteringCompleted(
-        userId,
-        jobGeneration,
-        pipelineRunId
-    );
-    await completePipelineRun(pipelineRunId ?? '', {
+    await finalizePipelineRun(userId, jobGeneration, pipelineRunId, {
         totalBookmarks: userBookmarks.length,
         embeddedBookmarks: parsedRows.length,
         assignedBookmarks: ids.length

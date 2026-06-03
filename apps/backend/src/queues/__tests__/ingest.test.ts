@@ -100,6 +100,7 @@ describe('Ingest Worker', () => {
             expect.objectContaining({
                 userId: 'user-1',
                 pipelineRunId: 'run-9',
+                jobGeneration: 9,
                 bookmarkId: 'bm-1',
                 url: 'https://example.com',
             }),

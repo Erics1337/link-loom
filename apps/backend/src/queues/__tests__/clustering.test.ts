@@ -207,4 +207,58 @@ describe('Clustering Worker', () => {
             { cluster_id: 'cluster-array-shape', bookmark_id: 'bm-2' }
         ]);
     });
+
+    it('should stop without completing the pipeline when fetch is cancelled mid-pagination', async () => {
+        const job = createMockJob({ userId: 'user-4', pipelineRunId: 'run-14', jobGeneration: 14 });
+
+        (isUserCancelled as any)
+            .mockResolvedValueOnce(false)
+            .mockResolvedValueOnce(true);
+
+        const mockFetchChain = {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            range: vi.fn().mockResolvedValueOnce({
+                data: Array.from({ length: 1000 }, (_, i) => ({
+                    id: `bm-${i}`,
+                    shared_links: { vector: [0.1, 0.2] }
+                })),
+                error: null
+            })
+        };
+
+        (supabase.from as any).mockImplementation((table: string) => {
+            if (table === 'bookmarks') return mockFetchChain;
+            return {};
+        });
+
+        await clusteringProcessor(job);
+
+        expect(recordPipelineClusteringCompleted).not.toHaveBeenCalled();
+        expect(completePipelineRun).not.toHaveBeenCalled();
+    });
+
+    it('should throw when bookmark fetch fails so the queue can retry', async () => {
+        const job = createMockJob({ userId: 'user-5', pipelineRunId: 'run-15', jobGeneration: 15 });
+
+        const mockFetchChain = {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            range: vi.fn().mockResolvedValue({
+                data: null,
+                error: { message: 'connection refused' }
+            })
+        };
+
+        (supabase.from as any).mockImplementation((table: string) => {
+            if (table === 'bookmarks') return mockFetchChain;
+            return {};
+        });
+
+        await expect(clusteringProcessor(job)).rejects.toThrow(
+            'Failed to fetch bookmarks for clustering: connection refused'
+        );
+        expect(recordPipelineClusteringCompleted).not.toHaveBeenCalled();
+        expect(completePipelineRun).not.toHaveBeenCalled();
+    });
 });

@@ -12,7 +12,7 @@ import {
     userIdParamsSchema
 } from './schemas';
 
-type BackupBody = {
+type CloudSnapshotBody = {
     name?: unknown;
 };
 
@@ -27,7 +27,7 @@ const runSnapshotMutation = async (
         await action();
         return { status };
     } catch (err: any) {
-        console.error(`[BACKUPS] ${logLabel} error:`, err);
+        console.error(`[CLOUD SNAPSHOTS] ${logLabel} error:`, err);
         return reply.code(500).send({ error: failureMessage });
     }
 };
@@ -52,7 +52,9 @@ const snapshotMutationHandler =
         );
     };
 
-export const registerBackupRoutes = async (fastify: FastifyInstance) => {
+export const registerCloudSnapshotRoutes = async (fastify: FastifyInstance) => {
+    // Keep /backups and the `backups` response key for API compatibility;
+    // these records are user-facing Cloud Snapshots.
     fastify.get(
         '/backups/:userId',
         {
@@ -118,10 +120,10 @@ export const registerBackupRoutes = async (fastify: FastifyInstance) => {
 
                 return { backups: formatted };
             } catch (err: any) {
-                console.error('[BACKUPS] Fetch error:', err);
+                console.error('[CLOUD SNAPSHOTS] Fetch error:', err);
                 return reply
                     .code(500)
-                    .send({ error: 'Failed to load backups' });
+                    .send({ error: 'Failed to load Cloud Snapshots' });
             }
         }
     );
@@ -150,7 +152,7 @@ export const registerBackupRoutes = async (fastify: FastifyInstance) => {
         async (req, reply) => {
             const userId = await requireRequestUserId(req, reply);
             if (!userId) return reply;
-            const body = req.body as BackupBody;
+            const body = req.body as CloudSnapshotBody;
             const name = typeof body?.name === 'string' ? body.name : '';
             try {
                 const { data: snapshotId, error } = await supabase.rpc(
@@ -158,17 +160,18 @@ export const registerBackupRoutes = async (fastify: FastifyInstance) => {
                     {
                         p_user_id: userId,
                         p_snapshot_name:
-                            name || `Backup ${new Date().toLocaleDateString()}`
+                            name ||
+                            `Cloud Snapshot ${new Date().toISOString().slice(0, 10)}`
                     }
                 );
 
                 if (error) throw error;
                 return { status: 'created', snapshotId };
             } catch (err: any) {
-                console.error('[BACKUPS] Create error:', err);
+                console.error('[CLOUD SNAPSHOTS] Create error:', err);
                 return reply
                     .code(500)
-                    .send({ error: 'Failed to create backup' });
+                    .send({ error: 'Failed to create Cloud Snapshot' });
             }
         }
     );
@@ -184,7 +187,7 @@ export const registerBackupRoutes = async (fastify: FastifyInstance) => {
         snapshotMutationHandler(
             'restored',
             'Restore',
-            'Failed to restore backup',
+            'Failed to restore Cloud Snapshot',
             async (userId, snapshotId) => {
                 await beginUserPipelineRun(userId);
                 const { error } = await supabase.rpc(
@@ -211,7 +214,7 @@ export const registerBackupRoutes = async (fastify: FastifyInstance) => {
         snapshotMutationHandler(
             'deleted',
             'Delete',
-            'Failed to delete backup',
+            'Failed to delete Cloud Snapshot',
             async (userId, snapshotId) => {
                 const { error } = await supabase
                     .from('structure_snapshots')

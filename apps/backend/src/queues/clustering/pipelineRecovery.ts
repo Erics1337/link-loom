@@ -5,6 +5,7 @@ import { parseBookmarkVector } from './vectorParsing';
 export const recoverStalePipelineState = async (
     userId: string,
     pipelineRunId: string | undefined,
+    jobGeneration: number | undefined,
     log: (msg: string) => void
 ) => {
     const { data: inflightBookmarks, error: inflightError } = await supabase
@@ -98,6 +99,7 @@ export const recoverStalePipelineState = async (
         await queues.enrichment.add('enrich', {
             userId,
             pipelineRunId,
+            jobGeneration,
             bookmarkId: enrichmentJob.bookmarkId,
             url: enrichmentJob.url
         });
@@ -107,6 +109,7 @@ export const recoverStalePipelineState = async (
         await queues.embedding.add('embed', {
             userId,
             pipelineRunId,
+            jobGeneration,
             bookmarkId: embeddingJob.bookmarkId,
             url: embeddingJob.url,
             text: embeddingJob.text
