@@ -2,13 +2,27 @@ import { QueueJob } from '../lib/queue';
 import { supabase } from '../db';
 import OpenAI from 'openai';
 import { createHash } from 'crypto';
-import { isUserCancelled } from '../lib/cancellation';
+import {
+    createPipelineCancellationLookupCache,
+    isUserCancelled,
+    type PipelineCancellationLookupCache,
+} from '../lib/cancellation';
 import { ClusteringSettings, normalizeClusteringSettings } from '../lib/clusteringSettings';
 import { notifyPipelineBookmarkTerminal } from '../lib/pipelineCoordinator';
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
+
+class EmbeddingCancellationExitError extends Error {
+    readonly originalError: unknown;
+
+    constructor(cause: unknown) {
+        super('Failed to evaluate or record embedding cancellation');
+        this.name = 'EmbeddingCancellationExitError';
+        this.originalError = cause;
+    }
+}
 
 export interface EmbeddingJobData {
     userId: string;
@@ -20,14 +34,36 @@ export interface EmbeddingJobData {
     url: string;
 }
 
+const exitIfCancelled = async (
+    userId: string,
+    jobGeneration: number | undefined,
+    pipelineRunId: string | undefined,
+    bookmarkId: string,
+    clusteringSettings: ClusteringSettings,
+    checkpoint: string,
+    cancellationCache: PipelineCancellationLookupCache
+) => {
+    try {
+        if (!(await isUserCancelled(userId, jobGeneration, pipelineRunId, cancellationCache))) {
+            return false;
+        }
+
+        console.log(`[EMBEDDING] Cancelled ${checkpoint} for user ${userId}`);
+        await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings);
+        return true;
+    } catch (error) {
+        throw new EmbeddingCancellationExitError(error);
+    }
+};
+
 export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
     const { userId, pipelineRunId, jobGeneration, bookmarkId, text, url } = job.data;
     const clusteringSettings = normalizeClusteringSettings(job.data.clusteringSettings);
+    const cancellationCache = createPipelineCancellationLookupCache();
     console.log(`Processing bookmark ${bookmarkId}`);
 
     try {
-        if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
-            console.log(`[EMBEDDING] Cancelled before start for user ${userId}`);
+        if (await exitIfCancelled(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings, 'before start', cancellationCache)) {
             return;
         }
 
@@ -68,8 +104,7 @@ export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
         }
 
         // 3. Update Status
-        if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
-            console.log(`[EMBEDDING] Cancelled before status update for user ${userId}`);
+        if (await exitIfCancelled(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings, 'before status update', cancellationCache)) {
             return;
         }
 
@@ -80,14 +115,18 @@ export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
         if (bookmarkStatusError) {
             throw new Error(`Failed to mark bookmark ${bookmarkId} as embedded: ${bookmarkStatusError.message}`);
         }
-        await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, clusteringSettings);
+        await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings);
 
     } catch (err) {
+        if (err instanceof EmbeddingCancellationExitError) {
+            throw err.originalError ?? err;
+        }
+
         console.error(`Failed to embed ${bookmarkId}`, err);
         await supabase
             .from('bookmarks')
             .update({ status: 'error' })
             .eq('id', bookmarkId);
-        await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, clusteringSettings);
+        await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings);
     }
 };

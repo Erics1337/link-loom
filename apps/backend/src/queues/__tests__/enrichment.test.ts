@@ -3,6 +3,7 @@ import { enrichmentProcessor } from '../enrichment';
 import { supabase } from '../../db';
 import { queues } from '../../lib/queue';
 import { isUserCancelled } from '../../lib/cancellation';
+import { notifyPipelineBookmarkTerminal } from '../../lib/pipelineCoordinator';
 import { QueueJob } from '../../lib/queue';
 import { safeFetch } from '../../lib/safeFetch';
 
@@ -129,12 +130,102 @@ describe('Enrichment Worker', () => {
 
     it('should stop processing if cancelled before start', async () => {
         (isUserCancelled as any).mockReturnValueOnce(true);
-        const job = createMockJob({ userId: 'user-3', bookmarkId: 'bm-3', url: 'https://test.com' });
+        const job = createMockJob({
+            userId: 'user-3',
+            pipelineRunId: 'run-6',
+            jobGeneration: 6,
+            bookmarkId: 'bm-3',
+            url: 'https://test.com'
+        });
 
         await enrichmentProcessor(job);
 
         expect(safeFetch).not.toHaveBeenCalled();
         expect(supabase.from).not.toHaveBeenCalled();
         expect(queues.embedding.add).not.toHaveBeenCalled();
+        expect(notifyPipelineBookmarkTerminal).toHaveBeenCalledWith(
+            'user-3',
+            6,
+            'run-6',
+            'bm-3',
+            expect.any(Object)
+        );
+    });
+
+    it('should notify and stop processing if cancelled after fetch', async () => {
+        (isUserCancelled as any)
+            .mockReturnValueOnce(false)
+            .mockReturnValueOnce(true);
+        (safeFetch as any).mockResolvedValueOnce({
+            text: () => Promise.resolve('<html><head><title>Fetched</title></head></html>')
+        });
+        const job = createMockJob({
+            userId: 'user-4',
+            pipelineRunId: 'run-7',
+            jobGeneration: 7,
+            bookmarkId: 'bm-4',
+            url: 'https://test.com'
+        });
+
+        await enrichmentProcessor(job);
+
+        expect(safeFetch).toHaveBeenCalled();
+        expect(supabase.from).not.toHaveBeenCalled();
+        expect(queues.embedding.add).not.toHaveBeenCalled();
+        expect(notifyPipelineBookmarkTerminal).toHaveBeenCalledWith(
+            'user-4',
+            7,
+            'run-7',
+            'bm-4',
+            expect.any(Object)
+        );
+    });
+
+    it('should notify and stop processing if cancelled before embedding enqueue', async () => {
+        (isUserCancelled as any)
+            .mockReturnValueOnce(false)
+            .mockReturnValueOnce(false)
+            .mockReturnValueOnce(true);
+        (safeFetch as any).mockResolvedValueOnce({
+            text: () => Promise.resolve('<html><head><title>Fetched</title></head></html>')
+        });
+        const job = createMockJob({
+            userId: 'user-5',
+            pipelineRunId: 'run-8',
+            jobGeneration: 8,
+            bookmarkId: 'bm-5',
+            url: 'https://test.com'
+        });
+
+        await enrichmentProcessor(job);
+
+        expect(supabase.from).toHaveBeenCalledWith('bookmarks');
+        expect(queues.embedding.add).not.toHaveBeenCalled();
+        expect(notifyPipelineBookmarkTerminal).toHaveBeenCalledWith(
+            'user-5',
+            8,
+            'run-8',
+            'bm-5',
+            expect.any(Object)
+        );
+    });
+
+    it('should retry when cancellation evaluation fails', async () => {
+        const cancellationError = new Error('database unavailable');
+        (isUserCancelled as any).mockRejectedValueOnce(cancellationError);
+        const job = createMockJob({
+            userId: 'user-6',
+            pipelineRunId: 'run-9',
+            jobGeneration: 9,
+            bookmarkId: 'bm-6',
+            url: 'https://test.com'
+        });
+
+        await expect(enrichmentProcessor(job)).rejects.toThrow('database unavailable');
+
+        expect(safeFetch).not.toHaveBeenCalled();
+        expect(supabase.from).not.toHaveBeenCalled();
+        expect(queues.embedding.add).not.toHaveBeenCalled();
+        expect(notifyPipelineBookmarkTerminal).not.toHaveBeenCalled();
     });
 });

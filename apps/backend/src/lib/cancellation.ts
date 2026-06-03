@@ -13,6 +13,21 @@ export type PipelineRunRef = {
 
 export type PipelineControlCache = Map<string, PipelineControlRow | null>;
 
+type PipelineRunSnapshot = {
+    generation: number;
+    status: string;
+};
+
+export type PipelineCancellationLookupCache = {
+    control: PipelineControlCache;
+    runs: Map<string, PipelineRunSnapshot | null>;
+};
+
+export const createPipelineCancellationLookupCache = (): PipelineCancellationLookupCache => ({
+    control: new Map(),
+    runs: new Map(),
+});
+
 const readPipelineControl = async (userId: string): Promise<PipelineControlRow | null> => {
     const { data, error } = await supabase
         .from('user_pipeline_controls')
@@ -78,26 +93,29 @@ export const isUserCancelled = async (
     userId: string,
     jobGeneration?: number,
     pipelineRunId?: string,
-    cache?: PipelineControlCache
+    cache?: PipelineCancellationLookupCache
 ) => {
-    try {
-        let current = cache?.get(userId);
-        if (!cache?.has(userId)) {
-            current = await readPipelineControl(userId);
-            cache?.set(userId, current);
+    const controlCache = cache?.control;
+    let current = controlCache?.get(userId);
+    if (!controlCache?.has(userId)) {
+        current = await readPipelineControl(userId);
+        controlCache?.set(userId, current);
+    }
+
+    if (!current) return false;
+
+    if (pipelineRunId) {
+        if (current.current_pipeline_run_id !== pipelineRunId) {
+            console.log(
+                `[CANCEL] Stale pipeline run for user ${userId}: run=${pipelineRunId}, current=${current.current_pipeline_run_id ?? 'none'}`
+            );
+            return true;
         }
 
-        if (!current) return false;
-
-        if (pipelineRunId) {
-            if (current.current_pipeline_run_id !== pipelineRunId) {
-                console.log(
-                    `[CANCEL] Stale pipeline run for user ${userId}: run=${pipelineRunId}, current=${current.current_pipeline_run_id ?? 'none'}`
-                );
-                return true;
-            }
-
-            const { data: run, error: runError } = await supabase
+        const runCache = cache?.runs;
+        let run = runCache?.get(pipelineRunId);
+        if (!runCache?.has(pipelineRunId)) {
+            const { data, error: runError } = await supabase
                 .from('pipeline_runs')
                 .select('generation, status')
                 .eq('id', pipelineRunId)
@@ -109,32 +127,38 @@ export const isUserCancelled = async (
                 throw runError;
             }
 
-            if (!run) {
-                console.log(`[CANCEL] Missing pipeline run ${pipelineRunId} for user ${userId}`);
-                return true;
-            }
-
-            if (Number(run.generation ?? 0) !== current.job_generation) {
-                console.log(
-                    `[CANCEL] Stale pipeline run for user ${userId}: run=${run.generation}, current=${current.job_generation}`
-                );
-                return true;
-            }
-
-            return run.status !== 'running';
+            run = data
+                ? {
+                    generation: Number(data.generation ?? 0),
+                    status: String(data.status),
+                }
+                : null;
+            runCache?.set(pipelineRunId, run);
         }
 
-        if (typeof jobGeneration === 'number' && current.job_generation !== jobGeneration) {
+        if (!run) {
+            console.log(`[CANCEL] Missing pipeline run ${pipelineRunId} for user ${userId}`);
+            return true;
+        }
+
+        if (run.generation !== current.job_generation) {
             console.log(
-                `[CANCEL] Stale job generation for user ${userId}: job=${jobGeneration}, current=${current.job_generation}`
+                `[CANCEL] Stale pipeline run for user ${userId}: run=${run.generation}, current=${current.job_generation}`
             );
             return true;
         }
 
-        return current.is_cancelled;
-    } catch {
+        return run.status !== 'running';
+    }
+
+    if (typeof jobGeneration === 'number' && current.job_generation !== jobGeneration) {
+        console.log(
+            `[CANCEL] Stale job generation for user ${userId}: job=${jobGeneration}, current=${current.job_generation}`
+        );
         return true;
     }
+
+    return current.is_cancelled;
 };
 
 export const completePipelineRun = async (pipelineRunId: string, totals: Record<string, unknown> = {}) => {

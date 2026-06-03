@@ -16,13 +16,29 @@ export interface EnrichmentJobData {
     url: string;
 }
 
+const exitIfCancelled = async (
+    userId: string,
+    jobGeneration: number | undefined,
+    pipelineRunId: string | undefined,
+    bookmarkId: string,
+    clusteringSettings: ClusteringSettings,
+    checkpoint: string
+) => {
+    if (!(await isUserCancelled(userId, jobGeneration, pipelineRunId))) {
+        return false;
+    }
+
+    console.log(`[ENRICHMENT] Cancelled ${checkpoint} for user ${userId}`);
+    await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings);
+    return true;
+};
+
 export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
     const { userId, pipelineRunId, jobGeneration, bookmarkId, url } = job.data;
     const clusteringSettings = normalizeClusteringSettings(job.data.clusteringSettings);
     console.log(`Enriching bookmark ${bookmarkId}: ${url}`);
 
-    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
-        console.log(`[ENRICHMENT] Cancelled before start for user ${userId}`);
+    if (await exitIfCancelled(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings, 'before start')) {
         return;
     }
 
@@ -43,8 +59,7 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
         }
     }
 
-    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
-        console.log(`[ENRICHMENT] Cancelled after fetch for user ${userId}`);
+    if (await exitIfCancelled(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings, 'after fetch')) {
         return;
     }
 
@@ -59,12 +74,11 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
             .from('bookmarks')
             .update({ status: 'error' })
             .eq('id', bookmarkId);
-        await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, clusteringSettings);
+        await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings);
         return;
     }
 
-    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
-        console.log(`[ENRICHMENT] Cancelled before embedding enqueue for user ${userId}`);
+    if (await exitIfCancelled(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings, 'before embedding enqueue')) {
         return;
     }
 

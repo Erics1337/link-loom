@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     beginUserPipelineRun,
+    createPipelineCancellationLookupCache,
     isUserCancelled,
     markUserCancelled,
 } from '../cancellation';
@@ -144,9 +145,23 @@ describe('durable cancellation controls', () => {
         expect(await isUserCancelled('user-1', run.generation, run.id)).toBe(true);
     });
 
-    it('fails closed when cancellation state cannot be read', async () => {
+    it('rejects when cancellation state cannot be read', async () => {
         selectError = { message: 'database unavailable' };
 
-        expect(await isUserCancelled('user-1', 1)).toBe(true);
+        await expect(isUserCancelled('user-1', 1)).rejects.toEqual(selectError);
+    });
+
+    it('reuses lookup cache across repeated cancellation checks', async () => {
+        const run = await beginUserPipelineRun('user-1');
+        const cache = createPipelineCancellationLookupCache();
+        const { supabase } = await import('../../db');
+        (supabase.from as ReturnType<typeof vi.fn>).mockClear();
+
+        expect(await isUserCancelled('user-1', run.generation, run.id, cache)).toBe(false);
+        expect(await isUserCancelled('user-1', run.generation, run.id, cache)).toBe(false);
+
+        const fromCalls = (supabase.from as ReturnType<typeof vi.fn>).mock.calls;
+        expect(fromCalls.filter(([table]) => table === 'user_pipeline_controls')).toHaveLength(1);
+        expect(fromCalls.filter(([table]) => table === 'pipeline_runs')).toHaveLength(1);
     });
 });
