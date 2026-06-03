@@ -3,6 +3,11 @@ import { supabase } from '../db';
 import { createHash } from 'crypto';
 import { isUserCancelled } from '../lib/cancellation';
 import { ClusteringSettings, normalizeClusteringSettings } from '../lib/clusteringSettings';
+import {
+    notifyPipelineBookmarkTerminal,
+    recordPipelineIngestCompleted,
+    recordPipelineUntrackedError,
+} from '../lib/pipelineCoordinator';
 
 export interface IngestJobData {
     userId: string;
@@ -12,17 +17,18 @@ export interface IngestJobData {
         title: string;
     }[];
     clusteringSettings?: ClusteringSettings;
+    pipelineRunId?: string;
     jobGeneration?: number;
 }
 
 export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
     const { userId, bookmarks: rawBookmarks } = job.data;
-    const { jobGeneration } = job.data;
+    const { jobGeneration, pipelineRunId } = job.data;
     const clusteringSettings = normalizeClusteringSettings(job.data.clusteringSettings);
     console.log(`[INGEST WORKER] Starting: ${rawBookmarks.length} bookmarks for user ${userId}`);
 
     try {
-        if (await isUserCancelled(userId, jobGeneration)) {
+        if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
             console.log(`[INGEST WORKER] Cancelled before start for user ${userId}`);
             return;
         }
@@ -44,7 +50,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
         let saved = 0;
         let handled = 0;
         for (const b of rawBookmarks) {
-            if (await isUserCancelled(userId, jobGeneration)) {
+            if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
                 console.log(`[INGEST WORKER] Cancelled during ingest for user ${userId}`);
                 return;
             }
@@ -58,6 +64,13 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                 .upsert({ id: urlHash, url: b.url }, { onConflict: 'id' });
             if (sharedUpsertError) {
                 console.error(`[INGEST WORKER] Failed to upsert shared link ${b.url}:`, sharedUpsertError);
+                await recordPipelineUntrackedError(
+                    userId,
+                    jobGeneration,
+                    pipelineRunId,
+                    clusteringSettings,
+                    `shared-link:${b.id}:${urlHash}`
+                );
                 if (handled % 25 === 0 || handled === rawBookmarks.length) {
                     await job.updateProgress({ processed: handled, total: rawBookmarks.length });
                 }
@@ -73,6 +86,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                     url: b.url,
                     title: b.title,
                     content_hash: urlHash,
+                    pipeline_run_id: pipelineRunId ?? null,
                     status: 'pending',
                 }, { onConflict: 'chrome_id,user_id' })
                 .select()
@@ -82,6 +96,13 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                 if (error) {
                     console.error(`[INGEST WORKER] Failed to insert bookmark ${b.url}:`, error);
                 }
+                await recordPipelineUntrackedError(
+                    userId,
+                    jobGeneration,
+                    pipelineRunId,
+                    clusteringSettings,
+                    `bookmark-upsert:${b.id}:${urlHash}`
+                );
                 // Bookmark already exists or error, skip
                 if (handled % 25 === 0 || handled === rawBookmarks.length) {
                     await job.updateProgress({ processed: handled, total: rawBookmarks.length });
@@ -101,6 +122,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                     .from('bookmarks')
                     .update({ status: 'error' })
                     .eq('id', inserted.id);
+                await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, clusteringSettings);
                 if (handled % 25 === 0 || handled === rawBookmarks.length) {
                     await job.updateProgress({ processed: handled, total: rawBookmarks.length });
                 }
@@ -121,18 +143,20 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                         .update({ status: 'error' })
                         .eq('id', inserted.id);
                 }
+                await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, clusteringSettings);
             } else {
                 // Cache MISS - Add to Enrichment Queue
                 await queues.enrichment.add(
                     'enrich',
                 {
                     userId,
-                    jobGeneration,
+                    pipelineRunId,
+                    clusteringSettings,
                     bookmarkId: inserted.id,
                     url: inserted.url,
                 },
                 {
-                    jobId: `enrich-${userId}-generation-${jobGeneration ?? 'legacy'}-${inserted.id}`,
+                    jobId: `enrich-${userId}-run-${pipelineRunId || jobGeneration || 'legacy'}-${inserted.id}`,
                 }
             );
             }
@@ -150,18 +174,12 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
         await job.updateProgress({ processed: rawBookmarks.length, total: rawBookmarks.length });
         console.log(`[INGEST WORKER] Done: ${saved} bookmarks saved (${handled} handled)`);
 
-        if (await isUserCancelled(userId, jobGeneration)) {
-            console.log(`[INGEST WORKER] Cancelled before scheduling clustering for user ${userId}`);
+        if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
+            console.log(`[INGEST WORKER] Cancelled before completing ingest for user ${userId}`);
             return;
         }
 
-        // Schedule clustering to run after embeddings complete
-        // Add with delay to allow embedding jobs to finish first
-        console.log(`[INGEST WORKER] Scheduling clustering job for user ${userId}`);
-        await queues.clustering.add('cluster', { userId, clusteringSettings, jobGeneration }, {
-            delay: 2000, 
-            jobId: `cluster-${userId}-generation-${jobGeneration ?? Date.now()}`
-        });
+        await recordPipelineIngestCompleted(userId, jobGeneration, pipelineRunId, clusteringSettings);
     } catch (error) {
         console.error(`[INGEST WORKER] ERROR:`, error);
         throw error;

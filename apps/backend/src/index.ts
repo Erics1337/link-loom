@@ -86,7 +86,11 @@ export const buildApp = async () => {
         },
       ) => {
         const expectedSecret = process.env.E2E_SECRET;
-        if (!expectedSecret) return null;
+        if (!expectedSecret) {
+          return reply
+            .code(401)
+            .send({ error: "E2E_SECRET is not configured" });
+        }
 
         if (req.headers["x-e2e-secret"] !== expectedSecret) {
           return reply.code(401).send({ error: "Invalid e2e secret" });

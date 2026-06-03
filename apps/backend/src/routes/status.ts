@@ -29,6 +29,9 @@ export const registerStatusRoutes = async (fastify: FastifyInstance) => {
                         'isClusteringActive',
                         'isDone',
                         'isPremium',
+                        'pipelineRunId',
+                        'pipelineGeneration',
+                        'pipelineStatus',
                     ],
                     properties: {
                         pending: { type: 'number' },
@@ -47,6 +50,9 @@ export const registerStatusRoutes = async (fastify: FastifyInstance) => {
                         isClusteringActive: { type: 'boolean' },
                         isDone: { type: 'boolean' },
                         isPremium: { type: 'boolean' },
+                        pipelineRunId: { type: ['string', 'null'] },
+                        pipelineGeneration: { type: ['number', 'null'] },
+                        pipelineStatus: { type: ['string', 'null'] },
                     },
                 },
                 401: errorResponseSchema,
@@ -59,6 +65,7 @@ export const registerStatusRoutes = async (fastify: FastifyInstance) => {
 
         const [
             { data: user },
+            { data: currentRun, error: currentRunError },
             { count: totalCount, error: totalError },
             { count: pendingRawCount, error: pendingRawError },
             { count: enrichedCount, error: enrichedError },
@@ -71,6 +78,13 @@ export const registerStatusRoutes = async (fastify: FastifyInstance) => {
                 .from('users')
                 .select('is_premium')
                 .eq('id', userId)
+                .maybeSingle(),
+            supabase
+                .from('pipeline_runs')
+                .select('id, generation, status, started_at, cancelled_at, completed_at, settings, totals, error_summary')
+                .eq('user_id', userId)
+                .order('generation', { ascending: false })
+                .limit(1)
                 .maybeSingle(),
             supabase
                 .from('bookmarks')
@@ -108,6 +122,7 @@ export const registerStatusRoutes = async (fastify: FastifyInstance) => {
 
         const isPremium = user?.is_premium ?? false;
 
+        if (currentRunError) console.error('[STATUS] Current Run Error:', currentRunError);
         if (totalError) console.error('[STATUS] Total Count Error:', totalError);
         if (pendingRawError) console.error('[STATUS] Pending Raw Count Error:', pendingRawError);
         if (enrichedError) console.error('[STATUS] Enriched Count Error:', enrichedError);
@@ -126,14 +141,15 @@ export const registerStatusRoutes = async (fastify: FastifyInstance) => {
         const isClusteringActive = processingCount === 0 && (embeddedCount ?? 0) > 0 && (clusterCount ?? 0) === 0;
 
         console.log(
-            `[STATUS] User ${userId}: total=${totalCount}, pending=${pendingRawCount ?? 0}, enriched=${enrichedCount ?? 0}, embedded=${embeddedCount ?? 0}, errored=${erroredCount ?? 0}, assigned=${distinctAssignedCount}, clusters=${clusterCount}, ingesting=${isIngesting}, ingestProcessed=${ingestProcessed}/${ingestTotal}, clusteringActive=${isClusteringActive}`
+            `[STATUS] User ${userId}: run=${currentRun?.id ?? 'none'} status=${currentRun?.status ?? 'none'} generation=${currentRun?.generation ?? 'none'}, total=${totalCount}, pending=${pendingRawCount ?? 0}, enriched=${enrichedCount ?? 0}, embedded=${embeddedCount ?? 0}, errored=${erroredCount ?? 0}, assigned=${distinctAssignedCount}, clusters=${clusterCount}, ingesting=${isIngesting}, ingestProcessed=${ingestProcessed}/${ingestTotal}, clusteringActive=${isClusteringActive}`
         );
 
         const isDone =
-            processingCount === 0 &&
+            currentRun?.status === 'completed' ||
+            (processingCount === 0 &&
             (clusterCount ?? 0) > 0 &&
             !isClusteringActive &&
-            remainingToAssign === 0;
+            remainingToAssign === 0);
 
         return {
             pending: processingCount,
@@ -152,6 +168,9 @@ export const registerStatusRoutes = async (fastify: FastifyInstance) => {
             isClusteringActive,
             isDone,
             isPremium,
+            pipelineRunId: currentRun?.id ?? null,
+            pipelineGeneration: currentRun?.generation == null ? null : Number(currentRun.generation),
+            pipelineStatus: currentRun?.status ?? null,
         };
     });
 };

@@ -1,22 +1,27 @@
 import { QueueJob, queues } from '../lib/queue';
 import { supabase } from '../db';
 import { isUserCancelled } from '../lib/cancellation';
+import { ClusteringSettings, normalizeClusteringSettings } from '../lib/clusteringSettings';
+import { notifyPipelineBookmarkTerminal } from '../lib/pipelineCoordinator';
 import { safeFetch } from '../lib/safeFetch';
 
 import * as cheerio from 'cheerio';
 
 export interface EnrichmentJobData {
     userId: string;
+    pipelineRunId?: string;
     jobGeneration?: number;
+    clusteringSettings?: ClusteringSettings;
     bookmarkId: string;
     url: string;
 }
 
 export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
-    const { userId, jobGeneration, bookmarkId, url } = job.data;
+    const { userId, pipelineRunId, jobGeneration, bookmarkId, url } = job.data;
+    const clusteringSettings = normalizeClusteringSettings(job.data.clusteringSettings);
     console.log(`Enriching bookmark ${bookmarkId}: ${url}`);
 
-    if (await isUserCancelled(userId, jobGeneration)) {
+    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
         console.log(`[ENRICHMENT] Cancelled before start for user ${userId}`);
         return;
     }
@@ -38,7 +43,7 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
         }
     }
 
-    if (await isUserCancelled(userId, jobGeneration)) {
+    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
         console.log(`[ENRICHMENT] Cancelled after fetch for user ${userId}`);
         return;
     }
@@ -54,10 +59,11 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
             .from('bookmarks')
             .update({ status: 'error' })
             .eq('id', bookmarkId);
+        await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, clusteringSettings);
         return;
     }
 
-    if (await isUserCancelled(userId, jobGeneration)) {
+    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
         console.log(`[ENRICHMENT] Cancelled before embedding enqueue for user ${userId}`);
         return;
     }
@@ -67,13 +73,14 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
         'embed',
         {
             userId,
-            jobGeneration,
+            pipelineRunId,
+            clusteringSettings,
             bookmarkId,
             text: `${title} ${description} ${url}`,
             url,
         },
         {
-            jobId: `embed-${userId}-generation-${jobGeneration ?? 'legacy'}-${bookmarkId}`,
+            jobId: `embed-${userId}-run-${pipelineRunId || jobGeneration || 'legacy'}-${bookmarkId}`,
         }
     );
 };

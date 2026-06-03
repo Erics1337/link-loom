@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { clusteringProcessor } from '../clustering';
 import { supabase } from '../../db';
-import { queues } from '../../lib/queue';
-import { isUserCancelled } from '../../lib/cancellation';
-import { QueueJob } from '../../lib/queue';
+import { completePipelineRun, isUserCancelled } from '../../lib/cancellation';
+import { recordPipelineClusteringCompleted } from '../../lib/pipelineCoordinator';
+import { QueueJob, queues } from '../../lib/queue';
 
 vi.mock('../../db', () => ({
     supabase: {
@@ -38,7 +38,12 @@ vi.mock('../../lib/queue', () => ({
 }));
 
 vi.mock('../../lib/cancellation', () => ({
+    completePipelineRun: vi.fn(),
     isUserCancelled: vi.fn()
+}));
+
+vi.mock('../../lib/pipelineCoordinator', () => ({
+    recordPipelineClusteringCompleted: vi.fn(),
 }));
 
 const createMockChain = (resolvedValue: any, explicitCount?: number) => {
@@ -58,6 +63,7 @@ describe('Clustering Worker', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockCreate.mockReset();
+        (completePipelineRun as any).mockResolvedValue(undefined);
         (isUserCancelled as any).mockReturnValue(false);
     });
 
@@ -65,11 +71,14 @@ describe('Clustering Worker', () => {
         data,
     } as unknown as QueueJob<any>);
 
-    it('should defer if there are still pending inflight bookmarks', async () => {
-        const job = createMockJob({ userId: 'user-1', jobGeneration: 11 });
+    it('should complete an empty run when no bookmarks are available', async () => {
+        const job = createMockJob({ userId: 'user-1', pipelineRunId: 'run-11', jobGeneration: 11 });
 
-        // First DB call: checking inflight count
-        const mockBookmarksChain = createMockChain(null, 5); // 5 inflight
+        const mockBookmarksChain = {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
+        };
 
         (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'bookmarks') return mockBookmarksChain;
@@ -78,20 +87,17 @@ describe('Clustering Worker', () => {
 
         await clusteringProcessor(job);
 
-        // Verify clustering was deferred
-        expect(queues.clustering.add).toHaveBeenCalledWith(
-            'cluster',
-            expect.objectContaining({ userId: 'user-1', jobGeneration: 11 }),
-            expect.objectContaining({
-                delay: 5000,
-                jobId: 'cluster-user-1-deferred-generation-11',
-            })
-        );
-        expect(isUserCancelled).toHaveBeenCalledWith('user-1', 11);
+        expect(recordPipelineClusteringCompleted).toHaveBeenCalledWith('user-1', 11, 'run-11');
+        expect(completePipelineRun).toHaveBeenCalledWith('run-11', {
+            totalBookmarks: 0,
+            embeddedBookmarks: 0,
+            assignedBookmarks: 0,
+        });
+        expect(isUserCancelled).toHaveBeenCalledWith('user-1', 11, 'run-11');
     });
 
     it('should fetch valid bookmarks and create at least a root cluster', async () => {
-        const job = createMockJob({ userId: 'user-2', jobGeneration: 12 });
+        const job = createMockJob({ userId: 'user-2', pipelineRunId: 'run-12', jobGeneration: 12 });
 
         // Second DB call: Fetch bookmarks
         const mockFetchChain = {
@@ -144,7 +150,13 @@ describe('Clustering Worker', () => {
         // Actually, we mocked the config defaults so we don't know the exact split without tracing. But we know assigning happens.
         
         expect(supabase.from).toHaveBeenCalledWith('bookmarks');
-        expect(isUserCancelled).toHaveBeenCalledWith('user-2', 12);
+        expect(recordPipelineClusteringCompleted).toHaveBeenCalledWith('user-2', 12, 'run-12');
+        expect(completePipelineRun).toHaveBeenCalledWith('run-12', expect.objectContaining({
+            totalBookmarks: 2,
+            embeddedBookmarks: 2,
+            assignedBookmarks: 2,
+        }));
+        expect(isUserCancelled).toHaveBeenCalledWith('user-2', 12, 'run-12');
     });
 
     it('should accept Supabase joined vectors returned as arrays', async () => {

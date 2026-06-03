@@ -5,6 +5,12 @@ import { enrichmentProcessor } from '../queues/enrichment';
 import { embeddingProcessor } from '../queues/embedding';
 import { clusteringProcessor } from '../queues/clustering';
 import { supabase } from '../db';
+import { normalizeClusteringSettings } from '../lib/clusteringSettings';
+import { isUserCancelled } from '../lib/cancellation';
+import {
+    notifyPipelineBookmarkTerminal,
+    recordPipelineUntrackedError,
+} from '../lib/pipelineCoordinator';
 
 const processors = {
     ingest: ingestProcessor,
@@ -29,6 +35,9 @@ const getFailureScope = (message: QueuedMessage) => {
     if (!isObject(message.data)) return {};
 
     const userId = typeof message.data.userId === 'string' ? message.data.userId : undefined;
+    const pipelineRunId = typeof message.data.pipelineRunId === 'string' ? message.data.pipelineRunId : undefined;
+    const jobGeneration = typeof message.data.jobGeneration === 'number' ? message.data.jobGeneration : undefined;
+    const clusteringSettings = normalizeClusteringSettings(message.data.clusteringSettings);
     const bookmarkId = typeof message.data.bookmarkId === 'string' ? message.data.bookmarkId : undefined;
     const chromeIds = Array.isArray(message.data.bookmarks)
         ? message.data.bookmarks
@@ -37,7 +46,7 @@ const getFailureScope = (message: QueuedMessage) => {
             .filter((id): id is string => typeof id === 'string' && id.length > 0)
         : [];
 
-    return { userId, bookmarkId, chromeIds };
+    return { userId, pipelineRunId, jobGeneration, clusteringSettings, bookmarkId, chromeIds };
 };
 
 const recordQueueJobFailure = async (
@@ -47,7 +56,7 @@ const recordQueueJobFailure = async (
     receiveCount: number,
     error: unknown,
 ) => {
-    const { userId, bookmarkId, chromeIds } = getFailureScope(message);
+    const { userId, pipelineRunId, jobGeneration, clusteringSettings, bookmarkId, chromeIds } = getFailureScope(message);
     const jobId = message.jobId ?? fallbackJobId;
     const errorMessage = getErrorMessage(error).slice(0, 1000);
 
@@ -58,6 +67,7 @@ const recordQueueJobFailure = async (
             job_id: jobId,
             job_name: message.jobName,
             user_id: userId,
+            pipeline_run_id: pipelineRunId,
             bookmark_id: bookmarkId,
             attempts: message.attempts,
             receive_count: receiveCount,
@@ -69,22 +79,51 @@ const recordQueueJobFailure = async (
         console.error(`[LAMBDA:${queueName}] Failed to record queue job failure ${jobId}`, failureError);
     }
 
+    if (userId && await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
+        console.log(`[LAMBDA:${queueName}] Skipping stale exhausted job mutation for ${jobId}`);
+        return;
+    }
+
     if (bookmarkId) {
-        const { error: bookmarkError } = await supabase
+        let updateQuery = supabase
             .from('bookmarks')
             .update({ status: 'error' })
             .eq('id', bookmarkId);
+
+        if (pipelineRunId) {
+            updateQuery = updateQuery.eq('pipeline_run_id', pipelineRunId);
+        }
+
+        const { error: bookmarkError } = await updateQuery;
         if (bookmarkError) {
             console.error(`[LAMBDA:${queueName}] Failed to mark bookmark ${bookmarkId} as error`, bookmarkError);
+        } else if (userId) {
+            await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, clusteringSettings);
         }
     } else if (userId && chromeIds && chromeIds.length > 0) {
-        const { error: bookmarkError } = await supabase
+        let updateQuery = supabase
             .from('bookmarks')
             .update({ status: 'error' })
             .eq('user_id', userId)
             .in('chrome_id', chromeIds);
+
+        if (pipelineRunId) {
+            updateQuery = updateQuery.eq('pipeline_run_id', pipelineRunId);
+        }
+
+        const { error: bookmarkError } = await updateQuery;
         if (bookmarkError) {
             console.error(`[LAMBDA:${queueName}] Failed to mark exhausted ingest bookmarks as error`, bookmarkError);
+        } else {
+            for (const chromeId of chromeIds) {
+                await recordPipelineUntrackedError(
+                    userId,
+                    jobGeneration,
+                    pipelineRunId,
+                    clusteringSettings,
+                    `exhausted:${jobId}:${chromeId}`
+                );
+            }
         }
     }
 };

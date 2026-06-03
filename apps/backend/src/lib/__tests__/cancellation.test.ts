@@ -12,33 +12,80 @@ type ControlRow = {
     updated_at: string;
 };
 
+type RunRow = {
+    id: string;
+    user_id: string;
+    generation: number;
+    status: 'running' | 'cancelled' | 'completed' | 'failed';
+};
+
 const controls = new Map<string, ControlRow>();
+const runs = new Map<string, RunRow>();
 let selectError: unknown = null;
 
 vi.mock('../../db', () => ({
     supabase: {
+        rpc: vi.fn(async (fn: string, args: { p_user_id: string }) => {
+            const userId = args.p_user_id;
+            if (fn === 'begin_user_pipeline_run') {
+                const current = controls.get(userId);
+                const nextGeneration = (current?.job_generation ?? 0) + 1;
+                controls.set(userId, {
+                    user_id: userId,
+                    is_cancelled: false,
+                    job_generation: nextGeneration,
+                    updated_at: new Date().toISOString(),
+                });
+                const run = {
+                    id: `run-${nextGeneration}`,
+                    user_id: userId,
+                    generation: nextGeneration,
+                    status: 'running' as const,
+                };
+                runs.set(run.id, run);
+                return { data: { id: run.id, generation: nextGeneration }, error: null };
+            }
+
+            if (fn === 'mark_user_cancelled') {
+                const current = controls.get(userId);
+                controls.set(userId, {
+                    user_id: userId,
+                    is_cancelled: true,
+                    job_generation: current?.job_generation ?? 0,
+                    updated_at: new Date().toISOString(),
+                });
+                for (const run of Array.from(runs.values())) {
+                    if (run.user_id === userId && run.generation === (current?.job_generation ?? 0)) {
+                        run.status = 'cancelled';
+                    }
+                }
+                return { data: null, error: null };
+            }
+
+            throw new Error(`Unexpected rpc ${fn}`);
+        }),
         from: vi.fn((table: string) => {
-            if (table !== 'user_pipeline_controls') {
+            if (!['user_pipeline_controls', 'pipeline_runs'].includes(table)) {
                 throw new Error(`Unexpected table ${table}`);
             }
 
             let userId = '';
-            return {
+            let runId = '';
+            const chain = {
                 select: vi.fn().mockReturnThis(),
                 eq: vi.fn((_column: string, value: string) => {
-                    userId = value;
-                    return {
-                        maybeSingle: vi.fn(async () => ({
-                            data: controls.get(userId) ?? null,
-                            error: selectError,
-                        })),
-                    };
+                    if (_column === 'user_id') userId = value;
+                    if (_column === 'id') runId = value;
+                    return chain;
                 }),
-                upsert: vi.fn(async (row: ControlRow) => {
-                    controls.set(row.user_id, row);
-                    return { data: null, error: null };
-                }),
+                maybeSingle: vi.fn(async () => ({
+                    data: table === 'user_pipeline_controls'
+                        ? controls.get(userId) ?? null
+                        : Array.from(runs.values()).find(run => run.id === runId && run.user_id === userId) ?? null,
+                    error: selectError,
+                })),
             };
+            return chain;
         }),
     },
 }));
@@ -46,6 +93,7 @@ vi.mock('../../db', () => ({
 describe('durable cancellation controls', () => {
     beforeEach(() => {
         controls.clear();
+        runs.clear();
         selectError = null;
     });
 
@@ -57,9 +105,9 @@ describe('durable cancellation controls', () => {
             updated_at: '2026-01-01T00:00:00.000Z',
         });
 
-        const generation = await beginUserPipelineRun('user-1');
+        const run = await beginUserPipelineRun('user-1');
 
-        expect(generation).toBe(4);
+        expect(run).toMatchObject({ id: 'run-4', generation: 4 });
         expect(controls.get('user-1')).toMatchObject({
             user_id: 'user-1',
             is_cancelled: false,
@@ -69,23 +117,24 @@ describe('durable cancellation controls', () => {
 
     it('treats older queued work as cancelled after a new generation starts', async () => {
         await beginUserPipelineRun('user-1');
-        const currentGeneration = await beginUserPipelineRun('user-1');
+        const currentRun = await beginUserPipelineRun('user-1');
 
-        expect(currentGeneration).toBe(2);
+        expect(currentRun.generation).toBe(2);
         expect(await isUserCancelled('user-1', 1)).toBe(true);
         expect(await isUserCancelled('user-1', 2)).toBe(false);
+        expect(await isUserCancelled('user-1', 2, currentRun.id)).toBe(false);
     });
 
     it('marks the current generation as cancelled without advancing it', async () => {
-        const generation = await beginUserPipelineRun('user-1');
+        const run = await beginUserPipelineRun('user-1');
 
         await markUserCancelled('user-1');
 
         expect(controls.get('user-1')).toMatchObject({
             is_cancelled: true,
-            job_generation: generation,
+            job_generation: run.generation,
         });
-        expect(await isUserCancelled('user-1', generation)).toBe(true);
+        expect(await isUserCancelled('user-1', run.generation, run.id)).toBe(true);
     });
 
     it('fails closed when cancellation state cannot be read', async () => {

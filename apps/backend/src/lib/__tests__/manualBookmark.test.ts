@@ -6,6 +6,7 @@ import { beginUserPipelineRun } from '../cancellation';
 
 vi.mock('../../db', () => ({
     supabase: {
+        rpc: vi.fn(),
         from: vi.fn(),
     },
 }));
@@ -25,7 +26,8 @@ vi.mock('../cancellation', () => ({
 describe('queueManualBookmark', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        (beginUserPipelineRun as any).mockResolvedValue(7);
+        (beginUserPipelineRun as any).mockResolvedValue({ id: 'run-7', generation: 7 });
+        (supabase.rpc as any).mockResolvedValue({ data: null, error: null });
     });
 
     it('rejects unsupported URL protocols before queueing work', async () => {
@@ -42,6 +44,7 @@ describe('queueManualBookmark', () => {
             payload: { error: 'Only http and https URLs can be saved.' },
         });
         expect(queues.ingest.add).not.toHaveBeenCalled();
+        expect(beginUserPipelineRun).not.toHaveBeenCalled();
     });
 
     it('queues valid manual links through ingest after clearing stale clusters', async () => {
@@ -75,6 +78,7 @@ describe('queueManualBookmark', () => {
             'ingest',
             expect.objectContaining({
                 userId: 'user-1',
+                pipelineRunId: 'run-7',
                 jobGeneration: 7,
                 bookmarks: [
                     expect.objectContaining({
@@ -83,7 +87,7 @@ describe('queueManualBookmark', () => {
                     }),
                 ],
             }),
-            { jobId: 'ingest-user-1-manual-generation-7' }
+            { jobId: 'ingest-user-1-manual-run-run-7' }
         );
     });
 });

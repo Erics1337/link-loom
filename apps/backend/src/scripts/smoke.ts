@@ -8,24 +8,39 @@ const backendUrl = (process.env.BACKEND_SMOKE_URL || process.env.BACKEND_URL || 
 const userId = process.env.BACKEND_SMOKE_USER_ID || '';
 const accessToken = process.env.BACKEND_SMOKE_ACCESS_TOKEN || process.env.BACKEND_SMOKE_TOKEN || '';
 const runEmptyIngest = process.env.BACKEND_SMOKE_RUN_EMPTY_INGEST === 'true';
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
-const requestJson = async (path: string, init: RequestInit = {}) => {
-    const response = await fetch(`${backendUrl}${path}`, {
-        ...init,
-        headers: {
-            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-            ...init.headers,
-        },
-    });
-    const text = await response.text();
-    let body: unknown = text;
+const requestJson = async (path: string, init: RequestInit = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    init.signal?.addEventListener('abort', () => controller.abort(), { once: true });
+
     try {
-        body = text ? JSON.parse(text) : null;
-    } catch {
-        // Keep raw text for diagnostics.
-    }
+        const response = await fetch(`${backendUrl}${path}`, {
+            ...init,
+            signal: controller.signal,
+            headers: {
+                ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+                ...init.headers,
+            },
+        });
+        const text = await response.text();
+        let body: unknown = text;
+        try {
+            body = text ? JSON.parse(text) : null;
+        } catch {
+            // Keep raw text for diagnostics.
+        }
 
-    return { response, body };
+        return { response, body };
+    } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+            throw new Error(`request timeout after ${timeoutMs} ms`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+    }
 };
 
 const result = (name: string, ok: boolean, detail: string): SmokeResult => ({ name, ok, detail });

@@ -3,6 +3,7 @@ import { supabase } from '../db';
 import { queues } from './queue';
 import { beginUserPipelineRun } from './cancellation';
 import { ClusteringSettings, normalizeClusteringSettings } from './clusteringSettings';
+import { recordPipelineRunStarted } from './pipelineCoordinator';
 
 type QueueManualBookmarkInput = {
     userId: string;
@@ -64,7 +65,9 @@ export const queueManualBookmark = async ({
         }
     }
 
-    const jobGeneration = await beginUserPipelineRun(userId);
+    const pipelineRun = await beginUserPipelineRun(userId);
+    const normalizedClusteringSettings = normalizeClusteringSettings(clusteringSettings);
+    await recordPipelineRunStarted(userId, pipelineRun.generation, 1, normalizedClusteringSettings);
 
     const { error: deleteClustersError } = await supabase
         .from('clusters')
@@ -78,15 +81,16 @@ export const queueManualBookmark = async ({
     const chromeId = `manual-${randomUUID()}`;
     await queues.ingest.add('ingest', {
         userId,
-        jobGeneration,
+        pipelineRunId: pipelineRun.id,
+        jobGeneration: pipelineRun.generation,
         bookmarks: [{
             id: chromeId,
             url: parsedUrl.toString(),
             title: title?.trim() || parsedUrl.toString(),
         }],
-        clusteringSettings: normalizeClusteringSettings(clusteringSettings),
+        clusteringSettings: normalizedClusteringSettings,
     }, {
-        jobId: `ingest-${userId}-manual-generation-${jobGeneration}`,
+        jobId: `ingest-${userId}-manual-run-${pipelineRun.id || pipelineRun.generation}`,
     });
 
     return { ok: true, chromeId };

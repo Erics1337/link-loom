@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS public.queue_job_failures (
   job_id TEXT NOT NULL,
   job_name TEXT NOT NULL,
   user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+  pipeline_run_id UUID REFERENCES public.pipeline_runs(id) ON DELETE SET NULL,
   bookmark_id UUID REFERENCES public.bookmarks(id) ON DELETE SET NULL,
   attempts INTEGER NOT NULL CHECK (attempts > 0),
   receive_count INTEGER NOT NULL CHECK (receive_count > 0),
@@ -14,6 +15,9 @@ CREATE TABLE IF NOT EXISTS public.queue_job_failures (
 
 CREATE INDEX IF NOT EXISTS idx_queue_job_failures_user_failed_at
 ON public.queue_job_failures (user_id, failed_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_queue_job_failures_pipeline_run
+ON public.queue_job_failures (pipeline_run_id);
 
 ALTER TABLE public.queue_job_failures ENABLE ROW LEVEL SECURITY;
 

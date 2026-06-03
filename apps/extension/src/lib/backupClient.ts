@@ -118,8 +118,13 @@ export class BackupClient {
             throw new Error(errorData.error || 'Failed to save structure snapshot');
         }
 
+        const data = await response.json().catch(() => ({}));
+        const snapshotId = typeof data?.snapshotId === 'string' && data.snapshotId
+            ? data.snapshotId
+            : `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
         return {
-            id: 'just_created',
+            id: snapshotId,
             name,
             createdAt: new Date().toISOString(),
             summary: { folders: 0, bookmarks: 0 }

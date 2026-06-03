@@ -139,10 +139,13 @@ export const clearPersistedOverflowBookmarks = async (userId: string) => {
 };
 
 export const savePreOrganizeBackup = async (tree: any[]) => {
+    const clonedTree = typeof structuredClone === 'function'
+        ? structuredClone(tree)
+        : JSON.parse(JSON.stringify(tree));
     const backup = {
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
-        tree,
+        tree: clonedTree,
     };
 
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {

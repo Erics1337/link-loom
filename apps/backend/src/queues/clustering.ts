@@ -3,10 +3,11 @@ import { supabase } from '../db';
 import { kmeans } from 'ml-kmeans';
 import OpenAI from 'openai';
 import { createLimit } from '../lib/limit';
-import { isUserCancelled } from '../lib/cancellation';
+import { completePipelineRun, isUserCancelled } from '../lib/cancellation';
 import { ClusteringDensityProfile, ClusteringSettings, getDensityProfile, normalizeClusteringSettings } from '../lib/clusteringSettings';
 import { emojiPrefixLabel } from '../lib/emojiNaming';
 import { queues } from '../lib/queue';
+import { recordPipelineClusteringCompleted } from '../lib/pipelineCoordinator';
 
 import fs from 'fs';
 import path from 'path';
@@ -26,6 +27,7 @@ const openai = new OpenAI({
 export interface ClusteringJobData {
     userId: string;
     clusteringSettings?: ClusteringSettings;
+    pipelineRunId?: string;
     jobGeneration?: number;
 }
 
@@ -127,7 +129,7 @@ const getJoinedSharedVector = (joined: unknown): unknown => {
     return null;
 };
 
-const recoverStalePipelineState = async (userId: string) => {
+const recoverStalePipelineState = async (userId: string, pipelineRunId?: string, jobGeneration?: number) => {
     const { data: inflightBookmarks, error: inflightError } = await supabase
         .from('bookmarks')
         .select(`
@@ -205,7 +207,7 @@ const recoverStalePipelineState = async (userId: string) => {
     for (const enrichmentJob of toQueueEnrichment) {
         await queues.enrichment.add(
             'enrich',
-            { userId, bookmarkId: enrichmentJob.bookmarkId, url: enrichmentJob.url }
+            { userId, pipelineRunId, bookmarkId: enrichmentJob.bookmarkId, url: enrichmentJob.url }
         );
     }
 
@@ -214,6 +216,7 @@ const recoverStalePipelineState = async (userId: string) => {
             'embed',
             {
                 userId,
+                pipelineRunId,
                 bookmarkId: embeddingJob.bookmarkId,
                 url: embeddingJob.url,
                 text: embeddingJob.text,
@@ -427,13 +430,14 @@ const assignLeafGroup = async (
     parentId: string | null,
     userId: string,
     settings: ClusteringSettings,
+    pipelineRunId?: string,
     jobGeneration?: number
 ) => {
     let leafClusterId = parentId;
 
     if (!leafClusterId) {
         const fallbackName = await generateClusterName(bookmarkIds, settings);
-        if (await isUserCancelled(userId, jobGeneration)) {
+        if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
             log(`[CLUSTERING] Cancelled before leaf cluster creation for user ${userId}`);
             return;
         }
@@ -445,7 +449,7 @@ const assignLeafGroup = async (
         return;
     }
 
-    if (await isUserCancelled(userId, jobGeneration)) {
+    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
         log(`[CLUSTERING] Cancelled before assignment write for user ${userId}`);
         return;
     }
@@ -601,9 +605,10 @@ async function recursiveCluster(
     parentId: string | null,
     userId: string,
     settings: ClusteringSettings,
+    pipelineRunId?: string,
     jobGeneration?: number
 ) {
-    if (await isUserCancelled(userId, jobGeneration)) {
+    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
         log(`[CLUSTERING] Cancelled recursion for user ${userId}`);
         return;
     }
@@ -612,13 +617,13 @@ async function recursiveCluster(
 
     // Base case: stop splitting when node is already small enough for selected density.
     if (bookmarkIds.length <= profile.targetLeafSize) {
-        await assignLeafGroup(bookmarkIds, parentId, userId, settings, jobGeneration);
+        await assignLeafGroup(bookmarkIds, parentId, userId, settings, pipelineRunId, jobGeneration);
         return;
     }
 
     const k = chooseSplitK(bookmarkIds.length, profile);
     if (k < 2) {
-        await assignLeafGroup(bookmarkIds, parentId, userId, settings, jobGeneration);
+        await assignLeafGroup(bookmarkIds, parentId, userId, settings, pipelineRunId, jobGeneration);
         return;
     }
 
@@ -642,7 +647,7 @@ async function recursiveCluster(
 
         // If split collapses to one group, treat as a leaf to avoid useless folder depth.
         if (groups.length <= 1) {
-            await assignLeafGroup(bookmarkIds, parentId, userId, settings, jobGeneration);
+            await assignLeafGroup(bookmarkIds, parentId, userId, settings, pipelineRunId, jobGeneration);
             return;
         }
 
@@ -650,7 +655,7 @@ async function recursiveCluster(
             groups.map(group =>
                 limit(async () => {
                     const name = await generateClusterName(group.ids, settings);
-                    if (await isUserCancelled(userId, jobGeneration)) {
+                    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
                         return { clusterId: null, group };
                     }
                     const clusterId = await createCluster(userId, parentId, name);
@@ -662,47 +667,29 @@ async function recursiveCluster(
         await Promise.all(
             createdClusters.map(async item => {
                 if (!item.clusterId) {
-                    await assignLeafGroup(item.group.ids, parentId, userId, settings, jobGeneration);
+                    await assignLeafGroup(item.group.ids, parentId, userId, settings, pipelineRunId, jobGeneration);
                     return;
                 }
 
-                await recursiveCluster(item.group.ids, item.group.vecs, item.clusterId, userId, settings, jobGeneration);
+                await recursiveCluster(item.group.ids, item.group.vecs, item.clusterId, userId, settings, pipelineRunId, jobGeneration);
             })
         );
     } catch (e: any) {
         log(`Clustering error: ${e}`);
-        await assignLeafGroup(bookmarkIds, parentId, userId, settings, jobGeneration);
+        await assignLeafGroup(bookmarkIds, parentId, userId, settings, pipelineRunId, jobGeneration);
     }
 }
 
 export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
     const { userId } = job.data;
-    const { jobGeneration } = job.data;
+    const { pipelineRunId, jobGeneration } = job.data;
     const settings = normalizeClusteringSettings(job.data.clusteringSettings);
     log(
         `Clustering bookmarks for user ${userId} (density=${settings.folderDensity}, tone=${settings.namingTone}, mode=${settings.organizationMode}, emoji=${settings.useEmojiNames})`
     );
 
-    if (await isUserCancelled(userId, jobGeneration)) {
+    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
         log(`[CLUSTERING] Cancelled before start for user ${userId}`);
-        return;
-    }
-
-    // Delay clustering until enrichment/embedding pipeline settles to avoid partial structures.
-    const { count: initialInflightCount } = await supabase
-        .from('bookmarks')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .in('status', ['pending', 'enriched']);
-    let inflightCount = initialInflightCount ?? 0;
-
-    if (inflightCount > 0) {
-        log(`[CLUSTERING] Deferring user ${userId}; ${inflightCount} bookmarks still pending enrichment/embedding`);
-        await queues.clustering.add(
-            'cluster',
-            { userId, clusteringSettings: settings, jobGeneration },
-            { delay: 5000, jobId: `cluster-${userId}-deferred-generation-${jobGeneration ?? Date.now()}` }
-        );
         return;
     }
 
@@ -734,7 +721,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         if (chunk.length < size) break;
         from += size;
 
-        if (await isUserCancelled(userId, jobGeneration)) {
+        if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
             log(`[CLUSTERING] Cancelled during fetch for user ${userId}`);
             return;
         }
@@ -742,6 +729,12 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
 
     if (!userBookmarks || userBookmarks.length === 0) {
         log('No user bookmarks found');
+        await recordPipelineClusteringCompleted(userId, jobGeneration, pipelineRunId);
+        await completePipelineRun(pipelineRunId ?? '', {
+            totalBookmarks: 0,
+            embeddedBookmarks: 0,
+            assignedBookmarks: 0,
+        });
         return;
     }
 
@@ -754,6 +747,12 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
 
     if (validBookmarks.length === 0) {
         log('No valid bookmarks with vectors found');
+        await recordPipelineClusteringCompleted(userId, jobGeneration, pipelineRunId);
+        await completePipelineRun(pipelineRunId ?? '', {
+            totalBookmarks: userBookmarks.length,
+            embeddedBookmarks: 0,
+            assignedBookmarks: 0,
+        });
         return;
     }
 
@@ -772,17 +771,29 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
 
     if (parsedRows.length === 0) {
         log('No parseable vectors were available after normalization step');
+        await recordPipelineClusteringCompleted(userId, jobGeneration, pipelineRunId);
+        await completePipelineRun(pipelineRunId ?? '', {
+            totalBookmarks: userBookmarks.length,
+            embeddedBookmarks: validBookmarks.length,
+            assignedBookmarks: 0,
+        });
         return;
     }
 
     const ids = parsedRows.map(row => row.id);
     const vectors = parsedRows.map(row => row.vector);
 
-    if (await isUserCancelled(userId, jobGeneration)) {
+    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
         log(`[CLUSTERING] Cancelled before writes for user ${userId}`);
         return;
     }
 
-    await recursiveCluster(ids, vectors, null, userId, settings, jobGeneration);
+    await recursiveCluster(ids, vectors, null, userId, settings, pipelineRunId, jobGeneration);
+    await recordPipelineClusteringCompleted(userId, jobGeneration, pipelineRunId);
+    await completePipelineRun(pipelineRunId ?? '', {
+        totalBookmarks: userBookmarks.length,
+        embeddedBookmarks: validBookmarks.length,
+        assignedBookmarks: ids.length,
+    });
     log('Clustering completed');
 };

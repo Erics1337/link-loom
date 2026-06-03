@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { embeddingProcessor } from '../embedding';
 import { supabase } from '../../db';
 import { isUserCancelled } from '../../lib/cancellation';
+import { notifyPipelineBookmarkTerminal } from '../../lib/pipelineCoordinator';
 import { QueueJob } from '../../lib/queue';
 
 vi.mock('../../db', () => ({
@@ -24,6 +25,10 @@ vi.mock('openai', () => {
 
 vi.mock('../../lib/cancellation', () => ({
     isUserCancelled: vi.fn()
+}));
+
+vi.mock('../../lib/pipelineCoordinator', () => ({
+    notifyPipelineBookmarkTerminal: vi.fn(),
 }));
 
 const createMockChain = (resolvedValue: any) => {
@@ -51,6 +56,7 @@ describe('Embedding Worker', () => {
     it('should correctly process a cache MISS, call OpenAI, and cache the result', async () => {
         const job = createMockJob({
             userId: 'user-1',
+            pipelineRunId: 'run-6',
             jobGeneration: 6,
             bookmarkId: 'bm-1',
             text: 'Test content',
@@ -88,12 +94,19 @@ describe('Embedding Worker', () => {
         expect(mockBookmarksChain.update).toHaveBeenCalledWith({
             status: 'embedded'
         });
-        expect(isUserCancelled).toHaveBeenCalledWith('user-1', 6);
+        expect(notifyPipelineBookmarkTerminal).toHaveBeenCalledWith(
+            'user-1',
+            6,
+            'run-6',
+            expect.any(Object)
+        );
+        expect(isUserCancelled).toHaveBeenCalledWith('user-1', 6, 'run-6');
     });
 
     it('should correctly process a cache HIT and skip OpenAI', async () => {
         const job = createMockJob({
             userId: 'user-2',
+            pipelineRunId: 'run-7',
             jobGeneration: 7,
             bookmarkId: 'bm-2',
             text: 'More test content',
@@ -118,7 +131,15 @@ describe('Embedding Worker', () => {
         expect(mockBookmarksChain.update).toHaveBeenCalledWith({
             status: 'embedded'
         });
-        expect(isUserCancelled).toHaveBeenCalledWith('user-2', 7);
+        expect(notifyPipelineBookmarkTerminal).toHaveBeenCalledWith(
+            'user-2',
+            7,
+            'run-7',
+            expect.any(Object)
+        );
+        expect(isUserCancelled).toHaveBeenCalledTimes(2);
+        expect(isUserCancelled).toHaveBeenNthCalledWith(1, 'user-2', 7, 'run-7');
+        expect(isUserCancelled).toHaveBeenNthCalledWith(2, 'user-2', 7, 'run-7');
     });
 
     it('should abort if cancelled before processing', async () => {

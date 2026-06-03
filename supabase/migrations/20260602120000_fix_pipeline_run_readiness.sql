@@ -1,15 +1,11 @@
 ALTER TABLE public.user_pipeline_controls
-ADD COLUMN IF NOT EXISTS job_generation BIGINT NOT NULL DEFAULT 0;
-
-ALTER TABLE public.user_pipeline_controls
+ADD COLUMN IF NOT EXISTS job_generation BIGINT NOT NULL DEFAULT 0,
 ADD COLUMN IF NOT EXISTS total_bookmarks INTEGER NOT NULL DEFAULT 0,
 ADD COLUMN IF NOT EXISTS untracked_error_count INTEGER NOT NULL DEFAULT 0,
 ADD COLUMN IF NOT EXISTS clustering_settings JSONB NOT NULL DEFAULT '{}'::jsonb,
 ADD COLUMN IF NOT EXISTS ingest_completed_at TIMESTAMPTZ,
 ADD COLUMN IF NOT EXISTS clustering_enqueued_at TIMESTAMPTZ,
 ADD COLUMN IF NOT EXISTS clustering_completed_at TIMESTAMPTZ;
-
-DROP INDEX IF EXISTS public.idx_user_pipeline_controls_cancelled;
 
 CREATE TABLE IF NOT EXISTS public.pipeline_runs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -34,9 +30,6 @@ CREATE TABLE IF NOT EXISTS public.pipeline_run_untracked_errors (
   UNIQUE (user_id, job_generation, error_key)
 );
 
-ALTER TABLE public.bookmarks
-ADD COLUMN IF NOT EXISTS pipeline_run_id UUID REFERENCES public.pipeline_runs(id) ON DELETE SET NULL;
-
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_user_generation
 ON public.pipeline_runs (user_id, generation DESC);
 
@@ -45,9 +38,6 @@ ON public.pipeline_runs (user_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_pipeline_run_untracked_errors_user_generation
 ON public.pipeline_run_untracked_errors (user_id, job_generation);
-
-CREATE INDEX IF NOT EXISTS idx_bookmarks_pipeline_run_status
-ON public.bookmarks (pipeline_run_id, status);
 
 ALTER TABLE public.pipeline_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.pipeline_run_untracked_errors ENABLE ROW LEVEL SECURITY;
@@ -61,6 +51,20 @@ USING (user_id = auth.uid());
 
 GRANT SELECT ON public.pipeline_runs TO authenticated;
 REVOKE ALL ON TABLE public.pipeline_run_untracked_errors FROM anon, authenticated;
+
+ALTER TABLE public.bookmarks
+ADD COLUMN IF NOT EXISTS pipeline_run_id UUID REFERENCES public.pipeline_runs(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_bookmarks_pipeline_run_status
+ON public.bookmarks (pipeline_run_id, status);
+
+ALTER TABLE public.queue_job_failures
+ADD COLUMN IF NOT EXISTS pipeline_run_id UUID REFERENCES public.pipeline_runs(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_queue_job_failures_pipeline_run
+ON public.queue_job_failures (pipeline_run_id);
+
+DROP FUNCTION IF EXISTS public.begin_user_pipeline_run(UUID);
 
 CREATE OR REPLACE FUNCTION public.begin_user_pipeline_run(p_user_id UUID)
 RETURNS JSONB
@@ -270,6 +274,22 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.complete_pipeline_run(p_pipeline_run_id UUID, p_totals JSONB DEFAULT '{}'::jsonb)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  UPDATE public.pipeline_runs
+  SET status = 'completed',
+      completed_at = NOW(),
+      totals = totals || COALESCE(p_totals, '{}'::jsonb)
+  WHERE id = p_pipeline_run_id
+    AND status = 'running';
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.record_user_pipeline_clustering_completed(
   p_user_id UUID,
   p_job_generation BIGINT
@@ -316,22 +336,6 @@ BEGIN
       FROM public.user_pipeline_controls
       WHERE user_id = p_user_id
     )
-    AND status = 'running';
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.complete_pipeline_run(p_pipeline_run_id UUID, p_totals JSONB DEFAULT '{}'::jsonb)
-RETURNS VOID
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-BEGIN
-  UPDATE public.pipeline_runs
-  SET status = 'completed',
-      completed_at = NOW(),
-      totals = totals || COALESCE(p_totals, '{}'::jsonb)
-  WHERE id = p_pipeline_run_id
     AND status = 'running';
 END;
 $$;

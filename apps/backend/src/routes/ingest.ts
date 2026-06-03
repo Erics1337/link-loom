@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { supabase } from '../db';
 import { beginUserPipelineRun, markUserCancelled } from '../lib/cancellation';
 import { normalizeClusteringSettings } from '../lib/clusteringSettings';
+import { recordPipelineRunStarted } from '../lib/pipelineCoordinator';
 import { queues } from '../lib/queue';
 import {
     ensureUserExists,
@@ -48,8 +49,6 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
             console.error('[INGEST] Failed to ensure user exists:', userError);
             return reply.code(500).send({ error: 'Failed to initialize user' });
         }
-        const jobGeneration = await beginUserPipelineRun(userId);
-
         const isPremium = await getUserPremiumStatus(userId);
 
         if (!isPremium) {
@@ -96,8 +95,16 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
 
         console.log(`[INGEST] Cleared old clusters for user ${userId}`);
 
-        await queues.ingest.add('ingest', { userId, bookmarks, clusteringSettings, jobGeneration }, {
-            jobId: `ingest-${userId}-generation-${jobGeneration}`,
+        const pipelineRun = await beginUserPipelineRun(userId);
+        await recordPipelineRunStarted(userId, pipelineRun.generation, bookmarks?.length ?? 0, clusteringSettings);
+
+        await queues.ingest.add('ingest', {
+            userId,
+            bookmarks,
+            clusteringSettings,
+            pipelineRunId: pipelineRun.id,
+        }, {
+            jobId: `ingest-${userId}-run-${pipelineRun.id || pipelineRun.generation}`,
         });
         console.log(`[INGEST] Queued ingest job for user ${userId}`);
         return { status: 'queued' };
@@ -117,6 +124,7 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
                 },
                 401: errorResponseSchema,
                 403: errorResponseSchema,
+                500: errorResponseSchema,
             },
         },
     }, async (req, reply) => {
@@ -124,10 +132,25 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
         if (!userId) return reply;
         const body = req.body as { clusteringSettings?: unknown };
         const clusteringSettings = normalizeClusteringSettings(body?.clusteringSettings);
-        const jobGeneration = await beginUserPipelineRun(userId);
+        const { count: bookmarkCount, error: bookmarkCountError } = await supabase
+            .from('bookmarks')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId);
+
+        if (bookmarkCountError) {
+            console.error(`[MANUAL] Failed to count bookmarks for user ${userId}`, bookmarkCountError);
+            return reply.code(500).send({ error: 'Failed to initialize clustering run' });
+        }
+
+        const pipelineRun = await beginUserPipelineRun(userId);
+        await recordPipelineRunStarted(userId, pipelineRun.generation, bookmarkCount ?? 0, clusteringSettings);
         console.log(`[MANUAL] Triggering clustering for user ${userId}`);
-        await queues.clustering.add('cluster', { userId, clusteringSettings, jobGeneration }, {
-            jobId: `cluster-${userId}-manual-generation-${jobGeneration}`
+        await queues.clustering.add('cluster', {
+            userId,
+            clusteringSettings,
+            pipelineRunId: pipelineRun.id,
+        }, {
+            jobId: `cluster-${userId}-manual-run-${pipelineRun.id || pipelineRun.generation}`
         });
         return { status: 'clustering_queued' };
     });

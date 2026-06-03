@@ -559,13 +559,14 @@ describe("backend HTTP contract", () => {
     assert.ok(ingestJob);
     assert.equal(ingestJob.jobName, "ingest");
     assert.equal(ingestJob.attempts, 5);
+    assert.equal(typeof ingestJob.data.jobGeneration, "number");
     assert.equal(ingestJob.data.bookmarks[0].chromeId, undefined);
     assert.equal(ingestJob.data.bookmarks[0].id, body.chromeId);
     assert.equal(ingestJob.data.bookmarks[0].title, "Saved Example");
     assert.equal(ingestJob.data.bookmarks[0].url, "https://example.com/saved");
     assert.match(
       ingestJob.jobId,
-      new RegExp(`^ingest-${user("bookmark").id}-manual-generation-`),
+      new RegExp(`^ingest-${user("bookmark").id}-manual-run-`),
     );
   });
 
@@ -668,7 +669,7 @@ describe("backend HTTP contract", () => {
       assert.equal(embeddingJob.jobName, "embed");
       assert.match(
         embeddingJob.jobId,
-        new RegExp(`^embed-${user("ssrf-enrichment").id}-generation-`),
+        new RegExp(`^embed-${user("ssrf-enrichment").id}-run-`),
       );
     } finally {
       await new Promise<void>((resolve, reject) => {
@@ -832,7 +833,8 @@ describe("backend HTTP contract", () => {
         job.queue === "ingest" && job.data.userId === user("cancel-worker").id,
     );
     assert.ok(queuedIngest);
-    assert.equal(queuedIngest.data.jobGeneration, 1);
+    assert.equal(typeof queuedIngest.data.pipelineRunId, "string");
+    assert.ok(queuedIngest.data.pipelineRunId.length > 0);
 
     const cancelResponse = await request(
       `/cancel/${user("cancel-worker").id}`,

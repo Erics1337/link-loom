@@ -4,17 +4,24 @@ import dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
-const supabaseUrl = process.env.SUPABASE_URL!;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Use service role key for backend operations (bypasses RLS)
+if (!supabaseUrl) {
+  console.error(
+    "SUPABASE_URL is missing. Set it before starting the backend.",
+  );
+  process.exit(1);
+}
+
 if (!supabaseServiceRoleKey) {
   console.error(
-    "WARNING: SUPABASE_SERVICE_ROLE_KEY is missing! RLS may block queries.",
+    "SUPABASE_SERVICE_ROLE_KEY is missing. Set it before starting the backend.",
   );
-} else {
-  console.log("Supabase client initialized with service role key");
+  process.exit(1);
 }
+
+console.log("Supabase client initialized with service role key");
 
 export const supabase: SupabaseClient = createClient(
   supabaseUrl,

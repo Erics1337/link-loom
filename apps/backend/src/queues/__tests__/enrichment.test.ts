@@ -29,6 +29,10 @@ vi.mock('../../lib/cancellation', () => ({
     isUserCancelled: vi.fn()
 }));
 
+vi.mock('../../lib/pipelineCoordinator', () => ({
+    notifyPipelineBookmarkTerminal: vi.fn(),
+}));
+
 vi.mock('../../lib/safeFetch', () => ({
     safeFetch: vi.fn()
 }));
@@ -61,6 +65,7 @@ describe('Enrichment Worker', () => {
 
         const job = createMockJob({
             userId: 'user-1',
+            pipelineRunId: 'run-4',
             jobGeneration: 4,
             bookmarkId: 'bm-1',
             url: 'https://example.com'
@@ -79,16 +84,16 @@ describe('Enrichment Worker', () => {
         // Verify embedding queue
         expect(queues.embedding.add).toHaveBeenCalledWith(
             'embed',
-            {
+            expect.objectContaining({
                 userId: 'user-1',
-                jobGeneration: 4,
+                pipelineRunId: 'run-4',
                 bookmarkId: 'bm-1',
                 text: 'Test Title Test Description https://example.com',
                 url: 'https://example.com',
-            },
-            { jobId: 'embed-user-1-generation-4-bm-1' }
+            }),
+            { jobId: 'embed-user-1-run-run-4-bm-1' }
         );
-        expect(isUserCancelled).toHaveBeenCalledWith('user-1', 4);
+        expect(isUserCancelled).toHaveBeenCalledWith('user-1', 4, 'run-4');
     });
 
     it('should handle fetch failure gracefully and still enqueue with just URL', async () => {
@@ -96,6 +101,7 @@ describe('Enrichment Worker', () => {
 
         const job = createMockJob({
             userId: 'user-2',
+            pipelineRunId: 'run-5',
             jobGeneration: 5,
             bookmarkId: 'bm-2',
             url: 'https://broken.com'
@@ -106,15 +112,19 @@ describe('Enrichment Worker', () => {
         // Should still enqueue to embedding with empty title/desc
         expect(queues.embedding.add).toHaveBeenCalledWith(
             'embed',
-            {
+            expect.objectContaining({
                 userId: 'user-2',
-                jobGeneration: 5,
+                pipelineRunId: 'run-5',
                 bookmarkId: 'bm-2',
                 text: '  https://broken.com', // space space url
                 url: 'https://broken.com',
-            },
-            { jobId: 'embed-user-2-generation-5-bm-2' }
+            }),
+            { jobId: 'embed-user-2-run-run-5-bm-2' }
         );
+        expect(isUserCancelled).toHaveBeenCalledTimes(3);
+        expect(isUserCancelled).toHaveBeenNthCalledWith(1, 'user-2', 5, 'run-5');
+        expect(isUserCancelled).toHaveBeenNthCalledWith(2, 'user-2', 5, 'run-5');
+        expect(isUserCancelled).toHaveBeenNthCalledWith(3, 'user-2', 5, 'run-5');
     });
 
     it('should stop processing if cancelled before start', async () => {

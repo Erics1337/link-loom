@@ -3,6 +3,8 @@ import { supabase } from '../db';
 import OpenAI from 'openai';
 import { createHash } from 'crypto';
 import { isUserCancelled } from '../lib/cancellation';
+import { ClusteringSettings, normalizeClusteringSettings } from '../lib/clusteringSettings';
+import { notifyPipelineBookmarkTerminal } from '../lib/pipelineCoordinator';
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
@@ -10,18 +12,21 @@ const openai = new OpenAI({
 
 export interface EmbeddingJobData {
     userId: string;
+    pipelineRunId?: string;
     jobGeneration?: number;
+    clusteringSettings?: ClusteringSettings;
     bookmarkId: string;
     text: string;
     url: string;
 }
 
 export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
-    const { userId, jobGeneration, bookmarkId, text, url } = job.data;
+    const { userId, pipelineRunId, jobGeneration, bookmarkId, text, url } = job.data;
+    const clusteringSettings = normalizeClusteringSettings(job.data.clusteringSettings);
     console.log(`Processing bookmark ${bookmarkId}`);
 
     try {
-        if (await isUserCancelled(userId, jobGeneration)) {
+        if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
             console.log(`[EMBEDDING] Cancelled before start for user ${userId}`);
             return;
         }
@@ -63,7 +68,7 @@ export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
         }
 
         // 3. Update Status
-        if (await isUserCancelled(userId, jobGeneration)) {
+        if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
             console.log(`[EMBEDDING] Cancelled before status update for user ${userId}`);
             return;
         }
@@ -75,6 +80,7 @@ export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
         if (bookmarkStatusError) {
             throw new Error(`Failed to mark bookmark ${bookmarkId} as embedded: ${bookmarkStatusError.message}`);
         }
+        await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, clusteringSettings);
 
     } catch (err) {
         console.error(`Failed to embed ${bookmarkId}`, err);
@@ -82,5 +88,6 @@ export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
             .from('bookmarks')
             .update({ status: 'error' })
             .eq('id', bookmarkId);
+        await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, clusteringSettings);
     }
 };
