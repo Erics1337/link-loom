@@ -14,8 +14,16 @@ RETURNS TABLE (
     similarity float
 )
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
 AS $$
 BEGIN
+    IF auth.role() <> 'service_role' THEN
+        IF auth.uid() IS NULL OR auth.uid() <> search_bookmarks.user_id THEN
+            RAISE EXCEPTION 'Search user does not match authenticated user';
+        END IF;
+    END IF;
+
     RETURN QUERY
     SELECT 
         b.id,
@@ -30,3 +38,6 @@ BEGIN
     LIMIT match_count;
 END;
 $$;
+
+REVOKE ALL ON FUNCTION search_bookmarks(vector(1536), uuid, integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION search_bookmarks(vector(1536), uuid, integer) TO service_role;

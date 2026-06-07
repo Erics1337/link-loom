@@ -314,6 +314,52 @@ GRANT EXECUTE ON FUNCTION public.consume_rate_limit(TEXT, INTEGER, INTEGER) TO s
 COMMENT ON TABLE public.rate_limit_buckets IS
   'Shared service-role-only counters for application-level rate limiting.';
 
+CREATE OR REPLACE FUNCTION public.cleanup_expired_rate_limit_buckets(
+  p_retention INTERVAL DEFAULT INTERVAL '1 day'
+)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  deleted_count INTEGER;
+BEGIN
+  IF auth.role() <> 'service_role' THEN
+    RAISE EXCEPTION 'cleanup_expired_rate_limit_buckets requires service_role';
+  END IF;
+
+  DELETE FROM public.rate_limit_buckets
+  WHERE reset_at < NOW() - p_retention;
+
+  GET DIAGNOSTICS deleted_count = ROW_COUNT;
+  RETURN deleted_count;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.cleanup_expired_rate_limit_buckets(INTERVAL) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.cleanup_expired_rate_limit_buckets(INTERVAL) TO service_role;
+
+CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA extensions;
+
+DO $$
+BEGIN
+  PERFORM cron.unschedule('cleanup-rate-limit-buckets');
+EXCEPTION
+  WHEN undefined_table THEN NULL;
+  WHEN OTHERS THEN
+    IF SQLERRM NOT LIKE '%could not find valid entry%' THEN
+      RAISE;
+    END IF;
+END;
+$$;
+
+SELECT cron.schedule(
+  'cleanup-rate-limit-buckets',
+  '0 * * * *',
+  $$DELETE FROM public.rate_limit_buckets WHERE reset_at < NOW() - INTERVAL '1 day'$$
+);
+
 -- Clear user ingest structure (service-role only)
 CREATE OR REPLACE FUNCTION public.clear_user_ingest_structure(p_user_id UUID)
 RETURNS VOID
