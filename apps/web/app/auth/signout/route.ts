@@ -12,7 +12,7 @@ export async function POST() {
   const protocol = headersList.get('x-forwarded-proto') || 'https'
   const origin = process.env.NEXT_PUBLIC_SITE_URL || `${protocol}://${host}`
 
-  return NextResponse.redirect(origin + '/login', {
-    status: 301,
-  })
+  const response = NextResponse.redirect(origin + '/login', { status: 303 })
+  response.cookies.set('ll_last_seen', '', { path: '/', maxAge: 0 })
+  return response
 }

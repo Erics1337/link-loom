@@ -2,8 +2,12 @@ import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { getProPriceId } from '@/utils/stripe/checkout';
 import { startProCheckoutForUser } from '@/utils/stripe/pro';
+import { rateLimit, sanitizeApiError } from '@/utils/api/security';
 
 export async function POST(req: Request) {
+  const rateLimitError = await rateLimit({ key: 'checkout:token', limit: 10, windowMs: 60_000 });
+  if (rateLimitError) return rateLimitError;
+
   try {
     const authHeader = req.headers.get('authorization');
     const token = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1];
@@ -47,7 +51,7 @@ export async function POST(req: Request) {
 
     if (!getProPriceId()) {
       return NextResponse.json(
-        { error: 'Missing STRIPE_PRICE_ID_PRO' },
+        { error: 'Checkout is temporarily unavailable' },
         { status: 500 }
       );
     }
@@ -59,8 +63,7 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json(result);
-  } catch (error: any) {
-    console.error('[Stripe Checkout] Error:', error);
-    return new NextResponse(`Internal Error: ${error.message}`, { status: 500 });
+  } catch (error) {
+    return sanitizeApiError('[Stripe Checkout] Error:', error, 'Failed to start checkout');
   }
 }

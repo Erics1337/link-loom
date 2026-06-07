@@ -205,10 +205,17 @@ export async function generateClusterName(
         CLUSTER_NAME_CONTEXT_SAMPLE_SIZE
     );
 
-    const { data: bks } = await supabase
+    const { data: bks, error } = await supabase
         .from('bookmarks')
         .select('title, description, url')
         .in('id', sampledIds);
+
+    if (error) {
+        log(
+            `Failed to load bookmarks for cluster naming (sampledIds=${sampledIds.length}): ${error.message}${error.code ? ` [${error.code}]` : ''}`
+        );
+        return 'General';
+    }
 
     if (!bks || bks.length === 0) return 'General';
 
@@ -316,7 +323,12 @@ export async function generateClusterName(
                 messages: [{ role: 'user', content: prompt }]
             });
 
-            let name = response.choices[0].message.content?.trim() || '';
+            let name = '';
+            if (Array.isArray(response.choices) && response.choices.length > 0) {
+                name = response.choices[0].message.content?.trim() || '';
+            } else {
+                log('OpenAI cluster naming returned no choices');
+            }
             name = name
                 .replace(/^\s*["']|["']\s*$/g, '')
                 .replace(/\*\*/g, '')

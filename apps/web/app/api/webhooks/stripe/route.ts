@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     console.log('[Stripe Webhook] Event verified:', event.type, 'ID:', event.id)
   } catch (error: any) {
     console.error('[Stripe Webhook] Signature verification failed:', error.message)
-    return new NextResponse(`Webhook Error: ${error.message}`, { status: 400 })
+    return new NextResponse('Webhook signature verification failed', { status: 400 })
   }
 
   try {
@@ -33,7 +33,6 @@ export async function POST(request: Request) {
       const session = event.data.object as Stripe.Checkout.Session
       console.log('[Stripe Webhook] Processing checkout session:', session.id)
       console.log('[Stripe Webhook] Session mode:', session.mode, 'payment_status:', session.payment_status)
-      console.log('[Stripe Webhook] metadata:', session.metadata, 'client_reference_id:', session.client_reference_id)
       await applyCheckoutSessionToUser(session)
       console.log('[Stripe Webhook] Successfully processed checkout session')
     }
@@ -74,7 +73,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('[Stripe Webhook] Error:', error)
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Webhook handler failed' },
+      { error: 'Webhook handler failed' },
       { status: 500 }
     )
   }

@@ -54,12 +54,26 @@ const finalizePipelineRun = async (
         assignedBookmarks: number;
     }
 ) => {
-    await recordPipelineClusteringCompleted(
-        userId,
-        jobGeneration,
-        pipelineRunId
-    );
-    await completePipelineRun(pipelineRunId ?? '', totals);
+    if (typeof jobGeneration === 'number' || pipelineRunId) {
+        await recordPipelineClusteringCompleted(
+            userId,
+            jobGeneration,
+            pipelineRunId
+        );
+    } else {
+        log(
+            `[CLUSTERING] Missing pipelineRunId and jobGeneration when finalizing run for user ${userId}; skipping pipeline bookkeeping`
+        );
+    }
+
+    if (!pipelineRunId) {
+        log(
+            `[CLUSTERING] Missing pipelineRunId when finalizing run for user ${userId}; skipping completePipelineRun`
+        );
+        return;
+    }
+
+    await completePipelineRun(pipelineRunId, totals);
 };
 
 const assignLeafGroup = async (

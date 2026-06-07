@@ -206,6 +206,8 @@ describe('Clustering Worker', () => {
             { cluster_id: 'cluster-array-shape', bookmark_id: 'bm-1' },
             { cluster_id: 'cluster-array-shape', bookmark_id: 'bm-2' }
         ]);
+        expect(recordPipelineClusteringCompleted).not.toHaveBeenCalled();
+        expect(completePipelineRun).not.toHaveBeenCalled();
     });
 
     it('should stop without completing the pipeline when fetch is cancelled mid-pagination', async () => {
@@ -259,6 +261,26 @@ describe('Clustering Worker', () => {
             'Failed to fetch bookmarks for clustering: connection refused'
         );
         expect(recordPipelineClusteringCompleted).not.toHaveBeenCalled();
+        expect(completePipelineRun).not.toHaveBeenCalled();
+    });
+
+    it('should record clustering completion but skip completePipelineRun when pipelineRunId is missing', async () => {
+        const job = createMockJob({ userId: 'user-6', jobGeneration: 16 });
+
+        const mockFetchChain = {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            range: vi.fn().mockResolvedValue({ data: [], error: null }),
+        };
+
+        (supabase.from as any).mockImplementation((table: string) => {
+            if (table === 'bookmarks') return mockFetchChain;
+            return {};
+        });
+
+        await clusteringProcessor(job);
+
+        expect(recordPipelineClusteringCompleted).toHaveBeenCalledWith('user-6', 16, undefined);
         expect(completePipelineRun).not.toHaveBeenCalled();
     });
 });

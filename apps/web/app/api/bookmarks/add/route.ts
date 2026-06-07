@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireApiUser } from '@/utils/api/auth'
+import { enforceSameOrigin, rateLimit } from '@/utils/api/security'
 
 const getBackendUrl = () =>
   (process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || '').replace(/\/$/, '')
@@ -7,6 +8,12 @@ const getBackendUrl = () =>
 const BACKEND_FETCH_TIMEOUT_MS = 15_000
 
 export async function POST(request: Request) {
+  const originError = enforceSameOrigin(request)
+  if (originError) return originError
+
+  const rateLimitError = await rateLimit({ key: 'bookmarks:add', limit: 30, windowMs: 60_000 })
+  if (rateLimitError) return rateLimitError
+
   const { supabase, response: unauthorizedResponse } = await requireApiUser()
   if (unauthorizedResponse) return unauthorizedResponse
 
@@ -20,7 +27,7 @@ export async function POST(request: Request) {
 
   const backendUrl = getBackendUrl()
   if (!backendUrl) {
-    return NextResponse.json({ error: 'Backend URL is not configured' }, { status: 500 })
+    return NextResponse.json({ error: 'Backend service is not configured' }, { status: 500 })
   }
 
   const body = await request.json().catch(() => ({}))

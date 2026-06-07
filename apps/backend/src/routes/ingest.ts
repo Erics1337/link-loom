@@ -66,64 +66,58 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
                 const incomingCount = bookmarks?.length ?? 0;
 
                 if (incomingCount > FREE_TIER_LIMIT) {
-                    const { count: existingCount } = await supabase
-                        .from('bookmarks')
-                        .select('*', { count: 'exact', head: true })
-                        .eq('user_id', userId);
-
-                    const currentCount = existingCount ?? 0;
                     console.log(
                         `[INGEST] User ${userId} exceeded free tier limit: incoming ${incomingCount} > ${FREE_TIER_LIMIT}`
                     );
                     return reply.code(402).send({
                         error: 'Bookmark limit exceeded',
-                        message: `Free tier allows up to ${FREE_TIER_LIMIT} bookmarks stored in Link Loom. You currently have ${currentCount} stored, and this Chrome import contains ${incomingCount}.`,
+                        message: `Free tier allows up to ${FREE_TIER_LIMIT} bookmarks stored in Link Loom. Import clears your existing bookmarks first, leaving 0 before import; this Chrome import contains ${incomingCount}.`,
                         limit: FREE_TIER_LIMIT,
-                        current: currentCount,
+                        current: 0,
                         attempted: incomingCount,
                         upgradeUrl: '/dashboard/billing'
                     });
                 }
             }
 
-            const { error: deleteBookmarksError } = await supabase
-                .from('bookmarks')
-                .delete()
-                .eq('user_id', userId);
-
-            if (deleteBookmarksError) {
+            let pipelineRun;
+            try {
+                pipelineRun = await beginUserPipelineRun(userId);
+                await recordPipelineRunStarted(
+                    userId,
+                    pipelineRun.generation,
+                    bookmarks?.length ?? 0,
+                    clusteringSettings
+                );
+            } catch (error) {
                 console.error(
-                    `[INGEST] Failed to clear old bookmarks for user ${userId}`,
-                    deleteBookmarksError
+                    `[INGEST] Failed to initialize pipeline run for user ${userId}`,
+                    error
                 );
                 return reply
                     .code(500)
-                    .send({ error: 'Failed to clear existing bookmarks' });
+                    .send({ error: 'Failed to initialize ingest run' });
             }
 
-            const { error: deleteError } = await supabase
-                .from('clusters')
-                .delete()
-                .eq('user_id', userId);
+            const { error: clearStructureError } = await supabase.rpc(
+                'clear_user_ingest_structure',
+                { p_user_id: userId }
+            );
 
-            if (deleteError) {
+            if (clearStructureError) {
                 console.error(
-                    `[INGEST] Failed to clear old clusters for user ${userId}`,
-                    deleteError
+                    `[INGEST] Failed to clear existing bookmarks and clusters for user ${userId}`,
+                    clearStructureError
                 );
                 return reply
                     .code(500)
-                    .send({ error: 'Failed to clear existing clusters' });
+                    .send({
+                        error: 'Failed to clear existing bookmarks and clusters'
+                    });
             }
 
-            console.log(`[INGEST] Cleared old clusters for user ${userId}`);
-
-            const pipelineRun = await beginUserPipelineRun(userId);
-            await recordPipelineRunStarted(
-                userId,
-                pipelineRun.generation,
-                bookmarks?.length ?? 0,
-                clusteringSettings
+            console.log(
+                `[INGEST] Cleared old bookmarks and clusters for user ${userId}`
             );
 
             await queues.ingest.add(

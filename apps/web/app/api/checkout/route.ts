@@ -2,10 +2,17 @@ import { createClient } from '@/utils/supabase/server'
 import { NextResponse } from 'next/server'
 import { getProPriceId } from '@/utils/stripe/checkout'
 import { startProCheckoutForUser } from '@/utils/stripe/pro'
+import { enforceSameOrigin, rateLimit, sanitizeApiError } from '@/utils/api/security'
 
 export async function POST(request: Request) {
+  const originError = enforceSameOrigin(request)
+  if (originError) return originError
+
+  const rateLimitError = await rateLimit({ key: 'checkout', limit: 10, windowMs: 60_000 })
+  if (rateLimitError) return rateLimitError
+
   if (!getProPriceId()) {
-    return NextResponse.json({ error: 'Missing STRIPE_PRICE_ID_PRO' }, { status: 500 })
+    return NextResponse.json({ error: 'Checkout is temporarily unavailable' }, { status: 500 })
   }
 
   const supabase = createClient()
@@ -27,10 +34,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json(result)
   } catch (checkoutError) {
-    console.error('[Stripe Checkout] Error:', checkoutError)
-    return NextResponse.json(
-      { error: checkoutError instanceof Error ? checkoutError.message : 'Failed to start checkout' },
-      { status: 500 }
-    )
+    return sanitizeApiError('[Stripe Checkout] Error:', checkoutError, 'Failed to start checkout')
   }
 }

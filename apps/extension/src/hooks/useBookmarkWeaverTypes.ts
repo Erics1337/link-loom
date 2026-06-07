@@ -36,9 +36,38 @@ export type ProcessingIdentity = {
     accessToken: string;
 };
 
-export const isFailedFetchError = (error: unknown) =>
-    error instanceof TypeError &&
-    error.message.toLowerCase().includes('failed to fetch');
+const NETWORK_ERROR_MESSAGE_PATTERNS = [
+    'failed to fetch',
+    'networkerror',
+    'network error',
+    'failed to connect',
+] as const;
+
+const messageLooksLikeNetworkError = (message: string) => {
+    const normalized = message.toLowerCase();
+    return NETWORK_ERROR_MESSAGE_PATTERNS.some((pattern) =>
+        normalized.includes(pattern)
+    );
+};
+
+export const isFailedFetchError = (error: unknown): boolean => {
+    if (error instanceof Error) {
+        if (error.name === 'NetworkError') {
+            return true;
+        }
+        if (messageLooksLikeNetworkError(error.message)) {
+            return true;
+        }
+        const cause = (error as Error & { cause?: unknown }).cause;
+        if (cause !== undefined && isFailedFetchError(cause)) {
+            return true;
+        }
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            return true;
+        }
+    }
+    return false;
+};
 
 export const isAbortError = (error: unknown) =>
     error instanceof DOMException && error.name === 'AbortError';

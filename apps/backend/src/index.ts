@@ -24,6 +24,7 @@ import { registerStatusRoutes } from "./routes/status";
 import { registerStructureRoutes } from "./routes/structure";
 import { registerToolRoutes } from "./routes/tools";
 import { supabase } from "./db";
+import { registerRateLimit } from "./lib/rateLimit";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
@@ -50,14 +51,38 @@ const startWorkers = () => {
   console.log("Inline queue workers registered");
 };
 
+const getAllowedOrigins = () =>
+  (process.env.CORS_ALLOWED_ORIGINS || process.env.FRONTEND_URL || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
 export const buildApp = async () => {
   if (appReady) return fastify;
   appReady = true;
 
   try {
+    const allowedOrigins = getAllowedOrigins();
+
     await fastify.register(cors, {
-      origin: true,
+      origin: (origin, callback) => {
+        if (!origin) {
+          callback(null, true);
+          return;
+        }
+
+        if (
+          allowedOrigins.includes(origin) ||
+          origin.startsWith("chrome-extension://")
+        ) {
+          callback(null, true);
+          return;
+        }
+
+        callback(null, process.env.NODE_ENV !== "production");
+      },
     });
+    await registerRateLimit(fastify);
 
     if ((process.env.QUEUE_DRIVER ?? "inline") !== "sqs") {
       startWorkers();

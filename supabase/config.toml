@@ -10,7 +10,7 @@ max_rows = 1000
 [db]
 port = 56422
 shadow_port = 56420
-major_version = 15
+major_version = 17
 
 [studio]
 enabled = true
@@ -33,7 +33,15 @@ site_url = "http://localhost:3000"
 additional_redirect_urls = ["http://localhost:3000/auth/callback", "http://127.0.0.1:3000/auth/callback"]
 jwt_expiry = 3600
 enable_signup = true
-enable_anonymous_sign_ins = true
+enable_anonymous_sign_ins = false
+minimum_password_length = 8
+password_requirements = "lower_upper_letters_digits"
+
+[auth.rate_limit]
+sign_in_sign_ups = 20
+token_refresh = 120
+token_verifications = 20
+anonymous_users = 0
 
 [auth.email]
 enable_signup = true

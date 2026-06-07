@@ -84,7 +84,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="field" placeholder="you@example.com" required />
 
                 <label className="text-xs text-secondary">Password</label>
-                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="field" placeholder="At least 6 characters" minLength={6} required />
+                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="field" placeholder="At least 8 characters" minLength={8} required />
 
                 {mode === 'sign-up' && (
                     <div className="space-y-2">

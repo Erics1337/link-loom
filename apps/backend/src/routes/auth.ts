@@ -29,6 +29,10 @@ export const registerAuthRoutes = async (fastify: FastifyInstance) => {
                 typeof body?.deviceId === 'string' ? body.deviceId : '';
             const name = typeof body?.name === 'string' ? body.name : '';
 
+            if (deviceId.trim().length === 0) {
+                return reply.code(400).send({ error: 'deviceId is required' });
+            }
+
             const userError = await ensureUserExists(userId);
             if (userError) {
                 console.error(

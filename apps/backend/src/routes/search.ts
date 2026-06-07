@@ -95,7 +95,7 @@ export const registerSearchRoutes = async (fastify: FastifyInstance) => {
                     { err: error, userId, queryLength: input.length, queryVectorLength: queryVector.length },
                     'search_bookmarks RPC failed',
                 );
-                return { results: [] };
+                return reply.code(500).send({ error: 'Search failed' });
             }
 
             return { results: data ?? [] };
@@ -104,7 +104,7 @@ export const registerSearchRoutes = async (fastify: FastifyInstance) => {
                 { err, userId, queryLength: input.length, queryVectorLength: queryVector.length },
                 'search_bookmarks RPC threw',
             );
-            return { results: [] };
+            return reply.code(500).send({ error: 'Search failed' });
         }
     });
 };

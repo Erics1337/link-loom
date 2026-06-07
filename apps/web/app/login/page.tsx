@@ -231,7 +231,7 @@ export default function Login() {
                 autoComplete={
                   view === "sign-in" ? "current-password" : "new-password"
                 }
-                minLength={6}
+                minLength={8}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

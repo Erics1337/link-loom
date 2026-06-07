@@ -21,6 +21,8 @@ locals {
     CLUSTER_NAME_MAX_RETRIES          = tostring(var.cluster_name_max_retries)
     CLUSTER_NAME_BASE_BACKOFF_MS      = tostring(var.cluster_name_base_backoff_ms)
     CLUSTER_NAME_MIN_BOOKMARKS_FOR_AI = tostring(var.cluster_name_min_bookmarks_for_ai)
+    CORS_ALLOWED_ORIGINS              = var.cors_allowed_origins
+    RATE_LIMIT_STORE                  = var.rate_limit_store
     INGEST_QUEUE_URL                  = aws_sqs_queue.ingest.url
     ENRICHMENT_QUEUE_URL              = aws_sqs_queue.enrichment.url
     EMBEDDING_QUEUE_URL               = aws_sqs_queue.embedding.url

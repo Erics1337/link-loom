@@ -398,6 +398,11 @@ export const useWeaveRun = ({
             const bookmarks = collectScannedBookmarks(tree);
             const totalBookmarks = bookmarks.length;
 
+            await savePreOrganizeBackup(tree);
+            console.log(
+                '[WEAVING] Safety Backup saved to chrome.storage.local'
+            );
+
             if (!isPremium && totalBookmarks > DEFAULT_FREE_TIER_LIMIT) {
                 pendingBookmarksRef.current = bookmarks;
                 setLimitExceededInfo({
@@ -411,13 +416,6 @@ export const useWeaveRun = ({
             }
 
             setStatus('weaving');
-            setWeavingPhase('safety-backup');
-
-            await savePreOrganizeBackup(tree);
-            console.log(
-                '[WEAVING] Safety Backup saved to chrome.storage.local'
-            );
-
             setWeavingPhase('ingest');
             setProgress((prev) => ({
                 ...prev,

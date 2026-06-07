@@ -12,6 +12,13 @@ import {
   formatRelativeTime,
 } from "../dashboard-ui";
 
+const sanitizeSearchTerm = (value: string) =>
+  value
+    .replace(/[,%()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 100);
+
 export default async function LinksPage({
   searchParams,
 }: {
@@ -26,7 +33,7 @@ export default async function LinksPage({
     return <div>Please log in</div>;
   }
 
-  const query = searchParams?.query || "";
+  const query = sanitizeSearchTerm(searchParams?.query || "");
   const currentPage = Number(searchParams?.page) || 1;
   const ITEMS_PER_PAGE = 20;
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;

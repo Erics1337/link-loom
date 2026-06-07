@@ -19,6 +19,8 @@ cluster_name_concurrency          = 4
 cluster_name_max_retries          = 5
 cluster_name_base_backoff_ms      = 400
 cluster_name_min_bookmarks_for_ai = 12
+cors_allowed_origins              = "https://linkloom.org,chrome-extension://YOUR_EXTENSION_ID"
+rate_limit_store                  = "supabase"
 
 # Required app secrets.
 supabase_url              = "https://YOUR_PROJECT.supabase.co"

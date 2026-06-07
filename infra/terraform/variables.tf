@@ -100,6 +100,18 @@ variable "cluster_name_min_bookmarks_for_ai" {
   default     = 12
 }
 
+variable "cors_allowed_origins" {
+  description = "Comma-separated origins allowed to call the backend API from browsers/extensions."
+  type        = string
+  default     = ""
+}
+
+variable "rate_limit_store" {
+  description = "Rate limit store. Use supabase for the shared app limiter, or memory only for local fallback."
+  type        = string
+  default     = "supabase"
+}
+
 variable "supabase_url" {
   description = "Hosted Supabase project URL used by backend workers/API."
   type        = string

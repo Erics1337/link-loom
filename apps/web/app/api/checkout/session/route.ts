@@ -3,14 +3,21 @@ import { createAdminClient } from '@/utils/supabase/admin'
 import { stripe } from '@/utils/stripe/checkout'
 import { applyCheckoutSessionToUser } from '@/utils/stripe/pro'
 import { requireApiUser } from '@/utils/api/auth'
+import { enforceSameOrigin, rateLimit, sanitizeApiError } from '@/utils/api/security'
 
 export async function POST(request: Request) {
+  const originError = enforceSameOrigin(request)
+  if (originError) return originError
+
+  const rateLimitError = await rateLimit({ key: 'checkout:session', limit: 20, windowMs: 60_000 })
+  if (rateLimitError) return rateLimitError
+
   const { user, response: unauthorizedResponse } = await requireApiUser()
   if (unauthorizedResponse) return unauthorizedResponse
 
   const { sessionId } = await request.json().catch(() => ({ sessionId: null }))
 
-  if (!sessionId || typeof sessionId !== 'string') {
+  if (!sessionId || typeof sessionId !== 'string' || !/^cs_(test|live)_[A-Za-z0-9]+$/.test(sessionId)) {
     return NextResponse.json({ error: 'Missing checkout session id' }, { status: 400 })
   }
 
@@ -37,10 +44,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ profile })
   } catch (error) {
-    console.error('[Stripe Checkout Session] Error:', error)
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to sync checkout session' },
-      { status: 500 }
-    )
+    return sanitizeApiError('[Stripe Checkout Session] Error:', error, 'Failed to sync checkout session')
   }
 }
