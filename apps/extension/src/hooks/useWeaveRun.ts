@@ -114,12 +114,12 @@ export const useWeaveRun = ({
     setIsPremium
 }: UseWeaveRunArgs) => {
     const ensureProcessingIdentity = useCallback(async (): Promise<ProcessingIdentity> => {
-        if (userId && authAccessToken) {
-            return { userId, accessToken: authAccessToken };
-        }
         if (accountUserId && authAccessToken) {
             setUserId(accountUserId);
             return { userId: accountUserId, accessToken: authAccessToken };
+        }
+        if (userId && authAccessToken) {
+            return { userId, accessToken: authAccessToken };
         }
         if (!ensureAnonymousSession) {
             if (userId) return { userId, accessToken: '' };
@@ -220,7 +220,13 @@ export const useWeaveRun = ({
             return;
         }
 
-        const interval = setInterval(async () => {
+        let pollingInFlight = false;
+        let intervalId: ReturnType<typeof setInterval> | null = null;
+
+        const poll = async () => {
+            if (pollingInFlight) return;
+            pollingInFlight = true;
+
             try {
                 const data = await structureClient.getStatus(userId);
 
@@ -246,7 +252,7 @@ export const useWeaveRun = ({
 
                 const terminalAction = getTerminalWeavingAction(data);
                 if (terminalAction) {
-                    clearInterval(interval);
+                    if (intervalId) clearInterval(intervalId);
                     if (terminalAction === 'fetch-results') {
                         await fetchResults(userId);
                     } else if (terminalAction === 'show-error') {
@@ -278,10 +284,16 @@ export const useWeaveRun = ({
                     return;
                 }
                 console.error('Polling error', e);
+            } finally {
+                pollingInFlight = false;
             }
-        }, 2000);
+        };
 
-        return () => clearInterval(interval);
+        intervalId = setInterval(poll, 2000);
+
+        return () => {
+            if (intervalId) clearInterval(intervalId);
+        };
     }, [
         clusterRecoveryTriggered,
         effectiveClusteringSettings,

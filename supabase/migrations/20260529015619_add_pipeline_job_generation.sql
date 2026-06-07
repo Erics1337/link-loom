@@ -525,9 +525,12 @@ AS $$
       AND b.pipeline_run_id = p_pipeline_run_id
   ) assignment_counts ON TRUE
   LEFT JOIN LATERAL (
-    SELECT COUNT(*) AS cluster_count
-    FROM public.clusters
-    WHERE user_id = p_user_id
+    SELECT COUNT(DISTINCT c.id) AS cluster_count
+    FROM public.clusters c
+    JOIN public.cluster_assignments ca ON ca.cluster_id = c.id
+    JOIN public.bookmarks b ON b.id = ca.bookmark_id
+    WHERE c.user_id = p_user_id
+      AND b.pipeline_run_id = p_pipeline_run_id
   ) cluster_counts ON TRUE;
 $$;
 

@@ -18,10 +18,16 @@ const pruneExpiredBuckets = () => {
   });
 };
 
-const WINDOW_MS = Number.parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? "60000", 10);
-const CLEANUP_INTERVAL_MS = Number.parseInt(
-  process.env.RATE_LIMIT_CLEANUP_INTERVAL_MS ?? String(WINDOW_MS),
-  10,
+const parsePositiveInt = (value: string | undefined, fallback: number): number => {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const WINDOW_MS = parsePositiveInt(process.env.RATE_LIMIT_WINDOW_MS, 60000);
+const CLEANUP_INTERVAL_MS = Math.max(
+  parsePositiveInt(process.env.RATE_LIMIT_CLEANUP_INTERVAL_MS, WINDOW_MS),
+  WINDOW_MS
 );
 
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -47,17 +53,12 @@ if (process.env.NODE_ENV !== "test") {
   }
 }
 
-const AUTH_LIMIT = Number.parseInt(process.env.RATE_LIMIT_AUTH_MAX ?? "30", 10);
-const WRITE_LIMIT = Number.parseInt(process.env.RATE_LIMIT_WRITE_MAX ?? "120", 10);
-const DEFAULT_LIMIT = Number.parseInt(process.env.RATE_LIMIT_MAX ?? "300", 10);
+const AUTH_LIMIT = parsePositiveInt(process.env.RATE_LIMIT_AUTH_MAX, 30);
+const WRITE_LIMIT = parsePositiveInt(process.env.RATE_LIMIT_WRITE_MAX, 120);
+const DEFAULT_LIMIT = parsePositiveInt(process.env.RATE_LIMIT_MAX, 300);
 
 const getClientKey = (req: FastifyRequest) => {
-  const forwardedFor = req.headers["x-forwarded-for"];
-  const ip =
-    typeof forwardedFor === "string"
-      ? forwardedFor.split(",")[0]?.trim()
-      : req.ip;
-  return ip || "unknown";
+  return req.ip || "unknown";
 };
 
 const getLimitForRequest = (req: FastifyRequest) => {

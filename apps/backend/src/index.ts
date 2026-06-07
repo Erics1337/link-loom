@@ -39,6 +39,7 @@ const fastify = Fastify({
       },
     },
   },
+  trustProxy: true,
 });
 
 let appReady = false;
@@ -71,10 +72,12 @@ export const buildApp = async () => {
           return;
         }
 
-        if (
-          allowedOrigins.includes(origin) ||
-          origin.startsWith("chrome-extension://")
-        ) {
+        if (allowedOrigins.includes(origin)) {
+          callback(null, true);
+          return;
+        }
+
+        if (origin.startsWith("chrome-extension://") && process.env.NODE_ENV !== "production") {
           callback(null, true);
           return;
         }

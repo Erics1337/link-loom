@@ -1,8 +1,16 @@
 import Stripe from 'stripe'
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  maxNetworkRetries: 2,
-})
+let _stripe: Stripe | null = null
+
+export const stripe = (() => {
+  if (!_stripe) {
+    const apiKey = process.env.STRIPE_SECRET_KEY || ''
+    _stripe = new Stripe(apiKey, {
+      maxNetworkRetries: 2,
+    })
+  }
+  return _stripe
+})()
 
 const getCheckoutMode = () =>
   process.env.STRIPE_CHECKOUT_MODE === 'subscription' ? 'subscription' : 'payment'

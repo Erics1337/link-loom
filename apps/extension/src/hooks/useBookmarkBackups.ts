@@ -1,6 +1,6 @@
-import { Dispatch, SetStateAction, useCallback } from 'react';
+import { Dispatch, MutableRefObject, SetStateAction, useCallback } from 'react';
 import { BookmarkNode } from '../components/BookmarkTree';
-import { BookmarkStats } from '../lib/bookmarkStructure';
+import { BookmarkStats, StructureAssignment } from '../lib/bookmarkStructure';
 import {
     CloudSnapshotClient,
     deleteStructureVersion as deleteStoredStructureVersion,
@@ -19,6 +19,8 @@ type UseBookmarkPersistenceArgs = {
     setClusters: Dispatch<SetStateAction<BookmarkNode[]>>;
     setStats: Dispatch<SetStateAction<BookmarkStats>>;
     setStatus: Dispatch<SetStateAction<AppStatus>>;
+    setStructureAssignments: Dispatch<SetStateAction<StructureAssignment[]>>;
+    deadLinkChromeIdsRef: MutableRefObject<string[]>;
 };
 
 export const useBookmarkPersistence = ({
@@ -30,7 +32,9 @@ export const useBookmarkPersistence = ({
     resetBookmarkTreeSnapshot,
     setClusters,
     setStats,
-    setStatus
+    setStatus,
+    setStructureAssignments,
+    deadLinkChromeIdsRef
 }: UseBookmarkPersistenceArgs) => {
     const saveStructureVersion = useCallback(async () => {
         return saveStoredStructureVersion(clusters, stats);
@@ -52,10 +56,12 @@ export const useBookmarkPersistence = ({
                 Array.isArray(version.clusters) ? version.clusters : []
             );
             setStats(version.stats || { duplicates: 0, deadLinks: 0 });
+            setStructureAssignments([]);
+            deadLinkChromeIdsRef.current = [];
             setStatus('ready');
             return version;
         },
-        [loadStructureVersions, setClusters, setStats, setStatus]
+        [loadStructureVersions, setClusters, setStats, setStructureAssignments, deadLinkChromeIdsRef, setStatus]
     );
 
     const deleteStructureVersion = useCallback(async (versionId: string) => {

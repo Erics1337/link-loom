@@ -44,57 +44,21 @@ export const registerAuthRoutes = async (fastify: FastifyInstance) => {
                     .send({ error: 'Failed to initialize user' });
             }
 
-            const { count, error: countError } = await supabase
-                .from('user_devices')
-                .select('*', { count: 'exact', head: true })
-                .eq('user_id', userId);
+            const { data, error } = await supabase.rpc('register_user_device', {
+                p_user_id: userId,
+                p_device_id: deviceId,
+                p_device_name: name || 'Unknown Device'
+            });
 
-            if (countError) {
-                console.error('[Device] Count error:', countError);
-                return reply.code(500).send({ error: 'Database error' });
-            }
-
-            const { data: existing } = await supabase
-                .from('user_devices')
-                .select('id')
-                .eq('user_id', userId)
-                .eq('device_id', deviceId)
-                .maybeSingle();
-
-            if (existing) {
-                const { error: updateError } = await supabase
-                    .from('user_devices')
-                    .update({ last_seen_at: new Date() })
-                    .eq('id', existing.id);
-
-                if (updateError) {
-                    console.error('[Device] Update error:', updateError);
+            if (error) {
+                if (error.message?.includes('Device limit reached')) {
                     return reply
-                        .code(500)
-                        .send({ error: 'Failed to update device' });
+                        .code(403)
+                        .send({
+                            error: 'Device limit reached. Please manage devices in dashboard.'
+                        });
                 }
-
-                return { status: 'registered' };
-            }
-
-            if ((count ?? 0) >= 3) {
-                return reply
-                    .code(403)
-                    .send({
-                        error: 'Device limit reached. Please manage devices in dashboard.'
-                    });
-            }
-
-            const { error: insertError } = await supabase
-                .from('user_devices')
-                .insert({
-                    user_id: userId,
-                    device_id: deviceId,
-                    name: name || 'Unknown Device'
-                });
-
-            if (insertError) {
-                console.error('[Device] Insert error:', insertError);
+                console.error('[Device] Registration error:', error);
                 return reply
                     .code(500)
                     .send({ error: 'Failed to register device' });

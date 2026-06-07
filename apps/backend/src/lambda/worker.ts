@@ -97,7 +97,11 @@ const recordQueueJobFailure = async (
         if (bookmarkError) {
             console.error(`[LAMBDA:${queueName}] Failed to mark bookmark ${bookmarkId} as error`, bookmarkError);
         } else if (userId) {
-            await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings);
+            try {
+                await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings);
+            } catch (notifyError) {
+                console.error(`[LAMBDA:${queueName}] Failed to notify pipeline terminal for bookmark ${bookmarkId}`, notifyError);
+            }
         }
     } else if (userId && chromeIds && chromeIds.length > 0) {
         let updateQuery = supabase

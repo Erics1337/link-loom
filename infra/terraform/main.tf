@@ -327,7 +327,7 @@ resource "aws_apigatewayv2_api" "backend" {
   cors_configuration {
     allow_headers = ["*"]
     allow_methods = ["*"]
-    allow_origins = ["*"]
+    allow_origins = split(",", var.cors_allowed_origins)
   }
 
   tags = local.tags

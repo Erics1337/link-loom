@@ -198,13 +198,34 @@ const loadLegacyStatusCounts = async (userId: string) => {
             .eq('clusters.user_id', userId)
     ]);
 
-    if (totalError) console.error('[STATUS] Total Count Error:', totalError);
-    if (pendingRawError) console.error('[STATUS] Pending Raw Count Error:', pendingRawError);
-    if (enrichedError) console.error('[STATUS] Enriched Count Error:', enrichedError);
-    if (embeddedError) console.error('[STATUS] Embedded Count Error:', embeddedError);
-    if (erroredError) console.error('[STATUS] Errored Count Error:', erroredError);
-    if (clusterError) console.error('[STATUS] Cluster Count Error:', clusterError);
-    if (assignmentError) console.error('[STATUS] Assigned Count Error:', assignmentError);
+    if (totalError) {
+        console.error('[STATUS] Total Count Error:', totalError);
+        throw new Error('Failed to load total bookmark count');
+    }
+    if (pendingRawError) {
+        console.error('[STATUS] Pending Raw Count Error:', pendingRawError);
+        throw new Error('Failed to load pending bookmark count');
+    }
+    if (enrichedError) {
+        console.error('[STATUS] Enriched Count Error:', enrichedError);
+        throw new Error('Failed to load enriched bookmark count');
+    }
+    if (embeddedError) {
+        console.error('[STATUS] Embedded Count Error:', embeddedError);
+        throw new Error('Failed to load embedded bookmark count');
+    }
+    if (erroredError) {
+        console.error('[STATUS] Errored Count Error:', erroredError);
+        throw new Error('Failed to load errored bookmark count');
+    }
+    if (clusterError) {
+        console.error('[STATUS] Cluster Count Error:', clusterError);
+        throw new Error('Failed to load cluster count');
+    }
+    if (assignmentError) {
+        console.error('[STATUS] Assigned Count Error:', assignmentError);
+        throw new Error('Failed to load assignment count');
+    }
 
     const counts = {
         totalBookmarks: totalCount ?? 0,
@@ -339,14 +360,21 @@ export const registerStatusRoutes = async (fastify: FastifyInstance) => {
         }
 
         if (!currentRun?.id) {
-            const legacy = await loadLegacyStatusCounts(userId);
-            return buildStatusResponse({
-                userId,
-                currentRun: null,
-                counts: legacy.counts,
-                isPremium,
-                legacyIsDone: legacy.isDone,
-            });
+            try {
+                const legacy = await loadLegacyStatusCounts(userId);
+                return buildStatusResponse({
+                    userId,
+                    currentRun: null,
+                    counts: legacy.counts,
+                    isPremium,
+                    legacyIsDone: legacy.isDone,
+                });
+            } catch (error) {
+                console.error('[STATUS] Failed to load legacy status counts:', error);
+                return reply
+                    .code(500)
+                    .send({ error: 'Failed to load status counts' });
+            }
         }
 
         const { data: runCounts, error: runCountsError } = await supabase.rpc(

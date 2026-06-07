@@ -171,7 +171,7 @@ const maybeEnqueueClustering = async (
     try {
         await queues.clustering.add(
             'cluster',
-            { userId, pipelineRunId, clusteringSettings },
+            { userId, pipelineRunId, jobGeneration, clusteringSettings },
             { jobId }
         );
     } catch (queueError) {

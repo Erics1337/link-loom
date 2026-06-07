@@ -217,7 +217,9 @@ export const useBookmarkWeaver = (
         resetBookmarkTreeSnapshot: scanSession.resetBookmarkTreeSnapshot,
         setClusters,
         setStats,
-        setStatus
+        setStatus,
+        setStructureAssignments,
+        deadLinkChromeIdsRef: scanSession.deadLinkChromeIdsRef
     });
 
     const { applyChanges, applyRecovery } = useChromeApply({

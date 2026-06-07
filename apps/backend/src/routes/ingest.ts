@@ -169,13 +169,25 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
                     .send({ error: 'Failed to initialize clustering run' });
             }
 
-            const pipelineRun = await beginUserPipelineRun(userId);
-            await recordPipelineRunStarted(
-                userId,
-                pipelineRun.generation,
-                bookmarkCount ?? 0,
-                clusteringSettings
-            );
+            let pipelineRun;
+            try {
+                pipelineRun = await beginUserPipelineRun(userId);
+                await recordPipelineRunStarted(
+                    userId,
+                    pipelineRun.generation,
+                    bookmarkCount ?? 0,
+                    clusteringSettings
+                );
+            } catch (error) {
+                console.error(
+                    `[MANUAL] Failed to initialize pipeline run for user ${userId}`,
+                    error
+                );
+                return reply
+                    .code(500)
+                    .send({ error: 'Failed to initialize clustering run' });
+            }
+
             console.log(`[MANUAL] Triggering clustering for user ${userId}`);
             await queues.clustering.add(
                 'cluster',

@@ -9,6 +9,7 @@ export const formatTimestamp = (timestamp: string) => {
 export const useWorkingMessage = () => {
     const [workingId, setWorkingId] = React.useState<string | null>(null);
     const [message, setMessage] = React.useState<string | null>(null);
+    const pendingPromiseRef = React.useRef<Promise<void>>(Promise.resolve());
 
     const runWithWorkingId = React.useCallback(
         async (
@@ -16,18 +17,21 @@ export const useWorkingMessage = () => {
             action: () => Promise<void>,
             messages: { success?: string; failure: string }
         ) => {
-            setWorkingId(itemId);
-            setMessage(null);
-            try {
-                await action();
-                if (messages.success) setMessage(messages.success);
-            } catch (error) {
-                setMessage(
-                    error instanceof Error ? error.message : messages.failure
-                );
-            } finally {
-                setWorkingId(null);
-            }
+            pendingPromiseRef.current = pendingPromiseRef.current.then(async () => {
+                setWorkingId(itemId);
+                setMessage(null);
+                try {
+                    await action();
+                    if (messages.success) setMessage(messages.success);
+                } catch (error) {
+                    setMessage(
+                        error instanceof Error ? error.message : messages.failure
+                    );
+                } finally {
+                    setWorkingId(null);
+                }
+            });
+            return pendingPromiseRef.current;
         },
         []
     );

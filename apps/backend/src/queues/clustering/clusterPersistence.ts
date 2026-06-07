@@ -108,6 +108,7 @@ export const assignBookmarksToCluster = async (
             log(
                 `Batch insert error for cluster ${clusterId}, assignments ${from}-${from + batchBookmarkIds.length - 1}: ${JSON.stringify(error)}`
             );
+            throw error;
         }
     }
 };
