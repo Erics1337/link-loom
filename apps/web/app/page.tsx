@@ -1,42 +1,52 @@
-"use client";
-
-import Image from "next/image";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
 import {
   BookmarkCheck,
   Check,
   CheckCircle2,
   ChevronRight,
-  CircleCheck,
   FileSearch,
   FolderTree,
   Layers3,
-  Loader2,
-  Mail,
   Search,
   Sparkles,
 } from "lucide-react";
-import { CardBody, CardContainer, CardItem } from "@/components/ui/3d-card";
-import { WaitlistForm } from "@/components/WaitlistForm";
-import { WaitlistPopup } from "@/components/WaitlistPopup";
+import { CrestLogo } from "@/components/BrandLogo";
+import { LogoMark } from "@/components/home/LogoMark";
 
-const linkExamples = [
+const ProductMockup = dynamic(
+  () =>
+    import("@/components/home/ProductMockup").then((mod) => ({
+      default: mod.ProductMockup,
+    })),
   {
-    title: "React server actions notes",
-    url: "nextjs.org/docs/app",
-    cluster: "Frontend systems",
+    loading: () => (
+      <div
+        className="h-[420px] min-h-[420px] w-full max-w-[620px] animate-pulse border border-[color:var(--ll-border)] bg-[var(--ll-surface)]"
+        aria-hidden="true"
+      />
+    ),
   },
-  {
-    title: "Supabase auth edge cases",
-    url: "supabase.com/docs",
-    cluster: "Auth and data",
-  },
-  {
-    title: "Agent workflow patterns",
-    url: "vercel.com/blog",
-    cluster: "AI tooling",
-  },
+);
+
+const WaitlistForm = dynamic(() =>
+  import("@/components/WaitlistForm").then((mod) => ({
+    default: mod.WaitlistForm,
+  })),
+);
+
+const WaitlistPopup = dynamic(
+  () =>
+    import("@/components/WaitlistPopup").then((mod) => ({
+      default: mod.WaitlistPopup,
+    })),
+  { ssr: false },
+);
+
+const workflow = [
+  "Import browser bookmarks from the extension.",
+  "Review clusters, tags, and renamed links.",
+  "Search from the dashboard when you need the trail again.",
 ];
 
 const capabilities = [
@@ -57,12 +67,6 @@ const capabilities = [
   },
 ];
 
-const workflow = [
-  "Import browser bookmarks from the extension.",
-  "Review clusters, tags, and renamed links.",
-  "Search from the dashboard when you need the trail again.",
-];
-
 const included = [
   "Unlimited bookmarks",
   "Advanced semantic organization",
@@ -71,147 +75,6 @@ const included = [
   "Priority support",
   "Early feature access",
 ];
-
-function LogoMark({ inverse = false }: { inverse?: boolean }) {
-  return (
-    <div className="flex items-center gap-3">
-      <div className="relative h-9 w-9">
-        <Image
-          src="/logo.png"
-          alt="Link Loom"
-          fill
-          sizes="36px"
-          className="object-contain"
-        />
-      </div>
-      <span
-        className={`text-lg font-semibold tracking-tight ${inverse ? "text-[var(--ll-deep-text)]" : "text-[var(--ll-text)]"}`}
-      >
-        Link Loom
-      </span>
-    </div>
-  );
-}
-
-function ProductMockup() {
-  return (
-    <CardContainer containerClassName="py-0" className="w-full">
-      <CardBody className="relative h-auto w-full max-w-[620px]">
-        <CardItem
-          translateZ={18}
-          className="absolute -left-6 top-16 hidden h-28 w-28 border border-[color:var(--ll-primary)] md:block"
-        >
-          <span className="sr-only">Depth guide</span>
-        </CardItem>
-        <CardItem
-          translateZ={28}
-          className="absolute -right-4 bottom-12 hidden h-36 w-24 border border-[color:var(--ll-accent)] md:block"
-        >
-          <span className="sr-only">Depth guide</span>
-        </CardItem>
-
-        <CardItem
-          translateZ={42}
-          className="relative w-full border border-[color:var(--ll-border)] bg-[var(--ll-card)] shadow-[0_28px_80px_var(--ll-shadow)]"
-        >
-          <div className="flex items-center justify-between border-b border-[color:var(--ll-border)] px-4 py-3">
-            <div className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full bg-[var(--ll-primary)]" />
-              <span className="h-2.5 w-2.5 rounded-full bg-[var(--ll-warning)]" />
-              <span className="h-2.5 w-2.5 rounded-full bg-[var(--ll-accent)]" />
-            </div>
-            <div className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--ll-muted)]">
-              semantic map
-            </div>
-          </div>
-
-          <div className="grid gap-0 lg:grid-cols-[1fr_15rem]">
-            <div className="p-5 sm:p-6">
-              <CardItem
-                translateZ={76}
-                className="flex w-full items-center gap-3 border border-[color:var(--ll-border)] bg-[var(--ll-surface-solid)] px-4 py-3 shadow-sm"
-              >
-                <Search className="h-4 w-4 text-[var(--ll-accent)]" />
-                <span className="text-sm text-[var(--ll-soft)]">
-                  find the auth article with the redirect bug
-                </span>
-              </CardItem>
-
-              <div className="mt-5 space-y-3">
-                {linkExamples.map((item, index) => (
-                  <CardItem
-                    key={item.title}
-                    translateZ={64 + index * 8}
-                    className="w-full border border-[color:var(--ll-border)] bg-[var(--ll-surface-solid)] p-4"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <p className="text-sm font-semibold text-[var(--ll-text)]">
-                          {item.title}
-                        </p>
-                        <p className="mt-1 text-xs text-[var(--ll-muted)]">
-                          {item.url}
-                        </p>
-                      </div>
-                      <span className="whitespace-nowrap border border-[color:var(--ll-accent)] bg-[var(--ll-accent-soft)] px-2 py-1 text-[11px] font-medium text-[var(--ll-accent-text)]">
-                        {item.cluster}
-                      </span>
-                    </div>
-                  </CardItem>
-                ))}
-              </div>
-            </div>
-
-            <div className="border-t border-[color:var(--ll-border)] bg-[var(--ll-deep)] p-5 text-[var(--ll-deep-text)] lg:border-l lg:border-t-0">
-              <div className="text-xs font-medium uppercase tracking-[0.18em] text-[var(--ll-deep-muted)]">
-                extension
-              </div>
-              <CardItem
-                translateZ={88}
-                className="mt-5 flex items-center gap-3"
-              >
-                <Image
-                  src="/logo.png"
-                  alt=""
-                  width={42}
-                  height={42}
-                  className="object-contain"
-                />
-                <div>
-                  <p className="text-sm font-semibold">Ready to organize</p>
-                  <p className="text-xs text-[var(--ll-deep-muted)]">
-                    Chrome bookmarks
-                  </p>
-                </div>
-              </CardItem>
-              <CardItem
-                as="button"
-                translateZ={72}
-                className="mt-6 w-full bg-[var(--ll-primary)] px-4 py-3 text-sm font-semibold text-white"
-              >
-                Organize Bookmarks
-              </CardItem>
-              <div className="mt-4 space-y-2 text-xs text-[var(--ll-deep-muted)]">
-                <p className="flex items-center gap-2">
-                  <CircleCheck className="h-3.5 w-3.5 text-[var(--ll-accent)]" />{" "}
-                  import structure
-                </p>
-                <p className="flex items-center gap-2">
-                  <CircleCheck className="h-3.5 w-3.5 text-[var(--ll-accent)]" />{" "}
-                  cluster by topic
-                </p>
-                <p className="flex items-center gap-2">
-                  <CircleCheck className="h-3.5 w-3.5 text-[var(--ll-accent)]" />{" "}
-                  review before apply
-                </p>
-              </div>
-            </div>
-          </div>
-        </CardItem>
-      </CardBody>
-    </CardContainer>
-  );
-}
 
 export default function Home() {
   return (
@@ -245,18 +108,17 @@ export default function Home() {
                 AI bookmark workspace
               </div>
 
-              {/* Chrome Extension Badge */}
               <a
                 href="https://chromewebstore.google.com/detail/link-loom/jdmadgnmcebcecfpcbonmnjdjkmohjhc"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#4285f4]/10 px-3 py-1.5 text-xs font-medium text-[#4285f4] transition hover:bg-[#4285f4]/20"
               >
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 0C8.21 0 5.04 2.16 3.37 5.35L.63 10.5a.6.6 0 0 0 .09.68l11.38 11.38a.6.6 0 0 0 .68.09l5.15-2.74C21.84 18.96 24 15.79 24 12c0-6.63-5.37-12-12-12zM4.8 6.24A9.96 9.96 0 0 1 12 2.4c4.64 0 8.57 3.18 9.69 7.47H12c-2.39 0-4.45 1.46-5.31 3.53L4.8 6.24zm13.08 12.18l-4.34 2.31-8.08-8.08a3.6 3.6 0 0 1 2.77-1.3h9.65c.03.24.04.48.04.73 0 2.41-1.06 4.58-2.72 6.07l-1.32 1.07z"/>
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M12 0C8.21 0 5.04 2.16 3.37 5.35L.63 10.5a.6.6 0 0 0 .09.68l11.38 11.38a.6.6 0 0 0 .68.09l5.15-2.74C21.84 18.96 24 15.79 24 12c0-6.63-5.37-12-12-12zM4.8 6.24A9.96 9.96 0 0 1 12 2.4c4.64 0 8.57 3.18 9.69 7.47H12c-2.39 0-4.45 1.46-5.31 3.53L4.8 6.24zm13.08 12.18l-4.34 2.31-8.08-8.08a3.6 3.6 0 0 1 2.77-1.3h9.65c.03.24.04.48.04.73 0 2.41-1.06 4.58-2.72 6.07l-1.32 1.07z" />
                 </svg>
                 Get the Chrome Extension
-                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                 </svg>
               </a>
@@ -339,7 +201,6 @@ export default function Home() {
               })}
             </div>
 
-            {/* Chrome Extension CTA */}
             <div className="mt-10">
               <a
                 href="https://chromewebstore.google.com/detail/link-loom/jdmadgnmcebcecfpcbonmnjdjkmohjhc"
@@ -349,8 +210,8 @@ export default function Home() {
               >
                 <div className="flex items-center gap-4">
                   <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[#4285f4]/10 text-[#4285f4]">
-                    <svg className="h-6 w-6" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M12 0C8.21 0 5.04 2.16 3.37 5.35L.63 10.5a.6.6 0 0 0 .09.68l11.38 11.38a.6.6 0 0 0 .68.09l5.15-2.74C21.84 18.96 24 15.79 24 12c0-6.63-5.37-12-12-12zM4.8 6.24A9.96 9.96 0 0 1 12 2.4c4.64 0 8.57 3.18 9.69 7.47H12c-2.39 0-4.45 1.46-5.31 3.53L4.8 6.24zm13.08 12.18l-4.34 2.31-8.08-8.08a3.6 3.6 0 0 1 2.77-1.3h9.65c.03.24.04.48.04.73 0 2.41-1.06 4.58-2.72 6.07l-1.32 1.07z"/>
+                    <svg className="h-6 w-6" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M12 0C8.21 0 5.04 2.16 3.37 5.35L.63 10.5a.6.6 0 0 0 .09.68l11.38 11.38a.6.6 0 0 0 .68.09l5.15-2.74C21.84 18.96 24 15.79 24 12c0-6.63-5.37-12-12-12zM4.8 6.24A9.96 9.96 0 0 1 12 2.4c4.64 0 8.57 3.18 9.69 7.47H12c-2.39 0-4.45 1.46-5.31 3.53L4.8 6.24zm13.08 12.18l-4.34 2.31-8.08-8.08a3.6 3.6 0 0 1 2.77-1.3h9.65c.03.24.04.48.04.73 0 2.41-1.06 4.58-2.72 6.07l-1.32 1.07z" />
                     </svg>
                   </div>
                   <div>
@@ -364,7 +225,7 @@ export default function Home() {
                 </div>
                 <div className="flex items-center gap-2 text-sm font-semibold text-[#4285f4]">
                   Install Extension
-                  <svg className="h-4 w-4 transition group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="h-4 w-4 transition group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
                   </svg>
                 </div>
@@ -462,12 +323,10 @@ export default function Home() {
           </div>
         </section>
 
-        {/* ── Waitlist ───────────────────────────────────────── */}
         <section
           id="waitlist"
           className="relative overflow-hidden border-b border-[color:var(--ll-border)] bg-[var(--ll-bg)] py-18 sm:py-24"
         >
-          {/* Decorative background accents */}
           <div
             className="pointer-events-none absolute inset-0"
             aria-hidden="true"
@@ -543,13 +402,7 @@ export default function Home() {
                 heart
               </span>
               <span>by</span>
-              <Image
-                src="/crest-logo.png"
-                alt="Crest Code Logo"
-                width={20}
-                height={20}
-                className="h-5 w-5 object-contain"
-              />
+              <CrestLogo size={20} className="h-5 w-5" />
               <a
                 href="https://crestcodecreative.com"
                 target="_blank"

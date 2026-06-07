@@ -103,7 +103,7 @@ export default async function Dashboard() {
         {/* Stats Grid */}
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
           {stats.map((item) => (
-            <div key={item.name} className="ll-panel-solid p-6">
+            <div key={item.name} className="ll-panel-solid min-h-[7.5rem] p-6">
               <dt className="flex items-center gap-2 text-sm font-medium text-ll-muted">
                 {item.name === "Total Bookmarks" && (
                   <Bookmark className="w-4 h-4" />
@@ -144,7 +144,7 @@ export default async function Dashboard() {
                 const clusterName =
                   item.cluster_assignments?.[0]?.clusters?.name;
                 return (
-                  <li key={item.id} className="ll-row px-6 py-4">
+                  <li key={item.id} className="ll-row min-h-[4.5rem] px-6 py-4">
                     <div className="flex items-center gap-4">
                       <div className="flex h-10 w-10 flex-none items-center justify-center rounded-ll-md border border-ll-border bg-ll-accent-soft">
                         <LinkIcon className="h-5 w-5 text-ll-accent" />

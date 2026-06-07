@@ -85,7 +85,27 @@ export default function DevicesPage() {
         </div>
 
         {loading ? (
-          <div className="text-ll-muted">Loading devices...</div>
+          <div className="ll-panel" role="status" aria-label="Loading devices">
+            <ul className="divide-y divide-ll-border">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <li
+                  key={index}
+                  className="ll-row flex min-h-[5.5rem] items-center justify-between p-6"
+                  aria-hidden="true"
+                >
+                  <div className="flex items-center space-x-4">
+                    <div className="h-12 w-12 animate-pulse rounded-ll-lg bg-ll-border/60" />
+                    <div className="space-y-2">
+                      <div className="h-4 w-40 animate-pulse rounded bg-ll-border/60" />
+                      <div className="h-3 w-28 animate-pulse rounded bg-ll-border/60" />
+                    </div>
+                  </div>
+                  <div className="h-10 w-10 animate-pulse rounded-ll-md bg-ll-border/60" />
+                </li>
+              ))}
+            </ul>
+            <span className="sr-only">Loading devices...</span>
+          </div>
         ) : (
           <div className="ll-panel">
             <ul className="divide-y divide-ll-border">
@@ -98,7 +118,7 @@ export default function DevicesPage() {
                 devices.map((device) => (
                   <li
                     key={device.id}
-                    className="ll-row flex items-center justify-between p-6"
+                    className="ll-row flex min-h-[5.5rem] items-center justify-between p-6"
                   >
                     <div className="flex items-center space-x-4">
                       <div className="rounded-ll-lg border border-ll-border bg-ll-accent-soft p-3">

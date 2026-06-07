@@ -71,7 +71,7 @@ export default async function CloudSnapshotsPage() {
               {snapshots.map((snapshot: any) => (
                 <li
                   key={snapshot.id}
-                  className="ll-row flex items-center justify-between gap-4 p-6"
+                  className="ll-row flex min-h-[5.5rem] items-center justify-between gap-4 p-6"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 mb-1">

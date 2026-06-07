@@ -1,11 +1,12 @@
 import { createClient } from "@/utils/supabase/server";
 import {
   Link as LinkIcon,
-  Search,
   FolderTree,
   ExternalLink,
 } from "lucide-react";
 import { AddLinkModal } from "@/components/AddLinkModal";
+import { LinksPagination } from "@/components/dashboard/LinksPagination";
+import { LinksSearchBar } from "@/components/dashboard/LinksSearchBar";
 import {
   DashboardPanelHeader,
   DashboardTopbar,
@@ -73,17 +74,7 @@ export default async function LinksPage({
     <div>
       <DashboardTopbar title="My Links">
         <div className="flex items-center gap-4">
-          {/* Native HTML form for searchParams routing */}
-          <form method="GET" action="/dashboard/links" className="relative">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ll-muted" />
-            <input
-              type="text"
-              name="query"
-              defaultValue={query}
-              placeholder="Search links..."
-              className="ll-input w-64 rounded-full py-1.5 pl-10 pr-4 text-sm"
-            />
-          </form>
+          <LinksSearchBar defaultQuery={query} />
           <AddLinkModal />
         </div>
       </DashboardTopbar>
@@ -110,7 +101,7 @@ export default async function LinksPage({
                 const clusterName =
                   bookmark.cluster_assignments?.[0]?.clusters?.name;
                 return (
-                  <li key={bookmark.id} className="ll-row p-6">
+                  <li key={bookmark.id} className="ll-row min-h-[6.5rem] p-6">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 mb-1">
@@ -156,36 +147,14 @@ export default async function LinksPage({
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <div className="flex items-center justify-between border-t border-ll-border px-6 py-4">
-              <div className="text-sm text-ll-muted">
-                Showing{" "}
-                <span className="font-medium text-ll-text">{offset + 1}</span>{" "}
-                to{" "}
-                <span className="font-medium text-ll-text">
-                  {Math.min(offset + ITEMS_PER_PAGE, count || 0)}
-                </span>{" "}
-                of <span className="font-medium text-ll-text">{count}</span>{" "}
-                results
-              </div>
-              <div className="flex items-center gap-2">
-                {currentPage > 1 && (
-                  <a
-                    href={`/dashboard/links?page=${currentPage - 1}${query ? `&query=${encodeURIComponent(query)}` : ""}`}
-                    className="ll-action-secondary px-3 py-1.5 text-sm"
-                  >
-                    Previous
-                  </a>
-                )}
-                {currentPage < totalPages && (
-                  <a
-                    href={`/dashboard/links?page=${currentPage + 1}${query ? `&query=${encodeURIComponent(query)}` : ""}`}
-                    className="ll-action-secondary px-3 py-1.5 text-sm"
-                  >
-                    Next
-                  </a>
-                )}
-              </div>
-            </div>
+            <LinksPagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalCount={count || 0}
+              offset={offset}
+              itemsPerPage={ITEMS_PER_PAGE}
+              query={query}
+            />
           )}
         </div>
       </div>
