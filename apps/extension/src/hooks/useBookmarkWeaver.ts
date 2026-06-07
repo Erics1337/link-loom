@@ -186,8 +186,6 @@ export const useBookmarkWeaver = (
         structureAssignments,
         deadLinkChromeIdsRef: scanSession.deadLinkChromeIdsRef,
         deadLinkScanTokenRef: scanSession.deadLinkScanTokenRef,
-        isDeletingDuplicates,
-        isDeletingDeadLinks,
         fetchResults,
         setClusters,
         setStructureAssignments,

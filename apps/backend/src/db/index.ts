@@ -4,26 +4,29 @@ import dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
+const isTestEnv =
+  process.env.NODE_ENV === "test" || Boolean(process.env.VITEST);
+
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-if (!supabaseUrl) {
-  console.error(
-    "SUPABASE_URL is missing. Set it before starting the backend.",
-  );
-  process.exit(1);
+if (!supabaseUrl || !supabaseServiceRoleKey) {
+  if (isTestEnv) {
+    console.warn(
+      "[db] SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing; using test placeholders.",
+    );
+  } else {
+    throw new Error(
+      "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set before starting the backend.",
+    );
+  }
 }
 
-if (!supabaseServiceRoleKey) {
-  console.error(
-    "SUPABASE_SERVICE_ROLE_KEY is missing. Set it before starting the backend.",
-  );
-  process.exit(1);
+if (!isTestEnv) {
+  console.log("Supabase client initialized with service role key");
 }
-
-console.log("Supabase client initialized with service role key");
 
 export const supabase: SupabaseClient = createClient(
-  supabaseUrl,
-  supabaseServiceRoleKey,
+  supabaseUrl ?? "http://127.0.0.1:54321",
+  supabaseServiceRoleKey ?? "test-service-role-key",
 );

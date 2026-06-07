@@ -41,7 +41,7 @@ export default function DevicesPage() {
 
   useEffect(() => {
     fetchDevices();
-  }, [supabase]);
+  }, []);
 
   const handleRevoke = async (deviceId: string) => {
     if (

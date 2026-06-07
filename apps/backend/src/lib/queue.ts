@@ -42,6 +42,8 @@ const defaultRetryPolicyByQueue: Record<QueueName, { attempts: number; backoffMs
 };
 
 const queueDriver = process.env.QUEUE_DRIVER ?? (process.env.AWS_LAMBDA_FUNCTION_NAME ? 'sqs' : 'inline');
+
+export const getQueueDriver = () => queueDriver;
 const sqs = new SQSClient({});
 const processors = new Map<QueueName, QueueProcessor>();
 const testQueuedJobs: TestQueuedJob[] = [];
@@ -71,7 +73,9 @@ class AppQueue<T = unknown> {
         const jobId = options.jobId ?? `${this.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const retryPolicy = defaultRetryPolicyByQueue[this.name];
         const attempts = options.attempts ?? retryPolicy.attempts;
-        const backoffMs = options.backoffMs ?? retryPolicy.backoffMs;
+        const backoffMs = Number.isFinite(options.backoffMs) && Number(options.backoffMs) > 0
+            ? Number(options.backoffMs)
+            : retryPolicy.backoffMs;
 
         if (queueDriver === 'test') {
             testQueuedJobs.push({
@@ -160,7 +164,7 @@ export const parseQueuedMessage = (raw: string): QueuedMessage => {
     const attempts = Number.isFinite(message.attempts) && Number(message.attempts) > 0
         ? Number(message.attempts)
         : retryPolicy.attempts;
-    const backoffMs = Number.isFinite(message.backoffMs) && Number(message.backoffMs) >= 0
+    const backoffMs = Number.isFinite(message.backoffMs) && Number(message.backoffMs) > 0
         ? Number(message.backoffMs)
         : retryPolicy.backoffMs;
 

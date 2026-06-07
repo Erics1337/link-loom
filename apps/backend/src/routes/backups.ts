@@ -16,6 +16,32 @@ type CloudSnapshotBody = {
     name?: unknown;
 };
 
+export const countSnapshotAssignments = (assignments: unknown): number => {
+    if (!Array.isArray(assignments) || assignments.length === 0) return 0;
+
+    const first = assignments[0] as { count?: unknown } | undefined;
+    const firstCount = first?.count;
+    if (
+        assignments.length === 1 &&
+        typeof firstCount === 'number' &&
+        Number.isFinite(firstCount)
+    ) {
+        return firstCount;
+    }
+
+    let total = 0;
+    let sawCount = false;
+    for (const assignment of assignments) {
+        const count = (assignment as { count?: unknown } | null)?.count;
+        if (typeof count === 'number' && Number.isFinite(count)) {
+            total += count;
+            sawCount = true;
+        }
+    }
+
+    return sawCount ? total : assignments.length;
+};
+
 const runSnapshotMutation = async (
     reply: FastifyReply,
     logLabel: string,
@@ -100,13 +126,8 @@ export const registerCloudSnapshotRoutes = async (fastify: FastifyInstance) => {
                     const folders = s.snapshot_clusters?.length || 0;
                     const bookmarks =
                         s.snapshot_clusters?.reduce(
-                            (acc: number, cluster: any) => {
-                                return (
-                                    acc +
-                                    (cluster.snapshot_assignments?.[0]?.count ||
-                                        0)
-                                );
-                            },
+                            (acc: number, cluster: any) =>
+                                acc + countSnapshotAssignments(cluster.snapshot_assignments),
                             0
                         ) || 0;
 

@@ -95,30 +95,65 @@ export const recoverStalePipelineState = async (
         }
     }
 
+    let enrichmentQueued = 0;
+    let enrichmentFailed = 0;
     for (const enrichmentJob of toQueueEnrichment) {
-        await queues.enrichment.add('enrich', {
-            userId,
-            pipelineRunId,
-            jobGeneration,
-            bookmarkId: enrichmentJob.bookmarkId,
-            url: enrichmentJob.url
-        });
+        try {
+            await queues.enrichment.add('enrich', {
+                userId,
+                pipelineRunId,
+                jobGeneration,
+                bookmarkId: enrichmentJob.bookmarkId,
+                url: enrichmentJob.url
+            });
+            enrichmentQueued++;
+        } catch (error) {
+            enrichmentFailed++;
+            log(
+                `[CLUSTERING] Recovery failed to queue enrichment for user ${userId}: ${JSON.stringify({
+                    pipelineRunId,
+                    jobGeneration,
+                    bookmarkId: enrichmentJob.bookmarkId,
+                    url: enrichmentJob.url,
+                    error: error instanceof Error ? error.message : error,
+                })}`
+            );
+        }
     }
 
+    let embeddingQueued = 0;
+    let embeddingFailed = 0;
     for (const embeddingJob of toQueueEmbedding) {
-        await queues.embedding.add('embed', {
-            userId,
-            pipelineRunId,
-            jobGeneration,
-            bookmarkId: embeddingJob.bookmarkId,
-            url: embeddingJob.url,
-            text: embeddingJob.text
-        });
+        try {
+            await queues.embedding.add('embed', {
+                userId,
+                pipelineRunId,
+                jobGeneration,
+                bookmarkId: embeddingJob.bookmarkId,
+                url: embeddingJob.url,
+                text: embeddingJob.text
+            });
+            embeddingQueued++;
+        } catch (error) {
+            embeddingFailed++;
+            log(
+                `[CLUSTERING] Recovery failed to queue embedding for user ${userId}: ${JSON.stringify({
+                    pipelineRunId,
+                    jobGeneration,
+                    bookmarkId: embeddingJob.bookmarkId,
+                    url: embeddingJob.url,
+                    error: error instanceof Error ? error.message : error,
+                })}`
+            );
+        }
     }
 
     if (toQueueEnrichment.length > 0 || toQueueEmbedding.length > 0) {
         log(
-            `[CLUSTERING] Recovery queued enrichment=${toQueueEnrichment.length}, embedding=${toQueueEmbedding.length} for user ${userId}`
+            `[CLUSTERING] Recovery queued enrichment=${enrichmentQueued}/${toQueueEnrichment.length}, embedding=${embeddingQueued}/${toQueueEmbedding.length} for user ${userId}` +
+            (enrichmentFailed > 0 || embeddingFailed > 0
+                ? ` (failures: enrichment=${enrichmentFailed}, embedding=${embeddingFailed})`
+                : '')
         );
     }
 };

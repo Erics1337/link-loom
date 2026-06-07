@@ -102,7 +102,8 @@ const buildStatusResponse = ({
     const assigned = counts.assignedBookmarks;
     const clusters = counts.clusterCount;
     const processing = pendingRaw + enriched;
-    const terminalProcessed = embedded + enriched + errored;
+    // Terminal ingest outcomes only: embedded or errored (enriched still awaits embedding).
+    const terminalProcessed = embedded + errored;
     const remainingToAssign = Math.max(embedded - assigned, 0);
     const isLegacy = !currentRun;
     const isRunning = pipelineStatus === 'running';
@@ -260,7 +261,7 @@ export const registerStatusRoutes = async (fastify: FastifyInstance) => {
             response: {
                 200: {
                     type: 'object',
-                    additionalProperties: false,
+                    additionalProperties: true,
                     required: [
                         'pending',
                         'pendingRaw',

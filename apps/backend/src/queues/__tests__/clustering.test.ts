@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { clusteringProcessor } from '../clustering';
 import { supabase } from '../../db';
 import { completePipelineRun, isUserCancelled } from '../../lib/cancellation';
-import { recordPipelineClusteringCompleted } from '../../lib/pipelineCoordinator';
+import {
+    recordPipelineClusteringCompleted,
+    shouldExecutePipelineClustering,
+} from '../../lib/pipelineCoordinator';
 import { QueueJob, queues } from '../../lib/queue';
 
 vi.mock('../../db', () => ({
@@ -44,6 +47,7 @@ vi.mock('../../lib/cancellation', () => ({
 
 vi.mock('../../lib/pipelineCoordinator', () => ({
     recordPipelineClusteringCompleted: vi.fn(),
+    shouldExecutePipelineClustering: vi.fn(),
 }));
 
 const createMockChain = (resolvedValue: any, explicitCount?: number) => {
@@ -65,6 +69,7 @@ describe('Clustering Worker', () => {
         mockCreate.mockReset();
         (completePipelineRun as any).mockResolvedValue(undefined);
         (isUserCancelled as any).mockReturnValue(false);
+        (shouldExecutePipelineClustering as any).mockResolvedValue(true);
     });
 
     const createMockJob = (data: any) => ({
@@ -282,5 +287,17 @@ describe('Clustering Worker', () => {
 
         expect(recordPipelineClusteringCompleted).toHaveBeenCalledWith('user-6', 16, undefined);
         expect(completePipelineRun).not.toHaveBeenCalled();
+    });
+
+    it('should skip orphaned clustering jobs when enqueue was not recorded', async () => {
+        const job = createMockJob({ userId: 'user-7', pipelineRunId: 'run-17', jobGeneration: 17 });
+        (shouldExecutePipelineClustering as any).mockResolvedValueOnce(false);
+
+        await clusteringProcessor(job);
+
+        expect(shouldExecutePipelineClustering).toHaveBeenCalledWith('user-7', 17, 'run-17');
+        expect(recordPipelineClusteringCompleted).not.toHaveBeenCalled();
+        expect(completePipelineRun).not.toHaveBeenCalled();
+        expect(supabase.from).not.toHaveBeenCalled();
     });
 });

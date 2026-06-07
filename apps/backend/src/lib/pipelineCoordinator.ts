@@ -1,9 +1,11 @@
 import { supabase } from '../db';
 import { ClusteringSettings } from './clusteringSettings';
 import { isUserCancelled } from './cancellation';
-import { queues } from './queue';
+import { getQueueDriver, queues } from './queue';
 
 const CLUSTERING_ENQUEUED_RECORD_ATTEMPTS = 3;
+const CLUSTERING_ENQUEUE_WAIT_MS = 5_000;
+const CLUSTERING_ENQUEUE_POLL_MS = 50;
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -28,6 +30,56 @@ const getPipelineRunGeneration = async (
     }
 
     return data?.generation == null ? undefined : Number(data.generation);
+};
+
+export const shouldExecutePipelineClustering = async (
+    userId: string,
+    jobGeneration: number | undefined,
+    pipelineRunId: string | undefined
+): Promise<boolean> => {
+    const generation = await getPipelineRunGeneration(userId, pipelineRunId, jobGeneration);
+    if (typeof generation !== 'number') {
+        return false;
+    }
+
+    const deadline = Date.now() + CLUSTERING_ENQUEUE_WAIT_MS;
+    while (true) {
+        const { data, error } = await supabase
+            .from('pipeline_runs')
+            .select('totals, status')
+            .eq('user_id', userId)
+            .eq('generation', generation)
+            .maybeSingle();
+
+        if (error) {
+            console.error(`[PIPELINE] Failed to read clustering enqueue state for user ${userId}`, error);
+            throw error;
+        }
+
+        if (!data || data.status !== 'running') {
+            return false;
+        }
+
+        const totals = (data.totals ?? {}) as Record<string, unknown>;
+        if (totals.clusteringEnqueuedAt != null) {
+            return true;
+        }
+
+        const claimId = totals.clusteringClaimId;
+        const hasActiveClaim = typeof claimId === 'string' && claimId.length > 0;
+        if (!hasActiveClaim) {
+            return false;
+        }
+
+        if (Date.now() >= deadline) {
+            console.error(
+                `[PIPELINE] Proceeding with clustering for user ${userId} generation ${generation} after waiting for clusteringEnqueuedAt`
+            );
+            return true;
+        }
+
+        await delay(CLUSTERING_ENQUEUE_POLL_MS);
+    }
 };
 
 export const recordPipelineRunStarted = async (
@@ -230,9 +282,16 @@ const maybeEnqueueClustering = async (
         }
 
         const removedQueuedJob = await queues.clustering.remove(jobId);
-        console.error(
-            `[PIPELINE] Attempted to remove queued clustering job after enqueue-record failure (queues.clustering.add jobId=${jobId}, removed=${removedQueuedJob})`
-        );
+        if (!removedQueuedJob && getQueueDriver() !== 'test') {
+            console.error(
+                `[PIPELINE] Could not remove queued clustering job after enqueue-record failure (queues.clustering.remove jobId=${jobId}, userId=${userId}, generation=${jobGeneration}, claimId=${claimId}). Claim was released; orphaned job delivery will be skipped unless clusteringEnqueuedAt is recorded.`,
+                { userId, jobGeneration, claimId, jobId }
+            );
+        } else {
+            console.error(
+                `[PIPELINE] Attempted to remove queued clustering job after enqueue-record failure (queues.clustering.add jobId=${jobId}, removed=${removedQueuedJob})`
+            );
+        }
         throw recordEnqueuedError;
     }
 

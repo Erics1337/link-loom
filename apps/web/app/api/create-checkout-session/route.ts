@@ -5,9 +5,6 @@ import { startProCheckoutForUser } from '@/utils/stripe/pro';
 import { rateLimit, sanitizeApiError } from '@/utils/api/security';
 
 export async function POST(req: Request) {
-  const rateLimitError = await rateLimit({ key: 'checkout:token', limit: 10, windowMs: 60_000 });
-  if (rateLimitError) return rateLimitError;
-
   try {
     const authHeader = req.headers.get('authorization');
     const token = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1];
@@ -41,6 +38,13 @@ export async function POST(req: Request) {
     if (userError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    const rateLimitError = await rateLimit({
+      key: `checkout:${user.id}`,
+      limit: 10,
+      windowMs: 60_000,
+    });
+    if (rateLimitError) return rateLimitError;
 
     const body = await req.json().catch(() => ({}));
     if (body.userId && body.userId !== user.id) {

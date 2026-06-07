@@ -1,8 +1,10 @@
+const VECTOR_NORM_EPSILON = 1e-10;
+
 export const normalizeVector = (vector: number[]): number[] => {
     const norm = Math.sqrt(
         vector.reduce((sum, value) => sum + value * value, 0)
     );
-    if (norm <= Number.EPSILON) return vector;
+    if (norm <= VECTOR_NORM_EPSILON) return vector;
     return vector.map((value) => value / norm);
 };
 

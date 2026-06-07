@@ -114,7 +114,9 @@ export function LoginForm() {
               setMessage(null);
 
               if (inviteCode) {
-                document.cookie = `invite_code=${inviteCode};path=/;max-age=3600`;
+                const secure =
+                  location.protocol === "https:" ? "; Secure" : "";
+                document.cookie = `invite_code=${encodeURIComponent(inviteCode)}; Path=/; Max-Age=3600; SameSite=Lax${secure}`;
               }
 
               const { error } = await supabase.auth.signInWithOAuth({

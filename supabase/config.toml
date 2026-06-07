@@ -10,7 +10,8 @@ max_rows = 1000
 [db]
 port = 56422
 shadow_port = 56420
-major_version = 17
+# Match hosted Supabase major version; avoid skipping versions on local reset.
+major_version = 15
 
 [studio]
 enabled = true
@@ -33,7 +34,9 @@ site_url = "http://localhost:3000"
 additional_redirect_urls = ["http://localhost:3000/auth/callback", "http://127.0.0.1:3000/auth/callback"]
 jwt_expiry = 3600
 enable_signup = true
+# Anonymous sign-in is disabled; Google OAuth and email/password remain available.
 enable_anonymous_sign_ins = false
+# Password rules apply to email/password sign-up only (not OAuth providers).
 minimum_password_length = 8
 password_requirements = "lower_upper_letters_digits"
 

@@ -1,6 +1,8 @@
 import { supabase } from '../../db';
 
 const CLUSTER_ASSIGNMENT_BATCH_SIZE = 500;
+/** Hard cap on bookmarks loaded into memory during clustering fetch. */
+export const MAX_BOOKMARKS = 50_000;
 
 export interface BookmarkVectorRow {
     id: string;
@@ -43,6 +45,14 @@ export const fetchUserBookmarkVectorRows = async (
 
         userBookmarks = userBookmarks.concat(chunk as BookmarkVectorRow[]);
 
+        if (userBookmarks.length > MAX_BOOKMARKS) {
+            const error = new Error(
+                `too many bookmarks (${userBookmarks.length} exceeds limit of ${MAX_BOOKMARKS})`
+            );
+            log(`[CLUSTERING] ${error.message} for user ${userId}`);
+            return { status: 'error', error };
+        }
+
         if (chunk.length < size) break;
         from += size;
 
@@ -79,19 +89,47 @@ export const createCluster = async (
     return newCluster.id;
 };
 
+export type AssignBookmarksFailedBatch = {
+    from: number;
+    to: number;
+    bookmarkIds: string[];
+    error: unknown;
+};
+
+export type AssignBookmarksResult = {
+    success: boolean;
+    total: number;
+    inserted: number;
+    failed: number;
+    failedBatches: AssignBookmarksFailedBatch[];
+};
+
 export const assignBookmarksToCluster = async (
     bookmarkIds: string[],
     clusterId: string,
     log: (msg: string) => void
-) => {
-    if (bookmarkIds.length === 0) return;
+): Promise<AssignBookmarksResult> => {
+    const uniqueBookmarkIds = Array.from(new Set(bookmarkIds));
+
+    if (uniqueBookmarkIds.length === 0) {
+        return {
+            success: true,
+            total: 0,
+            inserted: 0,
+            failed: 0,
+            failedBatches: []
+        };
+    }
+
+    let inserted = 0;
+    const failedBatches: AssignBookmarksFailedBatch[] = [];
 
     for (
         let from = 0;
-        from < bookmarkIds.length;
+        from < uniqueBookmarkIds.length;
         from += CLUSTER_ASSIGNMENT_BATCH_SIZE
     ) {
-        const batchBookmarkIds = bookmarkIds.slice(
+        const batchBookmarkIds = uniqueBookmarkIds.slice(
             from,
             from + CLUSTER_ASSIGNMENT_BATCH_SIZE
         );
@@ -105,10 +143,32 @@ export const assignBookmarksToCluster = async (
             .insert(assignments);
 
         if (error) {
+            const to = from + batchBookmarkIds.length - 1;
             log(
-                `Batch insert error for cluster ${clusterId}, assignments ${from}-${from + batchBookmarkIds.length - 1}: ${JSON.stringify(error)}`
+                `Batch insert error for cluster ${clusterId}, assignments ${from}-${to}: ${JSON.stringify(error)}`
             );
-            throw error;
+            failedBatches.push({
+                from,
+                to,
+                bookmarkIds: batchBookmarkIds,
+                error
+            });
+            continue;
         }
+
+        inserted += batchBookmarkIds.length;
     }
+
+    const failed = failedBatches.reduce(
+        (sum, batch) => sum + batch.bookmarkIds.length,
+        0
+    );
+
+    return {
+        success: failed === 0,
+        total: uniqueBookmarkIds.length,
+        inserted,
+        failed,
+        failedBatches
+    };
 };

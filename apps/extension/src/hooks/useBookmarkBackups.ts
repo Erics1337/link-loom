@@ -74,9 +74,9 @@ export const useBookmarkPersistence = ({
 
     const saveCurrentCloudSnapshot = useCallback(
         async (customName?: string) => {
-            return cloudSnapshotClient.saveCurrentCloudSnapshot(customName);
+            return cloudSnapshotClient.saveCurrentCloudSnapshot(customName, clusters);
         },
-        [cloudSnapshotClient]
+        [cloudSnapshotClient, clusters]
     );
 
     const deleteCloudSnapshot = useCallback(

@@ -35,3 +35,10 @@ test-results/
 # Supabase
 supabase/.temp/
 supabase/.branches
+
+# Local agent skills
+.agents/
+
+# CodeRabbit (local review config)
+.coderabbit.yaml
+skills-lock.json

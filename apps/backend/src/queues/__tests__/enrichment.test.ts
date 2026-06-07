@@ -210,6 +210,91 @@ describe('Enrichment Worker', () => {
         );
     });
 
+    it('should use a unique embedding job id when pipeline run metadata is missing', async () => {
+        (safeFetch as any).mockResolvedValueOnce({
+            text: () => Promise.resolve('<html><head><title>Legacy</title></head></html>')
+        });
+
+        const job = createMockJob({
+            userId: 'user-legacy',
+            bookmarkId: 'bm-legacy',
+            url: 'https://legacy.example'
+        });
+
+        await enrichmentProcessor(job);
+
+        const addCall = (queues.embedding.add as any).mock.calls[0];
+        expect(addCall[2].jobId).toMatch(
+            /^embed-user-legacy-bm-legacy-[0-9a-f-]{36}$/
+        );
+        expect(addCall[2].jobId).not.toContain('-run-legacy-');
+    });
+
+    it('should prefer pipelineRunId over jobGeneration in the embedding job id', async () => {
+        (safeFetch as any).mockResolvedValueOnce({
+            text: () => Promise.resolve('<html><head><title>Run</title></head></html>')
+        });
+
+        const job = createMockJob({
+            userId: 'user-7',
+            pipelineRunId: 'run-10',
+            jobGeneration: 10,
+            bookmarkId: 'bm-7',
+            url: 'https://run.example'
+        });
+
+        await enrichmentProcessor(job);
+
+        expect(queues.embedding.add).toHaveBeenCalledWith(
+            'embed',
+            expect.objectContaining({
+                bookmarkId: 'bm-7',
+            }),
+            { jobId: 'embed-user-7-run-run-10-bm-7' }
+        );
+    });
+
+    it('should continue when pipeline notification fails after enrichment DB update error', async () => {
+        const updateError = { message: 'write failed' };
+        const notifyError = new Error('rpc unavailable');
+        const eq = vi
+            .fn()
+            .mockResolvedValueOnce({ error: updateError })
+            .mockResolvedValueOnce({ error: null });
+        const update = vi.fn(() => ({ eq }));
+        (supabase.from as any).mockReturnValue({ update });
+        (safeFetch as any).mockResolvedValueOnce({
+            text: () => Promise.resolve('<html><head><title>Title</title></head></html>')
+        });
+        (notifyPipelineBookmarkTerminal as any).mockRejectedValueOnce(notifyError);
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        const job = createMockJob({
+            userId: 'user-8',
+            pipelineRunId: 'run-11',
+            jobGeneration: 11,
+            bookmarkId: 'bm-8',
+            url: 'https://db-error.example'
+        });
+
+        await expect(enrichmentProcessor(job)).resolves.toBeUndefined();
+
+        expect(notifyPipelineBookmarkTerminal).toHaveBeenCalledWith(
+            'user-8',
+            11,
+            'run-11',
+            'bm-8',
+            expect.any(Object)
+        );
+        expect(queues.embedding.add).not.toHaveBeenCalled();
+        expect(errorSpy).toHaveBeenCalledWith(
+            '[ENRICHMENT] Failed to notify pipeline terminal state for bookmark bm-8 (jobGeneration=11, pipelineRunId=run-11)',
+            notifyError
+        );
+
+        errorSpy.mockRestore();
+    });
+
     it('should retry when cancellation evaluation fails', async () => {
         const cancellationError = new Error('database unavailable');
         (isUserCancelled as any).mockRejectedValueOnce(cancellationError);

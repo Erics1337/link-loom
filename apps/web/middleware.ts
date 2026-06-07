@@ -7,11 +7,10 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/dashboard/:path*',
-    '/login',
-    '/auth/:path*',
-    '/api/bookmarks/:path*',
-    '/api/checkout/:path*',
-    '/api/create-checkout-session',
+    /*
+     * Refresh Supabase session cookies on app routes. Skip static assets, images,
+     * and Stripe webhooks (no session handling needed).
+     */
+    '/((?!_next/static|_next/image|favicon.ico|api/webhooks|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)',
   ],
 }

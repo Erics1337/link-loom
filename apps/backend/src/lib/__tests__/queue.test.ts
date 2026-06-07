@@ -44,6 +44,24 @@ describe('queue contract', () => {
         });
     });
 
+    it('falls back to queue retry policy when backoffMs is zero or invalid', async () => {
+        const { parseQueuedMessage } = await import('../queue');
+
+        expect(parseQueuedMessage(JSON.stringify({
+            queue: 'ingest',
+            jobName: 'ingest',
+            data: { userId: 'user-1' },
+            backoffMs: 0,
+        })).backoffMs).toBe(30000);
+
+        expect(parseQueuedMessage(JSON.stringify({
+            queue: 'clustering',
+            jobName: 'cluster',
+            data: { userId: 'user-1' },
+            backoffMs: -1,
+        })).backoffMs).toBe(60000);
+    });
+
     it('normalizes legacy queued messages without retry metadata', async () => {
         const { parseQueuedMessage } = await import('../queue');
         const message = parseQueuedMessage(JSON.stringify({

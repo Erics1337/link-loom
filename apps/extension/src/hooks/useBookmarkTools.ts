@@ -1,4 +1,4 @@
-import { Dispatch, MutableRefObject, SetStateAction, useCallback } from 'react';
+import { Dispatch, MutableRefObject, SetStateAction, useCallback, useRef } from 'react';
 import { BookmarkNode } from '../components/BookmarkTree';
 import { ClusteringSettings } from '../lib/clusteringSettings';
 import {
@@ -25,8 +25,6 @@ type UseBookmarkToolsArgs = {
     structureAssignments: StructureAssignment[];
     deadLinkChromeIdsRef: MutableRefObject<string[]>;
     deadLinkScanTokenRef: MutableRefObject<number>;
-    isDeletingDuplicates: boolean;
-    isDeletingDeadLinks: boolean;
     fetchResults: (idOverride?: string, silent?: boolean) => Promise<void>;
     setClusters: Dispatch<SetStateAction<BookmarkNode[]>>;
     setStructureAssignments: Dispatch<SetStateAction<StructureAssignment[]>>;
@@ -46,8 +44,6 @@ export const useBookmarkTools = ({
     structureAssignments,
     deadLinkChromeIdsRef,
     deadLinkScanTokenRef,
-    isDeletingDuplicates,
-    isDeletingDeadLinks,
     fetchResults,
     setClusters,
     setStructureAssignments,
@@ -58,6 +54,9 @@ export const useBookmarkTools = ({
     setIsDeletingDuplicates,
     setIsDeletingDeadLinks
 }: UseBookmarkToolsArgs) => {
+    const isDeletingDuplicatesRef = useRef(false);
+    const isDeletingDeadLinksRef = useRef(false);
+
     const updateStateAfterBookmarkRemoval = useCallback(
         (removedChromeIds: Set<string>) => {
             if (removedChromeIds.size === 0) return;
@@ -256,7 +255,9 @@ export const useBookmarkTools = ({
 
     const deleteAllDuplicates = useCallback(async () => {
         if (typeof chrome === 'undefined' || !chrome.bookmarks) return;
-        if (isDeletingDuplicates || structureAssignments.length === 0) return;
+        if (isDeletingDuplicatesRef.current || structureAssignments.length === 0) {
+            return;
+        }
 
         const duplicateChromeIds =
             collectDuplicateChromeIds(structureAssignments);
@@ -265,10 +266,14 @@ export const useBookmarkTools = ({
             return;
         }
 
+        isDeletingDuplicatesRef.current = true;
         const confirmed = window.confirm(
             `Delete ${duplicateChromeIds.length} duplicate bookmark${duplicateChromeIds.length === 1 ? '' : 's'}? This cannot be undone.`
         );
-        if (!confirmed) return;
+        if (!confirmed) {
+            isDeletingDuplicatesRef.current = false;
+            return;
+        }
 
         setIsDeletingDuplicates(true);
         try {
@@ -287,10 +292,10 @@ export const useBookmarkTools = ({
 
             updateStateAfterBookmarkRemoval(removedChromeIds);
         } finally {
+            isDeletingDuplicatesRef.current = false;
             setIsDeletingDuplicates(false);
         }
     }, [
-        isDeletingDuplicates,
         setIsDeletingDuplicates,
         setStats,
         structureAssignments,
@@ -299,22 +304,26 @@ export const useBookmarkTools = ({
 
     const deleteAllDeadLinks = useCallback(async () => {
         if (typeof chrome === 'undefined' || !chrome.bookmarks) return;
-        if (isDeletingDeadLinks) return;
+        if (isDeletingDeadLinksRef.current) return;
 
-        const deadChromeIds = deadLinkChromeIdsRef.current;
-        if (deadChromeIds.length === 0) {
+        const deadChromeIdsSnapshot = [...deadLinkChromeIdsRef.current];
+        if (deadChromeIdsSnapshot.length === 0) {
             return;
         }
 
+        isDeletingDeadLinksRef.current = true;
         const confirmed = window.confirm(
-            `Delete ${deadChromeIds.length} dead link${deadChromeIds.length === 1 ? '' : 's'}? This cannot be undone.`
+            `Delete ${deadChromeIdsSnapshot.length} dead link${deadChromeIdsSnapshot.length === 1 ? '' : 's'}? This cannot be undone.`
         );
-        if (!confirmed) return;
+        if (!confirmed) {
+            isDeletingDeadLinksRef.current = false;
+            return;
+        }
 
         setIsDeletingDeadLinks(true);
         try {
             const removedChromeIds = new Set<string>();
-            for (const chromeId of deadChromeIds) {
+            for (const chromeId of deadChromeIdsSnapshot) {
                 try {
                     await chrome.bookmarks.remove(chromeId);
                     removedChromeIds.add(chromeId);
@@ -328,11 +337,11 @@ export const useBookmarkTools = ({
 
             updateStateAfterBookmarkRemoval(removedChromeIds);
         } finally {
+            isDeletingDeadLinksRef.current = false;
             setIsDeletingDeadLinks(false);
         }
     }, [
         deadLinkChromeIdsRef,
-        isDeletingDeadLinks,
         setIsDeletingDeadLinks,
         updateStateAfterBookmarkRemoval
     ]);

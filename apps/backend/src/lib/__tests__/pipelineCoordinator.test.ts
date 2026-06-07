@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { supabase } from '../../db';
 import { isUserCancelled } from '../cancellation';
-import { queues } from '../queue';
-import { notifyPipelineBookmarkTerminal } from '../pipelineCoordinator';
+import { getQueueDriver, queues } from '../queue';
+import {
+    notifyPipelineBookmarkTerminal,
+    shouldExecutePipelineClustering,
+} from '../pipelineCoordinator';
 
 vi.mock('../../db', () => ({
     supabase: {
@@ -16,6 +19,7 @@ vi.mock('../cancellation', () => ({
 }));
 
 vi.mock('../queue', () => ({
+    getQueueDriver: vi.fn(() => 'test'),
     queues: {
         clustering: { add: vi.fn(), remove: vi.fn() },
     },
@@ -198,5 +202,77 @@ describe('pipelineCoordinator', () => {
             p_claim_id: claimId,
         });
         expect(queues.clustering.remove).toHaveBeenCalledWith('cluster-user-1-run-run-7');
+    });
+
+    it('logs an orphan-clustering warning when enqueue recording fails and remove cannot dequeue outside test mode', async () => {
+        const recordError = new Error('record failed');
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        (getQueueDriver as any).mockReturnValue('sqs');
+        (supabase.rpc as any)
+            .mockResolvedValueOnce({ data: true, error: null })
+            .mockResolvedValueOnce({ data: claimId, error: null })
+            .mockResolvedValueOnce({ data: null, error: recordError })
+            .mockResolvedValueOnce({ data: null, error: recordError })
+            .mockResolvedValueOnce({ data: null, error: recordError })
+            .mockResolvedValueOnce({ data: null, error: null });
+        (queues.clustering.remove as any).mockResolvedValueOnce(false);
+
+        await expect(notifyPipelineBookmarkTerminal(
+            'user-1',
+            7,
+            'run-7',
+            'bookmark-7',
+            {
+                folderDensity: 'more',
+                namingTone: 'playful',
+                organizationMode: 'topic',
+                useEmojiNames: false,
+            }
+        )).rejects.toThrow('record failed');
+
+        expect(consoleError).toHaveBeenCalledWith(
+            expect.stringContaining('Could not remove queued clustering job after enqueue-record failure'),
+            expect.objectContaining({
+                userId: 'user-1',
+                jobGeneration: 7,
+                claimId,
+                jobId: 'cluster-user-1-run-run-7',
+            })
+        );
+        consoleError.mockRestore();
+    });
+
+    describe('shouldExecutePipelineClustering', () => {
+        it('returns false when clustering was never enqueued and the claim was released', async () => {
+            (supabase.from as any).mockReturnValue({
+                select: vi.fn().mockReturnThis(),
+                eq: vi.fn().mockReturnThis(),
+                maybeSingle: vi.fn().mockResolvedValue({
+                    data: {
+                        status: 'running',
+                        totals: {},
+                    },
+                    error: null,
+                }),
+            });
+
+            await expect(shouldExecutePipelineClustering('user-1', 7, 'run-7')).resolves.toBe(false);
+        });
+
+        it('returns true when clusteringEnqueuedAt is recorded', async () => {
+            (supabase.from as any).mockReturnValue({
+                select: vi.fn().mockReturnThis(),
+                eq: vi.fn().mockReturnThis(),
+                maybeSingle: vi.fn().mockResolvedValue({
+                    data: {
+                        status: 'running',
+                        totals: { clusteringEnqueuedAt: '2026-06-07T00:00:00.000Z' },
+                    },
+                    error: null,
+                }),
+            });
+
+            await expect(shouldExecutePipelineClustering('user-1', 7, 'run-7')).resolves.toBe(true);
+        });
     });
 });

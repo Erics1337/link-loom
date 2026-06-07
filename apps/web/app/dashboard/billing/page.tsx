@@ -50,7 +50,7 @@ export default function BillingPage() {
       }
     };
     getUser();
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     if (!checkoutSucceeded || !checkoutSessionId || !user) return;
@@ -97,7 +97,7 @@ export default function BillingPage() {
     return () => {
       cancelled = true;
     };
-  }, [checkoutSucceeded, checkoutSessionId, user, supabase]);
+  }, [checkoutSucceeded, checkoutSessionId, user, router]);
 
   const handleCheckout = async () => {
     if (!user) {

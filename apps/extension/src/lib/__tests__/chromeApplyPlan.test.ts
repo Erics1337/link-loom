@@ -443,6 +443,67 @@ describe('chrome bookmark apply plan', () => {
         expect(await loadActiveChromeApplyJournal()).toBeNull();
     });
 
+    it('rejects starting a new apply while an active journal exists', async () => {
+        const chromeMock = stubChromeBookmarks();
+        chromeMock.api.removeTree.mockRejectedValueOnce(
+            new Error('cleanup failed')
+        );
+
+        const plan = await buildDocsPlan();
+        await applyChromeBookmarkPlan(plan);
+
+        expect(await loadActiveChromeApplyJournal()).not.toBeNull();
+        await expect(applyChromeBookmarkPlan(plan)).rejects.toThrow(
+            'An unfinished bookmark apply journal is already active.'
+        );
+    });
+
+    it('skips removing a created folder that still contains bookmarks', async () => {
+        const chromeMock = stubChromeBookmarks();
+        const plan = await buildDocsPlan();
+        const folderPlanId = (plan.roots[0].children[0] as { planId: string })
+            .planId;
+        const folderId = 'created-folder';
+
+        chromeMock.records.set(folderId, {
+            id: folderId,
+            parentId: '1',
+            title: 'Docs'
+        });
+        chromeMock.records.get('chrome-1')!.parentId = folderId;
+
+        await rollbackChromeBookmarkApplyJournal({
+            id: plan.id,
+            plan,
+            phase: 'rollback',
+            createdFolderIdsByPlanId: { [folderPlanId]: folderId },
+            entries: [
+                {
+                    type: 'createFolder',
+                    status: 'applied',
+                    planId: folderPlanId,
+                    chromeId: folderId,
+                    parentId: '1',
+                    title: 'Docs'
+                },
+                {
+                    type: 'moveBookmark',
+                    status: 'pending',
+                    chromeId: 'chrome-1',
+                    previousParentId: 'old-folder',
+                    previousIndex: 0,
+                    nextParentId: folderId
+                }
+            ],
+            completed: false,
+            updatedAt: new Date().toISOString()
+        });
+
+        expect(chromeMock.records.has('chrome-1')).toBe(true);
+        expect(chromeMock.records.has(folderId)).toBe(true);
+        expect(chromeMock.api.removeTree).not.toHaveBeenCalledWith(folderId);
+    });
+
     it('continues rollback when manually edited entries are already missing', async () => {
         const chromeMock = stubChromeBookmarks();
         chromeMock.api.removeTree.mockRejectedValueOnce(

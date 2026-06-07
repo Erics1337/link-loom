@@ -7,7 +7,10 @@ import {
     ClusteringSettings,
     normalizeClusteringSettings
 } from '../lib/clusteringSettings';
-import { recordPipelineClusteringCompleted } from '../lib/pipelineCoordinator';
+import {
+    recordPipelineClusteringCompleted,
+    shouldExecutePipelineClustering,
+} from '../lib/pipelineCoordinator';
 import {
     shouldAssignLeaf,
     splitClusterGroups
@@ -115,7 +118,16 @@ const assignLeafGroup = async (
         return;
     }
 
-    await assignBookmarksToCluster(bookmarkIds, leafClusterId, log);
+    const assignmentResult = await assignBookmarksToCluster(
+        bookmarkIds,
+        leafClusterId,
+        log
+    );
+    if (!assignmentResult.success) {
+        log(
+            `[CLUSTERING] Partial assignment failure for cluster ${leafClusterId}: inserted ${assignmentResult.inserted}/${assignmentResult.total}, failed ${assignmentResult.failed}`
+        );
+    }
 };
 
 async function recursiveCluster(
@@ -241,6 +253,13 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
 
     if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
         log(`[CLUSTERING] Cancelled before start for user ${userId}`);
+        return;
+    }
+
+    if (!(await shouldExecutePipelineClustering(userId, jobGeneration, pipelineRunId))) {
+        log(
+            `[CLUSTERING] Skipping clustering for user ${userId}: enqueue was not recorded (orphaned or superseded job)`
+        );
         return;
     }
 

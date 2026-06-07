@@ -69,4 +69,42 @@ describe('recoverStalePipelineState', () => {
             text: 'Example Recovered https://example.com/enriched',
         });
     });
+
+    it('continues recovery when an individual queue add fails', async () => {
+        const log = vi.fn();
+        const query = createQuery({
+            data: [
+                {
+                    id: 'bookmark-pending-1',
+                    status: 'pending',
+                    url: 'https://example.com/pending-1',
+                    shared_links: null,
+                },
+                {
+                    id: 'bookmark-pending-2',
+                    status: 'pending',
+                    url: 'https://example.com/pending-2',
+                    shared_links: null,
+                },
+            ],
+            error: null,
+        });
+        (supabase.from as any).mockReturnValue(query);
+        (queues.enrichment.add as any)
+            .mockRejectedValueOnce(new Error('queue unavailable'))
+            .mockResolvedValueOnce(undefined);
+
+        await recoverStalePipelineState('user-1', 'run-9', 9, log);
+
+        expect(queues.enrichment.add).toHaveBeenCalledTimes(2);
+        expect(log).toHaveBeenCalledWith(
+            expect.stringContaining('Recovery failed to queue enrichment for user user-1')
+        );
+        expect(log).toHaveBeenCalledWith(
+            expect.stringContaining('"bookmarkId":"bookmark-pending-1"')
+        );
+        expect(log).toHaveBeenCalledWith(
+            '[CLUSTERING] Recovery queued enrichment=1/2, embedding=0/0 for user user-1 (failures: enrichment=1, embedding=0)'
+        );
+    });
 });

@@ -37,8 +37,10 @@ const computeDistance = (a: number[], b: number[]): number => {
 };
 
 const computeCentroid = (vecs: number[][]): number[] => {
-    if (vecs.length === 0) return [];
-    if (vecs.length === 1) return [...vecs[0]];
+    if (vecs.length === 0) {
+        throw new Error('computeCentroid requires at least one vector');
+    }
+    if (vecs.length === 1) return vecs[0];
 
     const dimensions = vecs[0].length;
     const centroid = new Array(dimensions).fill(0);

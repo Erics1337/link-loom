@@ -62,10 +62,10 @@ export async function POST(request: Request) {
   clearTimeout(timeoutId)
 
   let payload: unknown
+  const text = await response.text().catch(() => '')
   try {
-    payload = await response.json()
+    payload = text ? JSON.parse(text) : {}
   } catch {
-    const text = await response.text().catch(() => '')
     payload = { error: text || 'Invalid JSON response' }
   }
 

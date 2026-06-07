@@ -56,12 +56,17 @@ if (process.env.NODE_ENV !== "test") {
 const AUTH_LIMIT = parsePositiveInt(process.env.RATE_LIMIT_AUTH_MAX, 30);
 const WRITE_LIMIT = parsePositiveInt(process.env.RATE_LIMIT_WRITE_MAX, 120);
 const DEFAULT_LIMIT = parsePositiveInt(process.env.RATE_LIMIT_MAX, 300);
+const UNKNOWN_CLIENT_LIMIT = parsePositiveInt(
+  process.env.RATE_LIMIT_UNKNOWN_MAX,
+  30,
+);
 
 const getClientKey = (req: FastifyRequest) => {
   return req.ip || "unknown";
 };
 
 const getLimitForRequest = (req: FastifyRequest) => {
+  if (getClientKey(req) === "unknown") return UNKNOWN_CLIENT_LIMIT;
   if (req.url.startsWith("/auth/")) return AUTH_LIMIT;
   if (req.method !== "GET" && req.method !== "HEAD") return WRITE_LIMIT;
   return DEFAULT_LIMIT;

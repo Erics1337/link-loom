@@ -534,10 +534,39 @@ const createJournal = (plan: ChromeApplyPlan): ChromeApplyJournal => ({
     updatedAt: getNowIso(),
 });
 
+let inFlightApply: Promise<ChromeApplyResult> | null = null;
+
+const runExclusiveApply = async (
+    allowExistingJournal: boolean,
+    runner: () => Promise<ChromeApplyResult>
+): Promise<ChromeApplyResult> => {
+    if (inFlightApply) {
+        throw new Error('A bookmark apply is already in progress.');
+    }
+
+    if (!allowExistingJournal) {
+        const existingJournal = await loadActiveChromeApplyJournal();
+        if (existingJournal) {
+            throw new Error(
+                'An unfinished bookmark apply journal is already active.'
+            );
+        }
+    }
+
+    const operation = runner();
+    inFlightApply = operation.finally(() => {
+        inFlightApply = null;
+    });
+
+    return operation;
+};
+
 export const applyChromeBookmarkPlan = async (plan: ChromeApplyPlan): Promise<ChromeApplyResult> => {
-    const journal = createJournal(plan);
-    await writeJournal(journal);
-    return executeChromeApplyJournal(journal);
+    return runExclusiveApply(false, async () => {
+        const journal = createJournal(plan);
+        await writeJournal(journal);
+        return executeChromeApplyJournal(journal);
+    });
 };
 
 const executeChromeApplyJournal = async (journal: ChromeApplyJournal): Promise<ChromeApplyResult> => {
@@ -585,7 +614,61 @@ const executeChromeApplyJournal = async (journal: ChromeApplyJournal): Promise<C
 };
 
 export const resumeChromeBookmarkApplyJournal = async (journal: ChromeApplyJournal) => {
-    return executeChromeApplyJournal(journal);
+    return runExclusiveApply(true, () => executeChromeApplyJournal(journal));
+};
+
+const rollbackAppliedJournalEntry = async (
+    entry: ChromeApplyJournalEntry,
+    restoredIds: Record<string, string>,
+    result: ChromeApplyRollbackResult
+) => {
+    if (entry.type === 'deleteRootChild') {
+        const existing = await chrome.bookmarks.get(entry.target.chromeId).catch(() => []);
+        if (existing.length === 0) {
+            if (entry.target.kind === 'folder') {
+                result.skippedDeletedFolderCount += 1;
+                result.skippedDeletedFolderTitles.push(entry.target.title);
+                return;
+            }
+            const restored = await chrome.bookmarks.create({
+                parentId: entry.rootId,
+                title: entry.target.title,
+                url: entry.target.kind === 'bookmark' ? entry.target.url : undefined,
+            });
+            restoredIds[entry.target.chromeId] = restored.id;
+        } else {
+            restoredIds[entry.target.chromeId] = entry.target.chromeId;
+        }
+        return;
+    }
+
+    if (entry.type === 'moveBookmark') {
+        const existing = await findBookmarkNode(entry.chromeId);
+        if (!existing) return;
+        await chrome.bookmarks.move(entry.chromeId, {
+            parentId: restoredIds[entry.previousParentId] || entry.previousParentId,
+            index: entry.previousIndex,
+        });
+        return;
+    }
+
+    if (entry.type === 'updateBookmark') {
+        const existing = await findBookmarkNode(entry.chromeId);
+        if (!existing) return;
+        await chrome.bookmarks.update(entry.chromeId, { title: entry.previousTitle });
+        return;
+    }
+
+    if (entry.type === 'createFolder') {
+        if (!entry.chromeId) return;
+        const existing = await findBookmarkNode(entry.chromeId);
+        if (!existing) return;
+        const children = await chrome.bookmarks.getChildren(entry.chromeId).catch(() => []);
+        if (children.length > 0) {
+            return;
+        }
+        await chrome.bookmarks.removeTree(entry.chromeId);
+    }
 };
 
 export const rollbackChromeBookmarkApplyJournal = async (journal: ChromeApplyJournal): Promise<ChromeApplyRollbackResult> => {
@@ -597,52 +680,37 @@ export const rollbackChromeBookmarkApplyJournal = async (journal: ChromeApplyJou
         skippedDeletedFolderTitles: [],
     };
 
-    for (const entry of [...journal.entries].reverse()) {
-        try {
-            if (entry.status !== 'applied') {
+    const appliedEntries = [...journal.entries]
+        .reverse()
+        .filter((entry) => entry.status === 'applied');
+
+    const rollbackEntries = async (
+        entries: ChromeApplyJournalEntry[],
+        entryFilter: (entry: ChromeApplyJournalEntry) => boolean
+    ) => {
+        for (const entry of entries) {
+            if (!entryFilter(entry)) {
                 continue;
             }
 
-            if (entry.type === 'deleteRootChild') {
-                const existing = await chrome.bookmarks.get(entry.target.chromeId).catch(() => []);
-                if (existing.length === 0) {
-                    if (entry.target.kind === 'folder') {
-                        result.skippedDeletedFolderCount += 1;
-                        result.skippedDeletedFolderTitles.push(entry.target.title);
-                        continue;
-                    }
-                    const restored = await chrome.bookmarks.create({
-                        parentId: entry.rootId,
-                        title: entry.target.title,
-                        url: entry.target.kind === 'bookmark' ? entry.target.url : undefined,
-                    });
-                    restoredIds[entry.target.chromeId] = restored.id;
-                } else {
-                    restoredIds[entry.target.chromeId] = entry.target.chromeId;
-                }
-            } else if (entry.type === 'moveBookmark') {
-                const existing = await findBookmarkNode(entry.chromeId);
-                if (!existing) continue;
-                await chrome.bookmarks.move(entry.chromeId, {
-                    parentId: restoredIds[entry.previousParentId] || entry.previousParentId,
-                    index: entry.previousIndex,
-                });
-            } else if (entry.type === 'updateBookmark') {
-                const existing = await findBookmarkNode(entry.chromeId);
-                if (!existing) continue;
-                await chrome.bookmarks.update(entry.chromeId, { title: entry.previousTitle });
-            } else if (entry.type === 'createFolder') {
-                if (!entry.chromeId) continue;
-                const existing = await findBookmarkNode(entry.chromeId);
-                if (!existing) continue;
-                await chrome.bookmarks.removeTree(entry.chromeId);
+            try {
+                await rollbackAppliedJournalEntry(entry, restoredIds, result);
+            } catch (error) {
+                journal.errorMessage = getChromeErrorMessage(error);
+                await writeJournal(journal);
+                throw error;
             }
-        } catch (error) {
-            journal.errorMessage = getChromeErrorMessage(error);
-            await writeJournal(journal);
-            throw error;
         }
-    }
+    };
+
+    await rollbackEntries(
+        appliedEntries,
+        (entry) => entry.type !== 'createFolder'
+    );
+    await rollbackEntries(
+        appliedEntries,
+        (entry) => entry.type === 'createFolder'
+    );
 
     journal.completed = true;
     journal.phase = 'complete';

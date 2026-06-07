@@ -11,7 +11,7 @@ export function formatRelativeTime(dateString: string): string {
     const aheadMs = -diffMs;
     const aheadHours = Math.floor(aheadMs / (1000 * 60 * 60));
     const aheadDays = Math.floor(aheadMs / (1000 * 60 * 60 * 24));
-    if (aheadHours < 1) return "Just now";
+    if (aheadHours < 1) return "Very soon";
     if (aheadHours < 24) return `In ${aheadHours}h`;
     if (aheadDays < 7) return `In ${aheadDays}d`;
     return date.toLocaleDateString();

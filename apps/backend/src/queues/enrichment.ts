@@ -1,3 +1,5 @@
+import { randomUUID } from 'crypto';
+
 import { QueueJob, queues } from '../lib/queue';
 import { supabase } from '../db';
 import { isUserCancelled } from '../lib/cancellation';
@@ -15,6 +17,22 @@ export interface EnrichmentJobData {
     bookmarkId: string;
     url: string;
 }
+
+const buildEmbeddingJobId = (
+    userId: string,
+    bookmarkId: string,
+    pipelineRunId?: string,
+    jobGeneration?: number
+) => {
+    const runKey =
+        pipelineRunId ?? (jobGeneration !== undefined ? String(jobGeneration) : undefined);
+
+    if (runKey) {
+        return `embed-${userId}-run-${runKey}-${bookmarkId}`;
+    }
+
+    return `embed-${userId}-${bookmarkId}-${randomUUID()}`;
+};
 
 const exitIfCancelled = async (
     userId: string,
@@ -74,7 +92,20 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
             .from('bookmarks')
             .update({ status: 'error' })
             .eq('id', bookmarkId);
-        await notifyPipelineBookmarkTerminal(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings);
+        try {
+            await notifyPipelineBookmarkTerminal(
+                userId,
+                jobGeneration,
+                pipelineRunId,
+                bookmarkId,
+                clusteringSettings
+            );
+        } catch (notifyError) {
+            console.error(
+                `[ENRICHMENT] Failed to notify pipeline terminal state for bookmark ${bookmarkId} (jobGeneration=${jobGeneration}, pipelineRunId=${pipelineRunId})`,
+                notifyError
+            );
+        }
         return;
     }
 
@@ -94,7 +125,7 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
             url,
         },
         {
-            jobId: `embed-${userId}-run-${pipelineRunId || jobGeneration || 'legacy'}-${bookmarkId}`,
+            jobId: buildEmbeddingJobId(userId, bookmarkId, pipelineRunId, jobGeneration),
         }
     );
 };

@@ -121,10 +121,6 @@ export const CardItem = ({
     const [isMouseEntered] = useMouseEnter();
 
     useEffect(() => {
-        handleAnimations();
-    }, [isMouseEntered]);
-
-    const handleAnimations = () => {
         if (!ref.current) return;
         if (isMouseEntered) {
             // Enhanced effect on hover - multiply translateZ for more pop
@@ -133,7 +129,7 @@ export const CardItem = ({
             // Reset to base 3D depth when not hovering
             ref.current.style.transform = `translateX(0px) translateY(0px) translateZ(${translateZ}px) rotateX(0deg) rotateY(0deg) rotateZ(0deg)`;
         }
-    };
+    }, [isMouseEntered, translateX, translateY, translateZ, rotateX, rotateY, rotateZ]);
 
     return (
         <Tag

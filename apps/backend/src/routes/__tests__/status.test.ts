@@ -211,6 +211,41 @@ describe('status routes', () => {
         }));
     });
 
+    it('does not count enriched bookmarks as terminal ingest progress', async () => {
+        const run = {
+            id: 'run-enriched',
+            generation: 11,
+            status: 'running',
+            totals: { total: 10, ingestCompletedAt: '2026-06-07T00:00:00.000Z', untrackedErrors: 0 },
+        };
+        mockRunLookups(run);
+        (supabase.rpc as any).mockResolvedValue({
+            data: [{
+                total_bookmarks: 10,
+                pending_bookmarks: 0,
+                enriched_bookmarks: 5,
+                embedded_bookmarks: 3,
+                errored_bookmarks: 1,
+                assigned_bookmarks: 0,
+                cluster_count: 0,
+            }],
+            error: null,
+        });
+
+        const handler = await captureGetHandler();
+        const response = await handler({}, {});
+
+        expect(response).toEqual(expect.objectContaining({
+            pending: 5,
+            enriched: 5,
+            embedded: 3,
+            errored: 1,
+            isIngesting: false,
+            ingestProcessed: 10,
+            ingestTotal: 10,
+        }));
+    });
+
     it('includes untracked errors stored on the run totals', async () => {
         const run = {
             id: 'run-3',

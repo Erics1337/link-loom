@@ -1,3 +1,168 @@
+-- Bookmark structure snapshots
+CREATE TABLE IF NOT EXISTS structure_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DO $$
+DECLARE
+  v_null_count BIGINT;
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'structure_snapshots'
+      AND column_name = 'user_id'
+      AND is_nullable = 'YES'
+  ) THEN
+    SELECT count(*) INTO v_null_count
+    FROM public.structure_snapshots
+    WHERE user_id IS NULL;
+
+    IF v_null_count > 0 THEN
+      RAISE EXCEPTION
+        'structure_snapshots.user_id NOT NULL migration blocked: % row(s) have NULL user_id',
+        v_null_count;
+    END IF;
+
+    ALTER TABLE public.structure_snapshots
+      ALTER COLUMN user_id SET NOT NULL;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS snapshot_clusters (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  snapshot_id UUID REFERENCES structure_snapshots(id) ON DELETE CASCADE,
+  original_cluster_id UUID NOT NULL,
+  name TEXT,
+  parent_id UUID REFERENCES snapshot_clusters(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS snapshot_assignments (
+  snapshot_cluster_id UUID REFERENCES snapshot_clusters(id) ON DELETE CASCADE,
+  bookmark_id UUID REFERENCES bookmarks(id) ON DELETE CASCADE,
+  PRIMARY KEY (snapshot_cluster_id, bookmark_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_structure_snapshots_user_id ON structure_snapshots(user_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_clusters_snapshot_id ON snapshot_clusters(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_clusters_parent_id ON snapshot_clusters(parent_id);
+CREATE INDEX IF NOT EXISTS idx_snapshot_assignments_bookmark_id ON snapshot_assignments(bookmark_id);
+
+CREATE OR REPLACE FUNCTION public.assert_snapshot_rpc_user(p_user_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    IF auth.role() = 'service_role' THEN
+        RETURN;
+    END IF;
+
+    IF auth.uid() IS NULL OR auth.uid() <> p_user_id THEN
+        RAISE EXCEPTION 'Snapshot user does not match authenticated user';
+    END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.create_structure_snapshot(p_user_id UUID, p_snapshot_name TEXT)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+    v_snapshot_id UUID;
+BEGIN
+    PERFORM public.assert_snapshot_rpc_user(p_user_id);
+
+    INSERT INTO public.structure_snapshots (user_id, name)
+    VALUES (p_user_id, p_snapshot_name)
+    RETURNING id INTO v_snapshot_id;
+
+    INSERT INTO public.snapshot_clusters (snapshot_id, original_cluster_id, name, parent_id)
+    SELECT v_snapshot_id, id, name, NULL
+    FROM public.clusters
+    WHERE user_id = p_user_id;
+
+    UPDATE public.snapshot_clusters sc
+    SET parent_id = parent_sc.id
+    FROM public.clusters c
+    JOIN public.snapshot_clusters parent_sc
+      ON parent_sc.snapshot_id = v_snapshot_id
+     AND parent_sc.original_cluster_id = c.parent_id
+    WHERE sc.snapshot_id = v_snapshot_id
+      AND sc.original_cluster_id = c.id;
+
+    INSERT INTO public.snapshot_assignments (snapshot_cluster_id, bookmark_id)
+    SELECT sc.id, ca.bookmark_id
+    FROM public.cluster_assignments ca
+    JOIN public.clusters c ON c.id = ca.cluster_id
+    JOIN public.snapshot_clusters sc
+      ON sc.snapshot_id = v_snapshot_id
+     AND sc.original_cluster_id = c.id
+    JOIN public.bookmarks b ON b.id = ca.bookmark_id
+    WHERE c.user_id = p_user_id
+      AND b.user_id = p_user_id;
+
+    RETURN v_snapshot_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.restore_structure_snapshot(p_user_id UUID, p_snapshot_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    PERFORM public.assert_snapshot_rpc_user(p_user_id);
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.structure_snapshots
+        WHERE id = p_snapshot_id
+          AND user_id = p_user_id
+    ) THEN
+        RAISE EXCEPTION 'Snapshot not found or does not belong to user';
+    END IF;
+
+    DELETE FROM public.clusters WHERE user_id = p_user_id;
+
+    INSERT INTO public.clusters (id, user_id, name, parent_id)
+    SELECT original_cluster_id, p_user_id, name, NULL
+    FROM public.snapshot_clusters
+    WHERE snapshot_id = p_snapshot_id;
+
+    UPDATE public.clusters cur
+    SET parent_id = parent_sc.original_cluster_id
+    FROM public.snapshot_clusters sc
+    JOIN public.snapshot_clusters parent_sc ON parent_sc.id = sc.parent_id
+    WHERE sc.snapshot_id = p_snapshot_id
+      AND cur.user_id = p_user_id
+      AND cur.id = sc.original_cluster_id;
+
+    INSERT INTO public.cluster_assignments (cluster_id, bookmark_id)
+    SELECT sc.original_cluster_id, sa.bookmark_id
+    FROM public.snapshot_assignments sa
+    JOIN public.snapshot_clusters sc ON sc.id = sa.snapshot_cluster_id
+    JOIN public.bookmarks b ON b.id = sa.bookmark_id
+    WHERE sc.snapshot_id = p_snapshot_id
+      AND b.user_id = p_user_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.assert_snapshot_rpc_user(UUID) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.create_structure_snapshot(UUID, TEXT) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.restore_structure_snapshot(UUID, UUID) FROM PUBLIC, anon, authenticated, service_role;
+
+GRANT EXECUTE ON FUNCTION public.create_structure_snapshot(UUID, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.restore_structure_snapshot(UUID, UUID) TO authenticated, service_role;
+
 -- Security hardening: RLS, account roles, device limits
 ALTER TABLE public.users
   ADD COLUMN IF NOT EXISTS account_role TEXT NOT NULL DEFAULT 'user',
@@ -382,3 +547,117 @@ $$;
 
 REVOKE ALL ON FUNCTION public.clear_user_ingest_structure(UUID) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.clear_user_ingest_structure(UUID) TO service_role;
+
+-- search_bookmarks: service-role-only RPC (backend supplies user_id).
+CREATE OR REPLACE FUNCTION public.search_bookmarks(
+    query_vector vector(1536),
+    user_id uuid,
+    match_count int DEFAULT 20
+)
+RETURNS TABLE (
+    id uuid,
+    url text,
+    title text,
+    description text,
+    similarity float
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF auth.role() IS DISTINCT FROM 'service_role' THEN
+        RAISE EXCEPTION 'search_bookmarks is restricted to service_role';
+    END IF;
+
+    RETURN QUERY
+    SELECT
+        b.id,
+        b.url,
+        b.title,
+        s.description,
+        1 - (s.vector <=> query_vector) AS similarity
+    FROM public.bookmarks b
+    JOIN public.shared_links s ON b.content_hash = s.id
+    WHERE b.user_id = search_bookmarks.user_id
+    ORDER BY s.vector <=> query_vector
+    LIMIT match_count;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.search_bookmarks(vector(1536), uuid, integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.search_bookmarks(vector(1536), uuid, integer) TO service_role;
+
+-- Backfill nullable bookmark/cluster columns on databases created before NOT NULL constraints.
+DO $$
+DECLARE
+  v_null_count BIGINT;
+BEGIN
+  UPDATE public.bookmarks SET status = 'pending' WHERE status IS NULL;
+
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'bookmarks'
+      AND column_name = 'status'
+      AND is_nullable = 'YES'
+  ) THEN
+    SELECT count(*) INTO v_null_count
+    FROM public.bookmarks
+    WHERE status IS NULL;
+
+    IF v_null_count > 0 THEN
+      RAISE EXCEPTION
+        'bookmarks.status NOT NULL migration blocked: % row(s) have NULL status',
+        v_null_count;
+    END IF;
+
+    ALTER TABLE public.bookmarks
+      ALTER COLUMN status SET NOT NULL;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'bookmarks'
+      AND column_name = 'user_id'
+      AND is_nullable = 'YES'
+  ) THEN
+    SELECT count(*) INTO v_null_count
+    FROM public.bookmarks
+    WHERE user_id IS NULL;
+
+    IF v_null_count > 0 THEN
+      RAISE EXCEPTION
+        'bookmarks.user_id NOT NULL migration blocked: % row(s) have NULL user_id',
+        v_null_count;
+    END IF;
+
+    ALTER TABLE public.bookmarks
+      ALTER COLUMN user_id SET NOT NULL;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'clusters'
+      AND column_name = 'user_id'
+      AND is_nullable = 'YES'
+  ) THEN
+    SELECT count(*) INTO v_null_count
+    FROM public.clusters
+    WHERE user_id IS NULL;
+
+    IF v_null_count > 0 THEN
+      RAISE EXCEPTION
+        'clusters.user_id NOT NULL migration blocked: % row(s) have NULL user_id',
+        v_null_count;
+    END IF;
+
+    ALTER TABLE public.clusters
+      ALTER COLUMN user_id SET NOT NULL;
+  END IF;
+END $$;

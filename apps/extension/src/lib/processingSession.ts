@@ -1,22 +1,13 @@
-import { BookmarkRootTitle, ROOT_IDS, ROOT_TITLES } from './bookmarkImport';
 import { WeavingProgress } from './structureClient';
 
-export type ScannedBookmark = {
-    id: string;
-    url: string;
-    title: string;
-};
-
-export type BookmarkRootSnapshot = {
-    bookmarkRoots: Record<string, BookmarkRootTitle>;
-    preferredRoots: Record<string, BookmarkRootTitle>;
-    availableRoots: BookmarkRootTitle[];
-};
-
-const IMPORTED_FOLDER_PATTERN = /^Imported(?: \(\d+\))?$/;
-const OVERFLOW_BOOKMARKS_STORAGE_KEY = 'bookmarkWeaverOverflowBookmarks';
-// Safety Backup storage keeps the legacy key so existing local Safety Backup data remains readable.
-const PRE_ORGANIZE_BACKUP_KEY = 'preOrganizeBackup';
+export type { ScannedBookmark, BookmarkRootSnapshot } from './bookmarkRootSnapshot';
+export { buildBookmarkRootSnapshot, collectScannedBookmarks } from './bookmarkRootSnapshot';
+export {
+    persistOverflowBookmarks,
+    loadPersistedOverflowBookmarks,
+    clearPersistedOverflowBookmarks,
+    savePreOrganizeBackup,
+} from './processingSessionStorage';
 
 export const createEmptyProgress = (): WeavingProgress => ({
     pending: 0,
@@ -34,124 +25,3 @@ export const createEmptyProgress = (): WeavingProgress => ({
     ingestTotal: 0,
     isClusteringActive: false
 });
-
-const isBookmarkRootTitle = (value: string): value is BookmarkRootTitle =>
-    ROOT_TITLES.includes(value as BookmarkRootTitle);
-
-const inferPreferredRootFromAncestors = (
-    ancestorTitles: string[],
-    actualRoot: BookmarkRootTitle
-): BookmarkRootTitle => {
-    const inferredRoot = ancestorTitles.find(isBookmarkRootTitle);
-    if (!inferredRoot || inferredRoot === actualRoot) {
-        return actualRoot;
-    }
-
-    const hasImportedAncestor = ancestorTitles.some((title) => IMPORTED_FOLDER_PATTERN.test(title));
-    const isDirectImportedRoot = ancestorTitles[0] === inferredRoot;
-
-    if (hasImportedAncestor || isDirectImportedRoot) {
-        return inferredRoot;
-    }
-
-    return actualRoot;
-};
-
-export const buildBookmarkRootSnapshot = (tree: any[]): BookmarkRootSnapshot => {
-    const bookmarkRoots: Record<string, BookmarkRootTitle> = {};
-    const preferredRoots: Record<string, BookmarkRootTitle> = {};
-    const availableRoots: BookmarkRootTitle[] = [];
-    const topLevelNodes = Array.isArray(tree?.[0]?.children) ? tree[0].children : [];
-
-    topLevelNodes.forEach((node: any) => {
-        const rootTitle =
-            ROOT_TITLES.find((candidate) => node.id === ROOT_IDS[candidate] || node.title === candidate) ??
-            (typeof node.title === 'string' && isBookmarkRootTitle(node.title) ? node.title : null);
-
-        if (!rootTitle) {
-            return;
-        }
-
-        availableRoots.push(rootTitle);
-
-        const visit = (entry: any, ancestorTitles: string[] = []) => {
-            if (entry.url) {
-                bookmarkRoots[entry.id] = rootTitle;
-                preferredRoots[entry.id] = inferPreferredRootFromAncestors(ancestorTitles, rootTitle);
-            }
-            if (Array.isArray(entry.children)) {
-                const nextAncestorTitles = entry?.title ? [...ancestorTitles, String(entry.title)] : ancestorTitles;
-                entry.children.forEach((child: any) =>
-                    visit(child, nextAncestorTitles)
-                );
-            }
-        };
-
-        node.children?.forEach((child: any) => visit(child, []));
-    });
-
-    return {
-        bookmarkRoots,
-        preferredRoots,
-        availableRoots,
-    };
-};
-
-export const collectScannedBookmarks = (tree: any[]) => {
-    const bookmarks: ScannedBookmark[] = [];
-    if (!tree?.length) {
-        return bookmarks;
-    }
-
-    const traverse = (node: any) => {
-        if (!node) return;
-        if (node.url) {
-            bookmarks.push({ id: node.id, url: node.url, title: node.title ?? '' });
-        }
-        if (node.children) {
-            node.children.forEach(traverse);
-        }
-    };
-
-    tree.forEach((node) => traverse(node));
-    return bookmarks;
-};
-
-const getOverflowStorageKey = (userId: string) => `${OVERFLOW_BOOKMARKS_STORAGE_KEY}:${userId}`;
-
-export const persistOverflowBookmarks = async (userId: string, overflowBookmarks: ScannedBookmark[]) => {
-    if (typeof chrome === 'undefined' || !chrome.storage?.local || !userId) return;
-    await chrome.storage.local.set({ [getOverflowStorageKey(userId)]: overflowBookmarks });
-};
-
-export const loadPersistedOverflowBookmarks = async (userId: string) => {
-    if (typeof chrome === 'undefined' || !chrome.storage?.local || !userId) {
-        return [] as ScannedBookmark[];
-    }
-
-    const storageResult = await chrome.storage.local.get([getOverflowStorageKey(userId)]);
-    const stored = storageResult[getOverflowStorageKey(userId)];
-    return Array.isArray(stored) ? (stored as ScannedBookmark[]) : [];
-};
-
-export const clearPersistedOverflowBookmarks = async (userId: string) => {
-    if (typeof chrome === 'undefined' || !chrome.storage?.local || !userId) return;
-    await chrome.storage.local.remove(getOverflowStorageKey(userId));
-};
-
-export const savePreOrganizeBackup = async (tree: any[]) => {
-    const clonedTree = typeof structuredClone === 'function'
-        ? structuredClone(tree)
-        : JSON.parse(JSON.stringify(tree));
-    const backup = {
-        id: crypto.randomUUID(),
-        createdAt: new Date().toISOString(),
-        tree: clonedTree,
-    };
-
-    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-        await chrome.storage.local.set({ [PRE_ORGANIZE_BACKUP_KEY]: backup });
-    }
-
-    return backup;
-};
