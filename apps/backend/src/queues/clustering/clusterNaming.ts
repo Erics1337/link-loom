@@ -104,6 +104,12 @@ const sampleBookmarkIds = (
     return Array.from(sampled);
 };
 
+const cleanClusterName = (name: string) =>
+    name
+        .replace(/^\s*["']|["']\s*$/g, '')
+        .replace(/\*\*/g, '')
+        .trim();
+
 const getNamingToneInstruction = (settings: ClusteringSettings): string => {
     switch (settings.namingTone) {
         case 'balanced':
@@ -114,14 +120,6 @@ const getNamingToneInstruction = (settings: ClusteringSettings): string => {
         default:
             return 'Tone: clear and literal. Prefer obvious category labels over clever wording.';
     }
-};
-
-const getOrganizationInstruction = (settings: ClusteringSettings): string => {
-    if (settings.organizationMode === 'category') {
-        return 'Organization mode: category-first. Prefer broad categories over niche topics.';
-    }
-
-    return 'Organization mode: topic-first. Prefer specific topics over broad categories.';
 };
 
 const finalizeClusterName = (
@@ -198,12 +196,16 @@ const getRetryAfterMs = (err: any): number | null => {
 export async function generateClusterName(
     bookmarkIds: string[],
     settings: ClusteringSettings,
-    log: (msg: string) => void
+    log: (msg: string) => void,
+    options: {
+        sampledIds?: string[];
+        suggestedName?: string;
+    } = {}
 ): Promise<string> {
-    const sampledIds = sampleBookmarkIds(
-        bookmarkIds,
-        CLUSTER_NAME_CONTEXT_SAMPLE_SIZE
-    );
+    const sampledIds =
+        options.sampledIds && options.sampledIds.length > 0
+            ? options.sampledIds.slice(0, CLUSTER_NAME_CONTEXT_SAMPLE_SIZE)
+            : sampleBookmarkIds(bookmarkIds, CLUSTER_NAME_CONTEXT_SAMPLE_SIZE);
 
     const { data: bks, error } = await supabase
         .from('bookmarks')
@@ -257,6 +259,13 @@ export async function generateClusterName(
         .filter((line): line is string => Boolean(line));
     const contextText = contextLines.join(' ');
 
+    const suggestedName = options.suggestedName
+        ? cleanClusterName(options.suggestedName)
+        : '';
+    if (suggestedName && !GENERIC_RESPONSES.has(suggestedName.toLowerCase())) {
+        return finalizeClusterName(suggestedName, settings, contextText);
+    }
+
     if (contextLines.length === 0) {
         const heuristicName = generateHeuristicClusterName(
             bks as Array<{
@@ -268,7 +277,7 @@ export async function generateClusterName(
         return finalizeClusterName(heuristicName, settings, '');
     }
 
-    const cacheKey = `${settings.namingTone}|${settings.organizationMode}|${settings.useEmojiNames ? 'emoji' : 'plain'}|${contextLines.join('\n').toLowerCase()}`;
+    const cacheKey = `${settings.namingTone}|${settings.useEmojiNames ? 'emoji' : 'plain'}|${contextLines.join('\n').toLowerCase()}`;
     const cachedName = clusterNameCache.get(cacheKey);
     if (cachedName) return cachedName;
 
@@ -294,7 +303,6 @@ export async function generateClusterName(
 
     const prompt = [
         'Generate a short, descriptive folder name for the bookmark group below.',
-        getOrganizationInstruction(settings),
         getNamingToneInstruction(settings),
         'Constraints:',
         '- Return plain text only (no quotes, markdown, or numbering).',
@@ -329,10 +337,7 @@ export async function generateClusterName(
             } else {
                 log('OpenAI cluster naming returned no choices');
             }
-            name = name
-                .replace(/^\s*["']|["']\s*$/g, '')
-                .replace(/\*\*/g, '')
-                .trim();
+            name = cleanClusterName(name);
 
             if (!name || GENERIC_RESPONSES.has(name.toLowerCase())) {
                 const heuristicName = generateHeuristicClusterName(

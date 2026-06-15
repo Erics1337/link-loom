@@ -541,7 +541,6 @@ describe("backend HTTP contract", () => {
       clusteringSettings: {
         folderDensity: "more",
         namingTone: "playful",
-        organizationMode: "topic",
         useEmojiNames: true,
       },
     });

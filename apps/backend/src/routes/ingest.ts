@@ -48,7 +48,7 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
                 rawClusteringSettings
             );
             console.log(
-                `[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId} (density=${clusteringSettings.folderDensity}, tone=${clusteringSettings.namingTone}, mode=${clusteringSettings.organizationMode}, emoji=${clusteringSettings.useEmojiNames})`
+                `[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId} (density=${clusteringSettings.folderDensity}, tone=${clusteringSettings.namingTone}, emoji=${clusteringSettings.useEmojiNames})`
             );
             const userError = await ensureUserExists(userId);
             if (userError) {

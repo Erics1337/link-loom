@@ -77,19 +77,15 @@ Introduce shared settings contract:
 ```ts
 type FolderDensity = 'less' | 'medium' | 'more';
 type NamingTone = 'clear' | 'balanced' | 'playful';
-type OrganizationMode = 'topic' | 'category';
-
 interface ClusteringSettings {
   folderDensity: FolderDensity;
   namingTone: NamingTone;
-  organizationMode: OrganizationMode;
 }
 ```
 
 Default settings:
 - `folderDensity='medium'`
 - `namingTone='clear'`
-- `organizationMode='topic'`
 
 ### 7.2 Adaptive Clustering (Phase 1)
 - Use density profile to derive:
@@ -102,7 +98,7 @@ Default settings:
 
 ### 7.3 Naming Behavior
 - Increase context sample size (bounded cap).
-- Prompt includes tone + organization mode guidance.
+- Prompt includes tone guidance.
 - Preserve retries/backoff and concurrency limits.
 
 ## 8. Data Model and API Changes
@@ -115,8 +111,7 @@ Default settings:
   "bookmarks": [...],
   "clusteringSettings": {
     "folderDensity": "medium",
-    "namingTone": "clear",
-    "organizationMode": "topic"
+    "namingTone": "clear"
   }
 }
 ```

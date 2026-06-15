@@ -14,13 +14,14 @@ vi.mock('../../db', () => ({
     }
 }));
 
-vi.mock('ml-kmeans', () => ({
-    kmeans: vi.fn(() => ({
-        clusters: [0, 1] // Dummy split
-    }))
+const { mockCreate, mockKmeans } = vi.hoisted(() => ({
+    mockCreate: vi.fn(),
+    mockKmeans: vi.fn()
 }));
 
-const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
+vi.mock('ml-kmeans', () => ({
+    kmeans: mockKmeans
+}));
 
 vi.mock('openai', () => {
     return {
@@ -67,6 +68,10 @@ describe('Clustering Worker', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mockCreate.mockReset();
+        mockKmeans.mockReset();
+        mockKmeans.mockReturnValue({
+            clusters: [0, 1]
+        });
         (completePipelineRun as any).mockResolvedValue(undefined);
         (isUserCancelled as any).mockReturnValue(false);
         (shouldExecutePipelineClustering as any).mockResolvedValue(true);
@@ -213,6 +218,117 @@ describe('Clustering Worker', () => {
         ]);
         expect(recordPipelineClusteringCompleted).not.toHaveBeenCalled();
         expect(completePipelineRun).not.toHaveBeenCalled();
+    });
+
+    it('should assign to the current parent when LLM refinement merges siblings into one group', async () => {
+        process.env.OPENAI_API_KEY = 'test-key';
+        const job = createMockJob({
+            userId: 'user-merge',
+            pipelineRunId: 'run-merge',
+            jobGeneration: 18,
+            clusteringSettings: { folderDensity: 'medium' }
+        });
+        const bookmarkRows = Array.from({ length: 24 }, (_, index) => ({
+            id: `bm-${index}`,
+            title: `AI workflow ${index}`,
+            description: 'Automation tools',
+            url: `https://example.com/${index}`,
+            shared_links: {
+                vector: index < 12 ? [0.1, 0.1] : [0.2, 0.2]
+            }
+        }));
+        const mockAssignmentInsert = vi.fn().mockResolvedValue({ error: null });
+        const mockClusterInsert = vi.fn().mockReturnThis();
+
+        mockCreate.mockResolvedValue({
+            choices: [
+                {
+                    message: {
+                        content: JSON.stringify({
+                            labels: [{ groupIndex: 0, name: 'AI Workflows' }],
+                            merges: [
+                                {
+                                    sourceGroupIndex: 1,
+                                    targetGroupIndex: 0,
+                                    reason: 'same topic'
+                                }
+                            ]
+                        })
+                    }
+                }
+            ]
+        });
+        mockKmeans.mockReturnValue({
+            clusters: bookmarkRows.map((_, index) => (index < 12 ? 0 : 1))
+        });
+
+        (supabase.from as any).mockImplementation((table: string) => {
+            if (table === 'bookmarks') {
+                const chain: any = {
+                    select: vi.fn(() => chain),
+                    eq: vi.fn(() => chain),
+                    in: vi.fn().mockResolvedValue({
+                        data: bookmarkRows.map(({ id, title, description, url }) => ({
+                            id,
+                            title,
+                            description,
+                            url
+                        })),
+                        error: null
+                    }),
+                    range: vi.fn()
+                        .mockResolvedValueOnce({
+                            data: bookmarkRows.map(({ id, shared_links }) => ({
+                                id,
+                                shared_links
+                            })),
+                            error: null
+                        })
+                        .mockResolvedValueOnce({ data: [], error: null }),
+                    then: (resolve: any) => resolve({ count: 0 })
+                };
+                return chain;
+            }
+
+            if (table === 'clusters') {
+                return {
+                    insert: mockClusterInsert,
+                    select: vi.fn().mockReturnThis(),
+                    single: vi.fn().mockResolvedValue({ data: { id: 'root-cluster' }, error: null })
+                };
+            }
+
+            if (table === 'cluster_assignments') {
+                return {
+                    insert: mockAssignmentInsert
+                };
+            }
+
+            return {};
+        });
+
+        await clusteringProcessor(job);
+
+        expect(mockClusterInsert).toHaveBeenCalledTimes(1);
+        expect(mockClusterInsert).toHaveBeenCalledWith({
+            user_id: 'user-merge',
+            name: 'AI Workflows',
+            parent_id: null
+        });
+        expect(mockAssignmentInsert).toHaveBeenCalledTimes(1);
+        expect(mockAssignmentInsert).toHaveBeenCalledWith(
+            expect.arrayContaining(
+                bookmarkRows.map((bookmark) => ({
+                    cluster_id: 'root-cluster',
+                    bookmark_id: bookmark.id
+                }))
+            )
+        );
+        expect(completePipelineRun).toHaveBeenCalledWith('run-merge', {
+            totalBookmarks: 24,
+            embeddedBookmarks: 24,
+            assignedBookmarks: 24
+        });
     });
 
     it('should stop without completing the pipeline when fetch is cancelled mid-pagination', async () => {

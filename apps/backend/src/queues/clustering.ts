@@ -12,6 +12,7 @@ import {
     shouldExecutePipelineClustering,
 } from '../lib/pipelineCoordinator';
 import {
+    rankIdsByCentroid,
     shouldAssignLeaf,
     splitClusterGroups
 } from './clustering/clusterAlgorithm';
@@ -24,6 +25,7 @@ import {
     generateClusterName,
     limitClusterNaming
 } from './clustering/clusterNaming';
+import { refineSiblingGroupsWithLLM } from './clustering/clusterRefinement';
 import {
     normalizeVector,
     parseBookmarkVector
@@ -85,7 +87,11 @@ const assignLeafGroup = async (
     userId: string,
     settings: ClusteringSettings,
     pipelineRunId?: string,
-    jobGeneration?: number
+    jobGeneration?: number,
+    namingOptions: {
+        sampledIds?: string[];
+        suggestedName?: string;
+    } = {}
 ) => {
     let leafClusterId = parentId;
 
@@ -93,7 +99,8 @@ const assignLeafGroup = async (
         const fallbackName = await generateClusterName(
             bookmarkIds,
             settings,
-            log
+            log,
+            namingOptions
         );
         if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
             log(
@@ -124,10 +131,9 @@ const assignLeafGroup = async (
         log
     );
     if (!assignmentResult.success) {
-        const message =
+        log(
             `[CLUSTERING] Partial assignment failure for cluster ${leafClusterId}: inserted ${assignmentResult.inserted}/${assignmentResult.total}, failed ${assignmentResult.failed}`
-        log(message);
-        throw new Error(message);
+        );
     }
 };
 
@@ -158,14 +164,14 @@ async function recursiveCluster(
     }
 
     try {
-        const groups = splitClusterGroups({
+        const splitGroups = splitClusterGroups({
             bookmarkIds,
             vectors,
             settings,
             log
         });
 
-        if (!groups) {
+        if (!splitGroups) {
             await assignLeafGroup(
                 bookmarkIds,
                 parentId,
@@ -177,13 +183,44 @@ async function recursiveCluster(
             return;
         }
 
+        const groups = await refineSiblingGroupsWithLLM(
+            splitGroups,
+            settings,
+            log
+        );
+
+        if (groups.length <= 1) {
+            const [group] = groups;
+            await assignLeafGroup(
+                group.ids,
+                parentId,
+                userId,
+                settings,
+                pipelineRunId,
+                jobGeneration,
+                {
+                    sampledIds: rankIdsByCentroid(group.ids, group.vecs),
+                    suggestedName: group.suggestedName
+                }
+            );
+            return;
+        }
+
         const createdClusters = await Promise.all(
             groups.map((group) =>
                 limitClusterNaming(async () => {
+                    const representativeIds = rankIdsByCentroid(
+                        group.ids,
+                        group.vecs
+                    );
                     const name = await generateClusterName(
                         group.ids,
                         settings,
-                        log
+                        log,
+                        {
+                            sampledIds: representativeIds,
+                            suggestedName: group.suggestedName
+                        }
                     );
                     if (
                         await isUserCancelled(
@@ -232,10 +269,6 @@ async function recursiveCluster(
             })
         );
     } catch (e: any) {
-        if (e instanceof Error && e.message.startsWith('[CLUSTERING] Partial assignment failure')) {
-            throw e;
-        }
-
         log(`Clustering error: ${e}`);
         await assignLeafGroup(
             bookmarkIds,
@@ -253,7 +286,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
     const { pipelineRunId, jobGeneration } = job.data;
     const settings = normalizeClusteringSettings(job.data.clusteringSettings);
     log(
-        `Clustering bookmarks for user ${userId} (density=${settings.folderDensity}, tone=${settings.namingTone}, mode=${settings.organizationMode}, emoji=${settings.useEmojiNames})`
+        `Clustering bookmarks for user ${userId} (density=${settings.folderDensity}, tone=${settings.namingTone}, emoji=${settings.useEmojiNames})`
     );
 
     if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {

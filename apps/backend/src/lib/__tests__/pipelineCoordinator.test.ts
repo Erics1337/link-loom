@@ -40,7 +40,7 @@ describe('pipelineCoordinator', () => {
         (queues.clustering.remove as any).mockResolvedValue(false);
     });
 
-    it('queues fresh clustering jobs by pipelineRunId without carrying jobGeneration', async () => {
+    it('queues fresh clustering jobs by pipelineRunId with run generation context', async () => {
         (supabase.rpc as any)
             .mockResolvedValueOnce({ data: true, error: null })
             .mockResolvedValueOnce({ data: claimId, error: null })
@@ -54,7 +54,6 @@ describe('pipelineCoordinator', () => {
             {
                 folderDensity: 'more',
                 namingTone: 'playful',
-                organizationMode: 'topic',
                 useEmojiNames: false,
             }
         );
@@ -64,10 +63,10 @@ describe('pipelineCoordinator', () => {
             {
                 userId: 'user-1',
                 pipelineRunId: 'run-7',
+                jobGeneration: 7,
                 clusteringSettings: {
                     folderDensity: 'more',
                     namingTone: 'playful',
-                    organizationMode: 'topic',
                     useEmojiNames: false,
                 },
             },
@@ -100,7 +99,6 @@ describe('pipelineCoordinator', () => {
             {
                 folderDensity: 'more',
                 namingTone: 'playful',
-                organizationMode: 'topic',
                 useEmojiNames: false,
             }
         );
@@ -129,7 +127,6 @@ describe('pipelineCoordinator', () => {
             {
                 folderDensity: 'more',
                 namingTone: 'playful',
-                organizationMode: 'topic',
                 useEmojiNames: false,
             }
         )).rejects.toThrow('queue unavailable');
@@ -162,7 +159,6 @@ describe('pipelineCoordinator', () => {
             {
                 folderDensity: 'more',
                 namingTone: 'playful',
-                organizationMode: 'topic',
                 useEmojiNames: false,
             }
         )).rejects.toThrow('record failed');
@@ -172,10 +168,10 @@ describe('pipelineCoordinator', () => {
             {
                 userId: 'user-1',
                 pipelineRunId: 'run-7',
+                jobGeneration: 7,
                 clusteringSettings: {
                     folderDensity: 'more',
                     namingTone: 'playful',
-                    organizationMode: 'topic',
                     useEmojiNames: false,
                 },
             },
@@ -225,7 +221,6 @@ describe('pipelineCoordinator', () => {
             {
                 folderDensity: 'more',
                 namingTone: 'playful',
-                organizationMode: 'topic',
                 useEmojiNames: false,
             }
         )).rejects.toThrow('record failed');

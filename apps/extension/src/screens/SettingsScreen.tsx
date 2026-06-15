@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useTheme } from '../hooks/useTheme';
-import { ClusteringSettings, FolderDensity, NamingTone, OrganizationMode } from '../lib/clusteringSettings';
+import { ClusteringSettings, FolderDensity, NamingTone } from '../lib/clusteringSettings';
 import { ArrowLeft, FolderTree, Type, Moon, ChevronDown, Trash2 } from 'lucide-react';
 
 interface SettingsScreenProps {
@@ -22,11 +22,6 @@ const toneOptions: Array<{ value: NamingTone; label: string; hint: string }> = [
     { value: 'clear', label: 'Clear', hint: 'Literal and straightforward names.' },
     { value: 'balanced', label: 'Balanced', hint: 'Mostly direct with slight personality.' },
     { value: 'playful', label: 'Playful', hint: 'Creative names with topical anchors.' },
-];
-
-const organizationOptions: Array<{ value: OrganizationMode; label: string; hint: string }> = [
-    { value: 'topic', label: 'Topic-first', hint: 'Prefer specific topics.' },
-    { value: 'category', label: 'Category-first', hint: 'Prefer broader categories.' },
 ];
 
 const CustomSelect = ({ value, onChange, options }: { value: string, onChange: (val: any) => void, options: any[] }) => {
@@ -146,20 +141,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                 value={settings.folderDensity} 
                                 onChange={(val) => onSettingsChange({ folderDensity: val as FolderDensity })}
                                 options={densityOptions} 
-                            />
-                        </div>
-
-                        <div className="divider" />
-
-                        <div>
-                            <div className="text-sm font-bold mb-1">Organization Mode</div>
-                            <p className="text-xs text-secondary mb-3">
-                                {organizationOptions.find(option => option.value === settings.organizationMode)?.hint}
-                            </p>
-                            <CustomSelect 
-                                value={settings.organizationMode} 
-                                onChange={(val) => onSettingsChange({ organizationMode: val as OrganizationMode })}
-                                options={organizationOptions}
                             />
                         </div>
                     </div>

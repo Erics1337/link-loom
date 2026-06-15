@@ -40,7 +40,6 @@ describe('StructureClient', () => {
             clusteringSettings: {
                 folderDensity: 'medium',
                 namingTone: 'clear',
-                organizationMode: 'topic',
                 useEmojiNames: false,
             },
         });
