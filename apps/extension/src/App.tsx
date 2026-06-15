@@ -14,6 +14,7 @@ import { useClusteringSettings } from './hooks/useClusteringSettings';
 import { useExtensionAuth } from './hooks/useExtensionAuth';
 import { useTheme } from './hooks/useTheme';
 import { BookmarkNode } from './components/BookmarkTree';
+import { clearLocalAccountData } from './lib/accountDeletionCleanup';
 import {
     ApplyParsedBookmarkExportOptions,
     BookmarkImportSummary,
@@ -35,6 +36,7 @@ const App = () => {
         errorMessage: authErrorMessage,
         ensureAnonymousSession,
         signIn,
+        signInWithGoogle,
         signUp,
         signOut
     } = useExtensionAuth();
@@ -144,6 +146,11 @@ const App = () => {
         setView('main');
     };
 
+    const handleSignInWithGoogle = async () => {
+        await signInWithGoogle();
+        setView('main');
+    };
+
     const handleSignUp = async (email: string, password: string, plan: SignUpPlan) => {
         const result = await signUp(email, password);
         if (plan === 'paid') {
@@ -161,6 +168,28 @@ const App = () => {
         }
 
         return result;
+    };
+
+    const handleDeleteAccount = async () => {
+        if (!accessToken) {
+            throw new Error('Sign in again before deleting your account.');
+        }
+
+        const response = await fetch(`${WEB_APP_URL}/api/account`, {
+            method: 'DELETE',
+            headers: {
+                Authorization: `Bearer ${accessToken}`
+            }
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(payload?.error || 'Failed to delete account.');
+        }
+
+        await clearLocalAccountData();
+        await signOut();
+        setView('main');
+        setStatus('idle');
     };
 
     const handleStartOrganizing = async () => {
@@ -300,6 +329,9 @@ const App = () => {
                     onBack={() => setView('main')}
                     settings={clusteringSettings}
                     onSettingsChange={updateClusteringSettings}
+                    isLoggedIn={isPermanentUser}
+                    accountEmail={authUser?.email}
+                    onDeleteAccount={handleDeleteAccount}
                 />
             );
         }
@@ -309,6 +341,7 @@ const App = () => {
                 <LoginScreen
                     onBack={() => setView('main')}
                     onSignIn={handleSignIn}
+                    onSignInWithGoogle={handleSignInWithGoogle}
                     onSignUp={handleSignUp}
                     initialError={authErrorMessage}
                 />

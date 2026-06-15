@@ -2,7 +2,7 @@ import { BookmarkNode } from '../components/BookmarkTree';
 import { ROOT_IDS, BookmarkRootTitle } from './bookmarkImport';
 import { getBookmarkChromeId } from './bookmarkStructure';
 
-const APPLY_JOURNAL_STORAGE_KEY = 'bookmarkWeaverActiveApplyJournal';
+export const APPLY_JOURNAL_STORAGE_KEY = 'bookmarkWeaverActiveApplyJournal';
 
 export type ChromeApplyResult = {
     movedCount: number;

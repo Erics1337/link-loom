@@ -1,20 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
+import {
+    AUTH_COMPLETE_MESSAGE,
+    AUTH_ERROR_MESSAGE,
+    SESSION_STORAGE_KEY,
+    StoredSession
+} from '../lib/extensionAuthSession';
 
-const SESSION_STORAGE_KEY = 'extensionAuthSession';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as
     | string
     | undefined;
-
-type StoredSession = {
-    accessToken: string;
-    refreshToken?: string;
-    user: {
-        id: string;
-        email?: string | null;
-        isAnonymous?: boolean;
-    };
-};
+const WEB_APP_URL =
+    (import.meta.env.VITE_WEB_APP_URL as string | undefined) ||
+    'https://linkloom.org';
+const GOOGLE_SIGN_IN_TIMEOUT_MS = 5 * 60 * 1000;
 
 export type ExtensionAuthUser = {
     id: string;
@@ -326,6 +325,61 @@ export const useExtensionAuth = () => {
         setStatus('unauthenticated');
     }, []);
 
+    const signInWithGoogle = useCallback(async () => {
+        if (!isConfigured) {
+            throw new Error(getConfigurationError());
+        }
+
+        if (typeof chrome === 'undefined' || !chrome.runtime?.id || !chrome.tabs?.create) {
+            throw new Error('Google sign in is only available in the extension.');
+        }
+
+        const extensionId = chrome.runtime.id;
+        const authUrl = `${WEB_APP_URL}/auth/extension-login?ext_id=${encodeURIComponent(extensionId)}`;
+
+        return new Promise<ExtensionAuthUser>((resolve, reject) => {
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                chrome.runtime.onMessage.removeListener(onMessage);
+            };
+
+            const onMessage = (message: {
+                type?: string;
+                session?: StoredSession;
+                error?: string;
+                message?: string;
+            }) => {
+                if (message?.type === AUTH_COMPLETE_MESSAGE && message.session) {
+                    cleanup();
+                    applyAuthenticatedSession(message.session)
+                        .then(() => resolve(message.session!.user))
+                        .catch(reject);
+                    return;
+                }
+
+                if (message?.type === AUTH_ERROR_MESSAGE) {
+                    cleanup();
+                    reject(
+                        new Error(
+                            message.message ||
+                                (message.error === 'waitlist_only'
+                                    ? 'Sign up is currently waitlist-only. Please join the waitlist for early access.'
+                                    : 'Google sign in failed.')
+                        )
+                    );
+                }
+            };
+
+            const timeoutId = window.setTimeout(() => {
+                cleanup();
+                reject(new Error('Google sign in timed out. Try again.'));
+            }, GOOGLE_SIGN_IN_TIMEOUT_MS);
+
+            chrome.runtime.onMessage.addListener(onMessage);
+            chrome.tabs.create({ url: authUrl });
+        });
+    }, [applyAuthenticatedSession]);
+
     return {
         status,
         user,
@@ -335,6 +389,7 @@ export const useExtensionAuth = () => {
         isConfigured,
         ensureAnonymousSession,
         signIn,
+        signInWithGoogle,
         signUp,
         signOut
     };

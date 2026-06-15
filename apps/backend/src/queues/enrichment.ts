@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 import { QueueJob, queues } from '../lib/queue';
 import { supabase } from '../db';
@@ -34,6 +34,9 @@ const buildEmbeddingJobId = (
     return `embed-${userId}-${bookmarkId}-${randomUUID()}`;
 };
 
+const getUrlLogId = (url: string) =>
+    createHash('sha256').update(url).digest('hex').slice(0, 12);
+
 const exitIfCancelled = async (
     userId: string,
     jobGeneration: number | undefined,
@@ -54,26 +57,25 @@ const exitIfCancelled = async (
 export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
     const { userId, pipelineRunId, jobGeneration, bookmarkId, url } = job.data;
     const clusteringSettings = normalizeClusteringSettings(job.data.clusteringSettings);
-    console.log(`Enriching bookmark ${bookmarkId}: ${url}`);
+    const urlLogId = getUrlLogId(url);
+    console.log(`Enriching bookmark ${bookmarkId} (urlHash=${urlLogId})`);
 
     if (await exitIfCancelled(userId, jobGeneration, pipelineRunId, bookmarkId, clusteringSettings, 'before start')) {
         return;
     }
 
     let description = '';
-    let title = '';
 
     try {
         const response = await safeFetch(url, { timeoutMs: 5000 });
         const html = await response.text();
         const $ = cheerio.load(html);
-        title = $('title').text().trim() || '';
         description = $('meta[name="description"]').attr('content') || '';
     } catch (err: any) {
         if (err.name === 'AbortError') {
-             console.warn(`[SCRAPE TIMEOUT] ${url}`);
+             console.warn(`[SCRAPE TIMEOUT] urlHash=${urlLogId}`);
         } else {
-             console.warn(`[SCRAPE FAILED] ${url}: ${err.message}`);
+             console.warn(`[SCRAPE FAILED] urlHash=${urlLogId}: ${err.name || 'Error'}`);
         }
     }
 
@@ -121,7 +123,6 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
             pipelineRunId,
             clusteringSettings,
             bookmarkId,
-            text: `${title} ${description} ${url}`,
             url,
         },
         {

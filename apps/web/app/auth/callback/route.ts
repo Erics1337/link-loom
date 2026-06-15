@@ -5,11 +5,21 @@ import { headers, cookies } from 'next/headers'
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
   const code = requestUrl.searchParams.get('code')
+  const isExtensionAuth = requestUrl.searchParams.get('extension') === '1'
+  const extensionId = requestUrl.searchParams.get('ext_id')
 
   const headersList = headers()
   const host = headersList.get('x-forwarded-host') || headersList.get('host') || 'localhost:3000'
   const protocol = headersList.get('x-forwarded-proto') || 'https'
   const origin = process.env.NEXT_PUBLIC_SITE_URL || `${protocol}://${host}`
+
+  const extensionCompleteUrl = (params: Record<string, string>) => {
+    const url = new URL('/auth/extension-complete', origin)
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, value)
+    }
+    return url.toString()
+  }
 
   if (code) {
     const supabase = createClient()
@@ -30,6 +40,15 @@ export async function GET(request: Request) {
         // Sign them out immediately
         await supabase.auth.signOut()
 
+        if (isExtensionAuth && extensionId) {
+          return NextResponse.redirect(
+            extensionCompleteUrl({
+              ext_id: extensionId,
+              error: 'waitlist_only',
+            })
+          )
+        }
+
         // Redirect to login with waitlist message
         return NextResponse.redirect(
           origin + '/login?error=waitlist_only&message=Sign+up+is+currently+waitlist-only.+Please+join+the+waitlist+for+early+access.'
@@ -42,6 +61,10 @@ export async function GET(request: Request) {
         cookieStore.delete('invite-code')
       }
     }
+  }
+
+  if (isExtensionAuth && extensionId) {
+    return NextResponse.redirect(extensionCompleteUrl({ ext_id: extensionId }))
   }
 
   // URL to redirect to after sign in process completes

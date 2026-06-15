@@ -19,8 +19,17 @@
     },
     "permissions": [
         "bookmarks",
-        "storage"
+        "storage",
+        "tabs"
     ],
+    "externally_connectable": {
+        "matches": [
+            "https://linkloom.org/*",
+            "https://*.linkloom.org/*",
+            "http://localhost:3000/*",
+            "http://127.0.0.1:3000/*"
+        ]
+    },
     "host_permissions": [
         "https://otmhunugbmpcllxmmtby.supabase.co/*",
         "https://linkloom.org/*",

@@ -87,7 +87,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                 .upsert({ id: urlHash, url: b.url }, { onConflict: 'id' });
             if (sharedUpsertError) {
                 console.error(
-                    `[INGEST WORKER] Failed to upsert shared link ${b.url}:`,
+                    `[INGEST WORKER] Failed to upsert shared link urlHash=${urlHash}:`,
                     sharedUpsertError
                 );
                 await recordPipelineUntrackedError(
@@ -122,7 +122,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
             if (error || !inserted) {
                 if (error) {
                     console.error(
-                        `[INGEST WORKER] Failed to insert bookmark ${b.url}:`,
+                        `[INGEST WORKER] Failed to insert bookmark urlHash=${urlHash}:`,
                         error
                     );
                 }
@@ -146,7 +146,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                 .single();
             if (sharedLookupError) {
                 console.error(
-                    `[INGEST WORKER] Failed to lookup shared vector for ${b.url}:`,
+                    `[INGEST WORKER] Failed to lookup shared vector urlHash=${urlHash}:`,
                     sharedLookupError
                 );
                 await supabase
@@ -165,7 +165,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
             }
 
             if (shared?.vector) {
-                console.log(`[INGEST WORKER] Cache HIT for ${b.url}`);
+                console.log(`[INGEST WORKER] Cache HIT urlHash=${urlHash}`);
                 // Mark as embedded immediately
                 const { error: embeddedUpdateError } = await supabase
                     .from('bookmarks')

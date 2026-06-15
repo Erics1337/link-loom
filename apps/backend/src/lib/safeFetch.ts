@@ -97,5 +97,5 @@ export const safeFetch = async (rawUrl: string, options: SafeFetchOptions = {}) 
         }
     }
 
-    throw new Error(`Too many redirects while fetching ${rawUrl}`);
+    throw new Error('Too many redirects while fetching URL.');
 };

@@ -37,7 +37,6 @@ export const recoverStalePipelineState = async (
     const toQueueEmbedding: Array<{
         bookmarkId: string;
         url: string;
-        text: string;
     }> = [];
 
     for (const bookmark of inflightBookmarks as Array<{
@@ -60,12 +59,9 @@ export const recoverStalePipelineState = async (
         if (!bookmark.url) continue;
 
         if (bookmark.status === 'enriched') {
-            const title = bookmark.title ?? '';
-            const description = bookmark.description ?? '';
             toQueueEmbedding.push({
                 bookmarkId: bookmark.id,
-                url: bookmark.url,
-                text: `${title} ${description} ${bookmark.url}`
+                url: bookmark.url
             });
             continue;
         }
@@ -130,8 +126,7 @@ export const recoverStalePipelineState = async (
                 pipelineRunId,
                 jobGeneration,
                 bookmarkId: embeddingJob.bookmarkId,
-                url: embeddingJob.url,
-                text: embeddingJob.text
+                url: embeddingJob.url
             });
             embeddingQueued++;
         } catch (error) {

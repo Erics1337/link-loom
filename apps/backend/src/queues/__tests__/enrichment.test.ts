@@ -89,7 +89,6 @@ describe('Enrichment Worker', () => {
                 userId: 'user-1',
                 pipelineRunId: 'run-4',
                 bookmarkId: 'bm-1',
-                text: 'Test Title Test Description https://example.com',
                 url: 'https://example.com',
             }),
             { jobId: 'embed-user-1-run-run-4-bm-1' }
@@ -117,7 +116,6 @@ describe('Enrichment Worker', () => {
                 userId: 'user-2',
                 pipelineRunId: 'run-5',
                 bookmarkId: 'bm-2',
-                text: '  https://broken.com', // space space url
                 url: 'https://broken.com',
             }),
             { jobId: 'embed-user-2-run-run-5-bm-2' }

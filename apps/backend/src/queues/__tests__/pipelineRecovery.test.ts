@@ -66,7 +66,6 @@ describe('recoverStalePipelineState', () => {
             jobGeneration: 9,
             bookmarkId: 'bookmark-enriched',
             url: 'https://example.com/enriched',
-            text: 'Example Recovered https://example.com/enriched',
         });
     });
 

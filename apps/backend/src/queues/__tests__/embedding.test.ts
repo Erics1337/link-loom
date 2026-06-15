@@ -4,6 +4,7 @@ import { supabase } from '../../db';
 import { isUserCancelled } from '../../lib/cancellation';
 import { notifyPipelineBookmarkTerminal } from '../../lib/pipelineCoordinator';
 import { QueueJob } from '../../lib/queue';
+import { safeFetch } from '../../lib/safeFetch';
 
 vi.mock('../../db', () => ({
     supabase: {
@@ -35,6 +36,10 @@ vi.mock('../../lib/pipelineCoordinator', () => ({
     notifyPipelineBookmarkTerminal: vi.fn(),
 }));
 
+vi.mock('../../lib/safeFetch', () => ({
+    safeFetch: vi.fn()
+}));
+
 const createMockChain = (resolvedValue: any) => {
     const chain: any = {
         select: vi.fn().mockReturnThis(),
@@ -51,6 +56,10 @@ describe('Embedding Worker', () => {
         vi.clearAllMocks();
         mockCreate.mockReset();
         (isUserCancelled as any).mockReturnValue(false);
+        (safeFetch as any).mockReset();
+        (safeFetch as any).mockResolvedValue({
+            text: () => Promise.resolve('<html><body><main>Detailed page content for embeddings.</main></body></html>')
+        });
     });
 
     const createMockJob = (data: any) => ({
@@ -63,12 +72,18 @@ describe('Embedding Worker', () => {
             pipelineRunId: 'run-6',
             jobGeneration: 6,
             bookmarkId: 'bm-1',
-            text: 'Test content',
             url: 'https://example.com'
         });
 
         const mockSharedLinksChain = createMockChain({ data: null, error: null }); // cache miss
-        const mockBookmarksChain = createMockChain({ error: null });
+        const mockBookmarksChain = createMockChain({
+            data: {
+                title: 'Test title',
+                ai_title: null,
+                description: 'Test description'
+            },
+            error: null
+        });
 
         (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'shared_links') return mockSharedLinksChain;
@@ -86,13 +101,14 @@ describe('Embedding Worker', () => {
         
         expect(mockCreate).toHaveBeenCalledWith({
             model: 'text-embedding-3-small',
-            input: 'Test content',
+            input: 'Test title Test description Detailed page content for embeddings. https://example.com',
         });
 
         // Verify we saved to shared cache
         expect(mockSharedLinksChain.update).toHaveBeenCalledWith({
             vector: [0.1, 0.2, 0.3]
         });
+        expect(safeFetch).toHaveBeenCalledWith('https://example.com', { timeoutMs: 5000 });
 
         // Verify bookmark status updated
         expect(mockBookmarksChain.update).toHaveBeenCalledWith({

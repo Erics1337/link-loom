@@ -22,7 +22,7 @@ export type CloudSnapshot = {
     };
 };
 
-const STRUCTURE_VERSIONS_STORAGE_KEY = 'bookmarkStructureVersions';
+export const STRUCTURE_VERSIONS_STORAGE_KEY = 'bookmarkStructureVersions';
 const MAX_STRUCTURE_VERSIONS = 20;
 
 const isCloudSnapshotSummary = (
@@ -78,6 +78,14 @@ export const deleteStructureVersion = async (versionId: string) => {
     const versions = await loadStructureVersions();
     const remaining = versions.filter((item) => item.id !== versionId);
     await chrome.storage.local.set({ [STRUCTURE_VERSIONS_STORAGE_KEY]: remaining });
+};
+
+export const clearStructureVersions = async () => {
+    if (typeof chrome === 'undefined' || !chrome.storage?.local) {
+        return;
+    }
+
+    await chrome.storage.local.remove(STRUCTURE_VERSIONS_STORAGE_KEY);
 };
 
 type CloudSnapshotClientOptions = {

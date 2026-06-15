@@ -1,12 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useTheme } from '../hooks/useTheme';
 import { ClusteringSettings, FolderDensity, NamingTone, OrganizationMode } from '../lib/clusteringSettings';
-import { ArrowLeft, FolderTree, Type, Moon, ChevronDown } from 'lucide-react';
+import { ArrowLeft, FolderTree, Type, Moon, ChevronDown, Trash2 } from 'lucide-react';
 
 interface SettingsScreenProps {
     onBack: () => void;
     settings: ClusteringSettings;
     onSettingsChange: (next: Partial<ClusteringSettings>) => void;
+    isLoggedIn?: boolean;
+    accountEmail?: string | null;
+    onDeleteAccount?: () => Promise<void>;
 }
 
 const densityOptions: Array<{ value: FolderDensity; label: string; hint: string }> = [
@@ -73,8 +76,46 @@ const CustomSelect = ({ value, onChange, options }: { value: string, onChange: (
     );
 };
 
-export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, settings, onSettingsChange }) => {
+export const SettingsScreen: React.FC<SettingsScreenProps> = ({
+    onBack,
+    settings,
+    onSettingsChange,
+    isLoggedIn = false,
+    accountEmail,
+    onDeleteAccount
+}) => {
     const { theme, toggleTheme } = useTheme();
+    const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+    const [accountMessage, setAccountMessage] = useState<string | null>(null);
+
+    const handleDeleteAccount = async () => {
+        if (!onDeleteAccount || isDeletingAccount) return;
+
+        const confirmed = window.confirm(
+            'Delete your Link Loom account and cloud data? Your Chrome bookmarks will stay in this browser.'
+        );
+        if (!confirmed) return;
+
+        const finalConfirmed = window.confirm(
+            'This cannot be undone. Delete account now?'
+        );
+        if (!finalConfirmed) return;
+
+        setIsDeletingAccount(true);
+        setAccountMessage(null);
+        try {
+            await onDeleteAccount();
+            setAccountMessage('Account deleted.');
+        } catch (error) {
+            setAccountMessage(
+                error instanceof Error
+                    ? error.message
+                    : 'Failed to delete account. Please try again.'
+            );
+        } finally {
+            setIsDeletingAccount(false);
+        }
+    };
 
     return (
         <div className="app-shell">
@@ -188,8 +229,36 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({ onBack, settings
                     </div>
                 </section>
 
+                {isLoggedIn && (
+                    <section>
+                        <div className="flex items-center gap-2 mb-3 px-1">
+                            <Trash2 size={16} className="text-danger" />
+                            <h2 className="text-sm font-bold">Account</h2>
+                        </div>
+
+                        <div className="card space-y-3">
+                            <div>
+                                <div className="text-sm font-bold mb-1">Delete Link Loom Account</div>
+                                <p className="text-xs text-secondary">
+                                    Removes your Link Loom account and cloud data{accountEmail ? ` for ${accountEmail}` : ''}. Bookmarks already stored in Chrome remain in this browser.
+                                </p>
+                            </div>
+                            {accountMessage && (
+                                <p className="text-xs text-danger">{accountMessage}</p>
+                            )}
+                            <button
+                                type="button"
+                                className="btn w-full text-danger"
+                                onClick={handleDeleteAccount}
+                                disabled={isDeletingAccount}
+                            >
+                                <Trash2 size={14} />
+                                {isDeletingAccount ? 'Deleting...' : 'Delete account'}
+                            </button>
+                        </div>
+                    </section>
+                )}
             </div>
         </div>
     );
 };
-
