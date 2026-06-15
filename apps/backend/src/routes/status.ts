@@ -261,7 +261,7 @@ export const registerStatusRoutes = async (fastify: FastifyInstance) => {
             response: {
                 200: {
                     type: 'object',
-                    additionalProperties: true,
+                    additionalProperties: false,
                     required: [
                         'pending',
                         'pendingRaw',

@@ -7,6 +7,16 @@ import { useEffect, useState } from "react";
 const WAITLIST_MESSAGE =
   "Sign up is currently waitlist-only. Please join the waitlist for early access.";
 
+const ALLOWED_EXTENSION_IDS = new Set(
+  (process.env.NEXT_PUBLIC_LINK_LOOM_EXTENSION_IDS ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+);
+
+const isAllowedExtensionId = (extensionId: string) =>
+  ALLOWED_EXTENSION_IDS.has(extensionId);
+
 const getChromeRuntime = () => {
   const chromeGlobal = globalThis as typeof globalThis & {
     chrome?: { runtime?: { sendMessage: (...args: unknown[]) => void; lastError?: { message?: string } } };
@@ -24,6 +34,11 @@ export function ExtensionCompleteClient() {
   useEffect(() => {
     if (!extId) {
       setMessage("Missing extension ID. Close this tab and try again from the extension.");
+      return;
+    }
+
+    if (!isAllowedExtensionId(extId)) {
+      setMessage("Invalid extension ID. Close this tab and try again from the official Link Loom extension.");
       return;
     }
 
@@ -48,51 +63,62 @@ export function ExtensionCompleteClient() {
     let cancelled = false;
 
     const finish = async () => {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      try {
+        const supabase = createClient();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-      if (cancelled) return;
+        if (cancelled) return;
 
-      if (!session) {
-        setMessage("No active session found. Close this tab and try again from the extension.");
+        if (!session) {
+          setMessage("No active session found. Close this tab and try again from the extension.");
+          runtime.sendMessage(extId, {
+            type: "LINK_LOOM_EXTENSION_AUTH_ERROR",
+            error: "no_session",
+            message: "No active session found.",
+          });
+          return;
+        }
+
+        runtime.sendMessage(
+          extId,
+          {
+            type: "LINK_LOOM_EXTENSION_AUTH",
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+            user: {
+              id: session.user.id,
+              email: session.user.email ?? null,
+            },
+          },
+          () => {
+            if (cancelled) return;
+
+            if (runtime.lastError) {
+              setMessage(
+                "Could not send your session to the extension. Make sure Link Loom is installed."
+              );
+              return;
+            }
+
+            setMessage("Signed in. You can close this tab and return to the extension.");
+            window.setTimeout(() => window.close(), 1500);
+          }
+        );
+      } catch {
+        if (cancelled) return;
+
+        setMessage("Could not finish extension sign in. Close this tab and try again.");
         runtime.sendMessage(extId, {
           type: "LINK_LOOM_EXTENSION_AUTH_ERROR",
-          error: "no_session",
-          message: "No active session found.",
+          error: "session_error",
+          message: "Could not finish extension sign in.",
         });
-        return;
       }
-
-      runtime.sendMessage(
-        extId,
-        {
-          type: "LINK_LOOM_EXTENSION_AUTH",
-          access_token: session.access_token,
-          refresh_token: session.refresh_token,
-          user: {
-            id: session.user.id,
-            email: session.user.email ?? null,
-          },
-        },
-        () => {
-          if (cancelled) return;
-
-          if (runtime.lastError) {
-            setMessage(
-              "Could not send your session to the extension. Make sure Link Loom is installed."
-            );
-            return;
-          }
-
-          setMessage("Signed in. You can close this tab and return to the extension.");
-          window.setTimeout(() => window.close(), 1500);
-        }
-      );
     };
 
-    finish();
+    void finish();
 
     return () => {
       cancelled = true;

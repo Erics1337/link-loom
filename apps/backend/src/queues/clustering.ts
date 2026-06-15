@@ -124,9 +124,10 @@ const assignLeafGroup = async (
         log
     );
     if (!assignmentResult.success) {
-        log(
+        const message =
             `[CLUSTERING] Partial assignment failure for cluster ${leafClusterId}: inserted ${assignmentResult.inserted}/${assignmentResult.total}, failed ${assignmentResult.failed}`
-        );
+        log(message);
+        throw new Error(message);
     }
 };
 
@@ -231,6 +232,10 @@ async function recursiveCluster(
             })
         );
     } catch (e: any) {
+        if (e instanceof Error && e.message.startsWith('[CLUSTERING] Partial assignment failure')) {
+            throw e;
+        }
+
         log(`Clustering error: ${e}`);
         await assignLeafGroup(
             bookmarkIds,

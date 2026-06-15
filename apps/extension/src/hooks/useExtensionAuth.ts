@@ -376,7 +376,18 @@ export const useExtensionAuth = () => {
             }, GOOGLE_SIGN_IN_TIMEOUT_MS);
 
             chrome.runtime.onMessage.addListener(onMessage);
-            chrome.tabs.create({ url: authUrl });
+            chrome.tabs.create({ url: authUrl }, () => {
+                const runtimeError = chrome.runtime.lastError;
+                if (!runtimeError) return;
+
+                cleanup();
+                reject(
+                    new Error(
+                        runtimeError.message ||
+                            'Could not open Google sign in tab.'
+                    )
+                );
+            });
         });
     }, [applyAuthenticatedSession]);
 

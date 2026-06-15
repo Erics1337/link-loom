@@ -8,6 +8,25 @@ import {
 
 console.log('Link Loom background script loaded');
 
+const ALLOWED_EXTERNAL_ORIGINS = new Set([
+    'https://linkloom.org',
+    'http://localhost:3000'
+]);
+
+const isAllowedExternalOrigin = (senderUrl?: string) => {
+    if (!senderUrl) return false;
+
+    try {
+        const { origin, hostname } = new URL(senderUrl);
+        return (
+            ALLOWED_EXTERNAL_ORIGINS.has(origin) ||
+            (origin.startsWith('https://') && hostname.endsWith('.linkloom.org'))
+        );
+    } catch {
+        return false;
+    }
+};
+
 const notifyExtensionPages = (payload: Record<string, unknown>) => {
     chrome.runtime.sendMessage(payload).catch(() => {
         // Popup or side panel may be closed while auth completes in a tab.
@@ -17,6 +36,11 @@ const notifyExtensionPages = (payload: Record<string, unknown>) => {
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
     const authMessage = message as ExtensionAuthMessage | undefined;
     if (!authMessage?.type) {
+        return;
+    }
+
+    if (!isAllowedExternalOrigin(sender.url)) {
+        sendResponse({ success: false, error: 'unauthorized_origin' });
         return;
     }
 

@@ -208,12 +208,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
 
             saved++;
 
-            if (handled % 25 === 0 || handled === rawBookmarks.length) {
-                await job.updateProgress({
-                    processed: handled,
-                    total: rawBookmarks.length
-                });
-            }
+            await updateIngestProgress(job, handled, rawBookmarks.length);
 
             if (handled % 100 === 0) {
                 console.log(
@@ -221,10 +216,7 @@ export const ingestProcessor = async (job: QueueJob<IngestJobData>) => {
                 );
             }
         }
-        await job.updateProgress({
-            processed: rawBookmarks.length,
-            total: rawBookmarks.length
-        });
+        await updateIngestProgress(job, rawBookmarks.length, rawBookmarks.length);
         console.log(
             `[INGEST WORKER] Done: ${saved} bookmarks saved (${handled} handled)`
         );

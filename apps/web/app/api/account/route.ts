@@ -97,21 +97,21 @@ export async function DELETE(request: Request) {
     )
   }
 
-  const rateLimitError = await rateLimit({ key: 'account:delete', limit: 5, windowMs: 60_000 })
+  const rateLimitError = await rateLimit({ key: `account:delete:${user.id}`, limit: 5, windowMs: 60_000 })
   if (rateLimitError) return withCors(request, rateLimitError)
 
   const admin = createAdminClient()
 
   try {
-    await runDeletionStep('delete auth user', async () => {
-      const { error } = await admin.auth.admin.deleteUser(user.id)
-      return { error }
-    })
-
     await runDeletionStep('delete account data', async () => {
       const { error } = await admin.rpc('delete_user_account_data', {
         p_user_id: user.id,
       })
+      return { error }
+    })
+
+    await runDeletionStep('delete auth user', async () => {
+      const { error } = await admin.auth.admin.deleteUser(user.id)
       return { error }
     })
 
