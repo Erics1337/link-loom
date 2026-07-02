@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { functionBlockFromSql, readMigrationSql } from './sqlTestUtils';
 
-const sql = readMigrationSql(
-    '20260529015351_harden_snapshot_rpc_search_path.sql'
-);
+const sql = readMigrationSql('20260606231942_security_hardening.sql');
 
 const functionBlock = (name: string) => functionBlockFromSql(sql, name);
 
