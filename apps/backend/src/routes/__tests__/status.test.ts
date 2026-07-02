@@ -35,13 +35,6 @@ const createMaybeSingleChain = (data: unknown, error: unknown = null) => ({
     maybeSingle: vi.fn().mockResolvedValue({ data, error }),
 });
 
-const createCountChain = (count: number, error: unknown = null) => ({
-    select: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockReturnThis(),
-    then: (resolve: (value: unknown) => unknown, reject: (reason?: unknown) => unknown) =>
-        Promise.resolve({ count, error }).then(resolve, reject),
-});
-
 const mockRunLookups = (run: Record<string, unknown> | null) => {
     (supabase.from as any).mockImplementation((table: string) => {
         if (table === 'users') {
@@ -281,26 +274,31 @@ describe('status routes', () => {
     });
 
     it('falls back to legacy user-scoped counts when no pipeline run exists', async () => {
-        const countQueues = {
-            bookmarks: [12, 0, 0, 7, 0],
-            clusters: [4],
-            cluster_assignments: [7],
-        };
-
-        (supabase.from as any).mockImplementation((table: keyof typeof countQueues | string) => {
+        (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'users') return createMaybeSingleChain({ is_premium: false });
             if (table === 'user_pipeline_controls') return createMaybeSingleChain({ current_pipeline_run_id: null });
             if (table === 'pipeline_runs') return createMaybeSingleChain(null);
-            if (table in countQueues) {
-                const nextCount = countQueues[table as keyof typeof countQueues].shift();
-                return createCountChain(nextCount ?? 0);
-            }
             throw new Error(`Unexpected table ${table}`);
+        });
+        (supabase.rpc as any).mockResolvedValue({
+            data: [{
+                total_bookmarks: 12,
+                pending_bookmarks: 0,
+                enriched_bookmarks: 0,
+                embedded_bookmarks: 7,
+                errored_bookmarks: 0,
+                assigned_bookmarks: 7,
+                cluster_count: 4,
+            }],
+            error: null,
         });
 
         const handler = await captureGetHandler();
         const response = await handler({}, {});
 
+        expect(supabase.rpc).toHaveBeenCalledWith('get_legacy_status_counts', {
+            p_user_id: 'user-1',
+        });
         expect(response).toEqual(expect.objectContaining({
             pending: 0,
             pendingRaw: 0,
@@ -316,7 +314,6 @@ describe('status routes', () => {
             pipelineGeneration: null,
             pipelineStatus: null,
         }));
-        expect(supabase.rpc).not.toHaveBeenCalled();
     });
 
     it('returns a server error when run-scoped count loading fails', async () => {

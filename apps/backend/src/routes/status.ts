@@ -156,87 +156,16 @@ const buildStatusResponse = ({
 };
 
 const loadLegacyStatusCounts = async (userId: string) => {
-    const [
-        { count: totalCount, error: totalError },
-        { count: pendingRawCount, error: pendingRawError },
-        { count: enrichedCount, error: enrichedError },
-        { count: embeddedCount, error: embeddedError },
-        { count: erroredCount, error: erroredError },
-        { count: clusterCount, error: clusterError },
-        { count: assignedCount, error: assignmentError }
-    ] = await Promise.all([
-        supabase
-            .from('bookmarks')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId),
-        supabase
-            .from('bookmarks')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('status', 'pending'),
-        supabase
-            .from('bookmarks')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('status', 'enriched'),
-        supabase
-            .from('bookmarks')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('status', 'embedded'),
-        supabase
-            .from('bookmarks')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId)
-            .eq('status', 'error'),
-        supabase
-            .from('clusters')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', userId),
-        supabase
-            .from('cluster_assignments')
-            .select('bookmark_id, clusters!inner(user_id)', { count: 'exact', head: true })
-            .eq('clusters.user_id', userId)
-    ]);
+    const { data, error } = await supabase.rpc('get_legacy_status_counts', {
+        p_user_id: userId,
+    });
 
-    if (totalError) {
-        console.error('[STATUS] Total Count Error:', totalError);
-        throw new Error('Failed to load total bookmark count');
-    }
-    if (pendingRawError) {
-        console.error('[STATUS] Pending Raw Count Error:', pendingRawError);
-        throw new Error('Failed to load pending bookmark count');
-    }
-    if (enrichedError) {
-        console.error('[STATUS] Enriched Count Error:', enrichedError);
-        throw new Error('Failed to load enriched bookmark count');
-    }
-    if (embeddedError) {
-        console.error('[STATUS] Embedded Count Error:', embeddedError);
-        throw new Error('Failed to load embedded bookmark count');
-    }
-    if (erroredError) {
-        console.error('[STATUS] Errored Count Error:', erroredError);
-        throw new Error('Failed to load errored bookmark count');
-    }
-    if (clusterError) {
-        console.error('[STATUS] Cluster Count Error:', clusterError);
-        throw new Error('Failed to load cluster count');
-    }
-    if (assignmentError) {
-        console.error('[STATUS] Assigned Count Error:', assignmentError);
-        throw new Error('Failed to load assignment count');
+    if (error) {
+        console.error('[STATUS] Legacy Counts Error:', error);
+        throw new Error('Failed to load legacy status counts');
     }
 
-    const counts = {
-        totalBookmarks: totalCount ?? 0,
-        pendingBookmarks: pendingRawCount ?? 0,
-        enrichedBookmarks: enrichedCount ?? 0,
-        embeddedBookmarks: embeddedCount ?? 0,
-        erroredBookmarks: erroredCount ?? 0,
-        assignedBookmarks: assignedCount ?? 0,
-        clusterCount: clusterCount ?? 0,
-    };
+    const counts = normalizeStatusCounts(data);
     const processingCount = counts.pendingBookmarks + counts.enrichedBookmarks;
     const remainingToAssign = Math.max(counts.embeddedBookmarks - counts.assignedBookmarks, 0);
     const isClusteringActive =
