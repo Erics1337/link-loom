@@ -16,6 +16,8 @@ export interface ClusteringDensityProfile {
     targetLeafSize: number;
     maxChildren: number;
     minChildSize: number;
+    /** Maximum folder nesting depth; the final level fans out flat instead of recursing. */
+    maxDepth: number;
 }
 
 export const DEFAULT_CLUSTERING_SETTINGS: ClusteringSettings = {
@@ -53,12 +55,14 @@ export const getDensityProfile = (settings: ClusteringSettings): ClusteringDensi
                 targetLeafSize: 24,
                 maxChildren: 3,
                 minChildSize: 4,
+                maxDepth: 2,
             };
         case 'more':
             return {
                 targetLeafSize: 8,
                 maxChildren: 6,
                 minChildSize: 2,
+                maxDepth: 4,
             };
         case 'medium':
         default:
@@ -66,6 +70,7 @@ export const getDensityProfile = (settings: ClusteringSettings): ClusteringDensi
                 targetLeafSize: 14,
                 maxChildren: 4,
                 minChildSize: 3,
+                maxDepth: 3,
             };
     }
 };

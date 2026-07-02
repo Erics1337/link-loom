@@ -10,10 +10,39 @@ export type StructureAssignment = {
     rootTitle: BookmarkRootTitle;
 };
 
+const TRACKING_PARAM_NAMES = new Set([
+    'gclid',
+    'dclid',
+    'wbraid',
+    'gbraid',
+    'fbclid',
+    'msclkid',
+    'twclid',
+    'igshid',
+    'yclid',
+    'mc_cid',
+    'mc_eid',
+    's_kwcid',
+    '_hsenc',
+    '_hsmi',
+]);
+
+const isTrackingParam = (name: string) => {
+    const lower = name.toLowerCase();
+    return lower.startsWith('utm_') || TRACKING_PARAM_NAMES.has(lower);
+};
+
+// Mirrored in apps/backend/src/lib/normalizeUrl.ts — the backend hashes the
+// normalized URL for the shared embedding cache, so both must stay in sync.
 export const normalizeBookmarkUrl = (url: string) => {
     try {
         const parsed = new URL(url);
         parsed.hash = '';
+        const keptParams = [...parsed.searchParams.entries()].filter(
+            ([name]) => !isTrackingParam(name)
+        );
+        keptParams.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+        parsed.search = new URLSearchParams(keptParams).toString();
         if (parsed.pathname.endsWith('/')) {
             parsed.pathname = parsed.pathname.slice(0, -1);
         }

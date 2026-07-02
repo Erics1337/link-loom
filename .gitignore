@@ -42,3 +42,5 @@ supabase/.branches
 # CodeRabbit (local review config)
 .coderabbit.yaml
 skills-lock.json
+
+clustering-debug.log

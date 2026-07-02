@@ -16,16 +16,40 @@ export interface SplitClusterGroupsOptions {
     vectors: number[][];
     settings: ClusteringSettings;
     log: (msg: string) => void;
+    /**
+     * At the deepest allowed folder level we fan out flat (k uncapped by
+     * maxChildren) instead of recursing, so trees never exceed maxDepth.
+     */
+    uncapChildren?: boolean;
 }
 
 const chooseSplitK = (
     count: number,
-    profile: ClusteringDensityProfile
+    profile: ClusteringDensityProfile,
+    uncapChildren = false
 ): number => {
     if (count <= profile.targetLeafSize) return 1;
 
     const estimated = Math.ceil(count / profile.targetLeafSize);
+    if (uncapChildren) {
+        return Math.max(2, Math.min(estimated, count));
+    }
     return Math.max(2, Math.min(profile.maxChildren, estimated, count));
+};
+
+/**
+ * FNV-1a hash of the group's bookmark ids, used to seed k-means so the same
+ * bookmarks always produce the same tree (re-runs stay stable for users).
+ */
+export const computeClusterSeed = (bookmarkIds: string[]): number => {
+    let hash = 0x811c9dc5;
+    for (const id of bookmarkIds) {
+        for (let i = 0; i < id.length; i++) {
+            hash ^= id.charCodeAt(i);
+            hash = Math.imul(hash, 0x01000193);
+        }
+    }
+    return hash >>> 0;
 };
 
 export const computeDistance = (a: number[], b: number[]): number => {
@@ -205,14 +229,18 @@ export const splitClusterGroups = ({
     bookmarkIds,
     vectors,
     settings,
-    log
+    log,
+    uncapChildren = false
 }: SplitClusterGroupsOptions): ClusterGroup[] | null => {
     const profile = getDensityProfile(settings);
-    const k = chooseSplitK(bookmarkIds.length, profile);
+    const k = chooseSplitK(bookmarkIds.length, profile, uncapChildren);
     if (k < 2) return null;
 
     log(`Running k-means on ${bookmarkIds.length} items with k=${k}`);
-    const result = kmeans(vectors, k, { initialization: 'kmeans++' });
+    const result = kmeans(vectors, k, {
+        initialization: 'kmeans++',
+        seed: computeClusterSeed(bookmarkIds)
+    });
 
     const groupsByCluster: Record<number, ClusterGroup> = {};
     for (let i = 0; i < result.clusters.length; i++) {
