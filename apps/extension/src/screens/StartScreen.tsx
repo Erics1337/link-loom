@@ -95,7 +95,7 @@ export const StartScreen: React.FC<StartScreenProps> = ({
                     onChange={(event) => void handleImportChange(event)}
                 />
                 <button onClick={onStart} className="btn btn-primary w-full">
-                    Organize Bookmarks <ArrowRight size={16} />
+                    {isLoggedIn ? 'Organize Bookmarks' : 'Sign In to Organize'} <ArrowRight size={16} />
                 </button>
                 <div className="grid" style={{ gridTemplateColumns: hasCachedResults ? '1fr 1fr' : '1fr' }}>
                     {hasCachedResults && (
@@ -144,10 +144,10 @@ export const StartScreen: React.FC<StartScreenProps> = ({
                     <div className="space-y-3">
                         <div>
                             <p className="eyebrow">Free tier</p>
-                            <p className="screen-copy">Organize up to 500 bookmarks. Sign in for Cloud Snapshots and plan sync.</p>
+                            <p className="screen-copy">Create a free account to organize up to 500 bookmarks and keep plan access in sync.</p>
                         </div>
                         <button onClick={onOpenLogin} className="btn btn-primary w-full">
-                            Log In / Sign Up
+                            Sign In / Sign Up
                         </button>
                     </div>
                 )}
