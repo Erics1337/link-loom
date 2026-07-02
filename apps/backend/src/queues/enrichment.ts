@@ -121,6 +121,7 @@ export const enrichmentProcessor = async (job: QueueJob<EnrichmentJobData>) => {
         {
             userId,
             pipelineRunId,
+            jobGeneration,
             clusteringSettings,
             bookmarkId,
             url,

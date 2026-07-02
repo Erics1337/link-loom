@@ -9,6 +9,7 @@ import {
     type PipelineCancellationLookupCache,
 } from '../lib/cancellation';
 import { ClusteringSettings, normalizeClusteringSettings } from '../lib/clusteringSettings';
+import { normalizeBookmarkUrl } from '../lib/normalizeUrl';
 import { notifyPipelineBookmarkTerminal } from '../lib/pipelineCoordinator';
 import { safeFetch } from '../lib/safeFetch';
 
@@ -149,8 +150,10 @@ export const embeddingProcessor = async (job: QueueJob<EmbeddingJobData>) => {
             return;
         }
 
-        // 1. Calculate Hash
-        const urlHash = createHash('sha256').update(url).digest('hex');
+        // 1. Calculate Hash (must match the shared_links id written by ingest)
+        const urlHash = createHash('sha256')
+            .update(normalizeBookmarkUrl(url))
+            .digest('hex');
 
         // 2. Check Shared Cache
         const { data: cached, error: cacheLookupError } = await supabase
