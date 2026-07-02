@@ -222,6 +222,7 @@ export const useWeaveRun = ({
 
         let pollingInFlight = false;
         let intervalId: ReturnType<typeof setInterval> | null = null;
+        let stopped = false;
 
         const poll = async () => {
             if (pollingInFlight) return;
@@ -252,6 +253,7 @@ export const useWeaveRun = ({
 
                 const terminalAction = getTerminalWeavingAction(data);
                 if (terminalAction) {
+                    stopped = true;
                     if (intervalId) clearInterval(intervalId);
                     if (terminalAction === 'fetch-results') {
                         await fetchResults(userId);
@@ -289,9 +291,23 @@ export const useWeaveRun = ({
             }
         };
 
-        intervalId = setInterval(poll, 2000);
+        // Poll every 2s while runs are usually short; after a minute the run
+        // is clearly a long one, so back off to 5s to cut status-query load.
+        const POLL_INTERVAL_MS = 2000;
+        const SLOW_POLL_INTERVAL_MS = 5000;
+        const SLOW_POLL_AFTER_MS = 60_000;
+
+        intervalId = setInterval(poll, POLL_INTERVAL_MS);
+
+        const slowdownTimeoutId = setTimeout(() => {
+            if (stopped) return;
+            if (intervalId) clearInterval(intervalId);
+            intervalId = setInterval(poll, SLOW_POLL_INTERVAL_MS);
+        }, SLOW_POLL_AFTER_MS);
 
         return () => {
+            stopped = true;
+            clearTimeout(slowdownTimeoutId);
             if (intervalId) clearInterval(intervalId);
         };
     }, [
