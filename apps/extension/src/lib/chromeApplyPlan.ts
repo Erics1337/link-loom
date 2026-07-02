@@ -4,17 +4,23 @@ import { getBookmarkChromeId } from './bookmarkStructure';
 
 export const APPLY_JOURNAL_STORAGE_KEY = 'bookmarkWeaverActiveApplyJournal';
 
+export const UNORGANIZED_FOLDER_TITLE = 'Unorganized';
+
 export type ChromeApplyResult = {
     movedCount: number;
     renamedCount: number;
     deletedCount: number;
     createdFolderCount: number;
+    rescuedCount: number;
     skippedCount: number;
     folderCreateFailures: number;
     cleanupFailures: number;
     cleanupFailureMessages: string[];
     journalId?: string;
     shouldWarnAboutPartialApply: boolean;
+    /** clusterId -> the Chrome folder id it was created/resolved as, so the
+     * backend can be told which folder each cluster now maps to. */
+    folderChromeIdsByClusterId: Array<{ clusterId: string; chromeFolderId: string }>;
 };
 
 export type ChromeApplyPlanSummary = {
@@ -71,6 +77,8 @@ type PlannedFolderNode = {
     planId: string;
     title: string;
     children: PlannedNode[];
+    /** Source cluster id, when this folder was built from a cluster node (root/overflow folders have none). */
+    clusterId?: string;
 };
 
 type PlannedBookmarkNode = {
@@ -87,6 +95,13 @@ type CleanupDeleteTarget = {
     title: string;
     kind: 'folder' | 'bookmark';
     url?: string;
+};
+
+export type BookmarkSubtreeSnapshot = {
+    chromeId: string;
+    title: string;
+    url?: string;
+    children?: BookmarkSubtreeSnapshot[];
 };
 
 type PlannedRoot = ChromeApplyPlan['roots'][number];
@@ -120,6 +135,7 @@ type ChromeApplyJournalEntry =
         status: 'pending' | 'applied';
         rootId: string;
         target: CleanupDeleteTarget;
+        snapshot?: BookmarkSubtreeSnapshot;
     };
 
 const getNowIso = () => new Date().toISOString();
@@ -205,6 +221,7 @@ const collectPlannedNodes = (
                 planId,
                 title: normalizeTitle(node.title),
                 children: collectPlannedNodes(node.children || [], summary, preview, planId),
+                clusterId: node.clusterId,
             };
         });
 };
@@ -304,13 +321,30 @@ const createEmptyResult = (journalId?: string): ChromeApplyResult => ({
     renamedCount: 0,
     deletedCount: 0,
     createdFolderCount: 0,
+    rescuedCount: 0,
     skippedCount: 0,
     folderCreateFailures: 0,
     cleanupFailures: 0,
     cleanupFailureMessages: [],
     journalId,
     shouldWarnAboutPartialApply: false,
+    folderChromeIdsByClusterId: [],
 });
+
+const collectClusterFolderMappings = (
+    nodes: PlannedNode[],
+    createdFolderIdsByPlanId: Record<string, string>,
+    out: Array<{ clusterId: string; chromeFolderId: string }>
+) => {
+    for (const node of nodes) {
+        if (node.kind !== 'folder') continue;
+        const chromeFolderId = createdFolderIdsByPlanId[node.planId];
+        if (node.clusterId && chromeFolderId) {
+            out.push({ clusterId: node.clusterId, chromeFolderId });
+        }
+        collectClusterFolderMappings(node.children, createdFolderIdsByPlanId, out);
+    }
+};
 
 const getBookmarkNode = async (chromeId: string) => {
     const nodes = await chrome.bookmarks.get(chromeId);
@@ -477,6 +511,100 @@ const collectRootKeepIds = (nodes: PlannedNode[], journal: ChromeApplyJournal) =
     return keepIds;
 };
 
+const toSubtreeSnapshot = (node: chrome.bookmarks.BookmarkTreeNode): BookmarkSubtreeSnapshot => ({
+    chromeId: node.id,
+    title: node.title || 'Untitled',
+    url: node.url || undefined,
+    children: node.url ? undefined : (node.children || []).map(toSubtreeSnapshot),
+});
+
+type RemainingBookmarkRef = {
+    chromeId: string;
+    parentId: string;
+    index?: number;
+};
+
+const collectSubtreeBookmarks = (
+    node: chrome.bookmarks.BookmarkTreeNode,
+    out: RemainingBookmarkRef[] = []
+): RemainingBookmarkRef[] => {
+    for (const child of node.children || []) {
+        if (child.url) {
+            out.push({ chromeId: child.id, parentId: child.parentId || node.id, index: child.index });
+        } else {
+            collectSubtreeBookmarks(child, out);
+        }
+    }
+    return out;
+};
+
+const getSubTreeNode = async (chromeId: string) => {
+    const nodes = await chrome.bookmarks.getSubTree(chromeId).catch(() => []);
+    return nodes[0] || null;
+};
+
+const getRescueFolderPlanId = (rootId: string) => `rescue-unorganized-${rootId}`;
+
+const ensureUnorganizedFolder = async (
+    rootId: string,
+    journal: ChromeApplyJournal,
+    result: ChromeApplyResult
+): Promise<string> => {
+    const planId = getRescueFolderPlanId(rootId);
+    const knownId = journal.createdFolderIdsByPlanId[planId];
+    if (knownId && await findBookmarkNode(knownId)) {
+        return knownId;
+    }
+
+    const existing = await findChildByTitle(rootId, UNORGANIZED_FOLDER_TITLE);
+    if (existing) {
+        journal.createdFolderIdsByPlanId[planId] = existing.id;
+        await writeJournal(journal);
+        return existing.id;
+    }
+
+    const entry: ChromeApplyJournalEntry = {
+        type: 'createFolder',
+        status: 'pending',
+        planId,
+        parentId: rootId,
+        title: UNORGANIZED_FOLDER_TITLE,
+    };
+    journal.entries.push(entry);
+    await writeJournal(journal);
+
+    const folder = await chrome.bookmarks.create({ parentId: rootId, title: UNORGANIZED_FOLDER_TITLE });
+    entry.chromeId = folder.id;
+    entry.status = 'applied';
+    journal.createdFolderIdsByPlanId[planId] = folder.id;
+    result.createdFolderCount += 1;
+    await writeJournal(journal);
+    return folder.id;
+};
+
+const rescueBookmarkToFolder = async (
+    bookmark: RemainingBookmarkRef,
+    targetFolderId: string,
+    journal: ChromeApplyJournal,
+    result: ChromeApplyResult
+) => {
+    const entry: ChromeApplyJournalEntry = {
+        type: 'moveBookmark',
+        status: 'pending',
+        chromeId: bookmark.chromeId,
+        previousParentId: bookmark.parentId,
+        previousIndex: bookmark.index,
+        nextParentId: targetFolderId,
+    };
+    journal.entries.push(entry);
+    await writeJournal(journal);
+
+    await chrome.bookmarks.move(bookmark.chromeId, { parentId: targetFolderId });
+    entry.status = 'applied';
+    result.rescuedCount += 1;
+    await writeJournal(journal);
+};
+
 const cleanupRootChildren = async (
     root: PlannedRoot,
     journal: ChromeApplyJournal,
@@ -496,20 +624,47 @@ const cleanupRootChildren = async (
 
     for (const target of [...deleteTargets].reverse()) {
         try {
+            if (target.kind === 'bookmark') {
+                // A root-level bookmark the pipeline never placed (errored or
+                // added mid-run). Keep it in "Unorganized" instead of deleting.
+                const current = await findBookmarkNode(target.chromeId);
+                if (!current) continue;
+                const unorganizedId = await ensureUnorganizedFolder(rootId, journal, result);
+                await rescueBookmarkToFolder(
+                    { chromeId: target.chromeId, parentId: rootId, index: current.index },
+                    unorganizedId,
+                    journal,
+                    result
+                );
+                continue;
+            }
+
+            const subtree = await getSubTreeNode(target.chromeId);
+            if (!subtree) continue;
+
+            // Planned bookmarks were already moved out of this folder; anything
+            // still inside would be silently destroyed by removeTree, so move
+            // every remaining bookmark to "Unorganized" first.
+            const remainingBookmarks = collectSubtreeBookmarks(subtree);
+            if (remainingBookmarks.length > 0) {
+                const unorganizedId = await ensureUnorganizedFolder(rootId, journal, result);
+                for (const bookmark of remainingBookmarks) {
+                    await rescueBookmarkToFolder(bookmark, unorganizedId, journal, result);
+                }
+            }
+
+            const postRescue = await getSubTreeNode(target.chromeId);
             const entry: ChromeApplyJournalEntry = {
                 type: 'deleteRootChild',
                 status: 'pending',
                 rootId,
                 target,
+                snapshot: postRescue ? toSubtreeSnapshot(postRescue) : undefined,
             };
             journal.entries.push(entry);
             await writeJournal(journal);
 
-            if (target.kind === 'bookmark') {
-                await chrome.bookmarks.remove(target.chromeId);
-            } else {
-                await chrome.bookmarks.removeTree(target.chromeId);
-            }
+            await chrome.bookmarks.removeTree(target.chromeId);
             entry.status = 'applied';
             result.deletedCount += 1;
             await writeJournal(journal);
@@ -578,6 +733,13 @@ const executeChromeApplyJournal = async (journal: ChromeApplyJournal): Promise<C
         for (const root of journal.plan.roots) {
             await createFoldersForNodes(root.children, root.rootId, journal, result);
         }
+        for (const root of journal.plan.roots) {
+            collectClusterFolderMappings(
+                root.children,
+                journal.createdFolderIdsByPlanId,
+                result.folderChromeIdsByClusterId
+            );
+        }
 
         journal.phase = 'bookmarks';
         await writeJournal(journal);
@@ -617,6 +779,22 @@ export const resumeChromeBookmarkApplyJournal = async (journal: ChromeApplyJourn
     return runExclusiveApply(true, () => executeChromeApplyJournal(journal));
 };
 
+const restoreSubtreeSnapshot = async (
+    snapshot: BookmarkSubtreeSnapshot,
+    parentId: string,
+    restoredIds: Record<string, string>
+) => {
+    const restored = await chrome.bookmarks.create({
+        parentId,
+        title: snapshot.title,
+        url: snapshot.url,
+    });
+    restoredIds[snapshot.chromeId] = restored.id;
+    for (const child of snapshot.children || []) {
+        await restoreSubtreeSnapshot(child, restored.id, restoredIds);
+    }
+};
+
 const rollbackAppliedJournalEntry = async (
     entry: ChromeApplyJournalEntry,
     restoredIds: Record<string, string>,
@@ -626,8 +804,12 @@ const rollbackAppliedJournalEntry = async (
         const existing = await chrome.bookmarks.get(entry.target.chromeId).catch(() => []);
         if (existing.length === 0) {
             if (entry.target.kind === 'folder') {
-                result.skippedDeletedFolderCount += 1;
-                result.skippedDeletedFolderTitles.push(entry.target.title);
+                if (entry.snapshot) {
+                    await restoreSubtreeSnapshot(entry.snapshot, entry.rootId, restoredIds);
+                } else {
+                    result.skippedDeletedFolderCount += 1;
+                    result.skippedDeletedFolderTitles.push(entry.target.title);
+                }
                 return;
             }
             const restored = await chrome.bookmarks.create({

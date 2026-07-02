@@ -531,6 +531,59 @@ body.light-mode .select-menu {
   color: var(--warning);
 }
 
+.tree-actions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.tree-node:hover .tree-actions {
+  display: flex;
+}
+
+.tree-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tree-action-btn:hover {
+  background: color-mix(in oklab, var(--bg-tertiary) 80%, transparent);
+  color: var(--text-primary);
+}
+
+.tree-title-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--accent-color);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.tree-move-select {
+  flex: 0 0 auto;
+  max-width: 130px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 1px 2px;
+  font-size: 10px;
+}
+
 .text-secondary {
   color: var(--text-secondary);
 }

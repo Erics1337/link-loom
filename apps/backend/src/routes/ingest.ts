@@ -24,6 +24,10 @@ type IngestBody = {
     clusteringSettings?: unknown;
 };
 
+type ConfirmApplyBody = {
+    folderChromeIds?: Array<{ clusterId?: unknown; chromeFolderId?: unknown }>;
+};
+
 export const registerIngestRoutes = async (fastify: FastifyInstance) => {
     fastify.post(
         '/ingest',
@@ -98,27 +102,6 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
                     .code(500)
                     .send({ error: 'Failed to initialize ingest run' });
             }
-
-            const { error: clearStructureError } = await supabase.rpc(
-                'clear_user_ingest_structure',
-                { p_user_id: userId }
-            );
-
-            if (clearStructureError) {
-                console.error(
-                    `[INGEST] Failed to clear existing bookmarks and clusters for user ${userId}`,
-                    clearStructureError
-                );
-                return reply
-                    .code(500)
-                    .send({
-                        error: 'Failed to clear existing bookmarks and clusters'
-                    });
-            }
-
-            console.log(
-                `[INGEST] Cleared old bookmarks and clusters for user ${userId}`
-            );
 
             await queues.ingest.add(
                 'ingest',
@@ -201,6 +184,59 @@ export const registerIngestRoutes = async (fastify: FastifyInstance) => {
                 }
             );
             return { status: 'clustering_queued' };
+        }
+    );
+
+    fastify.post(
+        '/confirm-apply/:userId',
+        {
+            schema: {
+                params: userIdParamsSchema,
+                body: looseObjectBodySchema,
+                response: authenticatedStatusResponseSchema
+            }
+        },
+        async (req, reply) => {
+            const userId = await requireRequestUserId(req, reply);
+            if (!userId) return reply;
+            const body = req.body as ConfirmApplyBody;
+            const pairs = (body.folderChromeIds ?? []).filter(
+                (
+                    pair
+                ): pair is { clusterId: string; chromeFolderId: string } =>
+                    typeof pair?.clusterId === 'string' &&
+                    typeof pair?.chromeFolderId === 'string'
+            );
+
+            if (pairs.length === 0) {
+                return { status: 'ok' };
+            }
+
+            const results = await Promise.all(
+                pairs.map(({ clusterId, chromeFolderId }) =>
+                    supabase
+                        .from('clusters')
+                        .update({ chrome_folder_id: chromeFolderId })
+                        .eq('id', clusterId)
+                        .eq('user_id', userId)
+                )
+            );
+
+            const failed = results.filter((result) => result.error);
+            if (failed.length > 0) {
+                console.error(
+                    `[CONFIRM-APPLY] Failed to record ${failed.length}/${pairs.length} folder mappings for user ${userId}`,
+                    failed[0].error
+                );
+                return reply
+                    .code(500)
+                    .send({ error: 'Failed to record folder mappings' });
+            }
+
+            console.log(
+                `[CONFIRM-APPLY] Recorded ${pairs.length} folder mapping(s) for user ${userId}`
+            );
+            return { status: 'ok' };
         }
     );
 

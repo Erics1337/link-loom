@@ -1,10 +1,8 @@
-import fs from 'fs';
-import path from 'path';
-
 import { QueueJob } from '../lib/queue';
 import { completePipelineRun, isUserCancelled } from '../lib/cancellation';
 import {
     ClusteringSettings,
+    getDensityProfile,
     normalizeClusteringSettings
 } from '../lib/clusteringSettings';
 import {
@@ -12,13 +10,17 @@ import {
     shouldExecutePipelineClustering,
 } from '../lib/pipelineCoordinator';
 import {
+    computeCentroid,
+    computeDistance,
     rankIdsByCentroid,
     shouldAssignLeaf,
     splitClusterGroups
 } from './clustering/clusterAlgorithm';
 import {
     assignBookmarksToCluster,
+    clearUnpinnedAssignmentsAndPruneClusters,
     createCluster,
+    fetchPinnedBookmarkIds,
     fetchUserBookmarkVectorRows
 } from './clustering/clusterPersistence';
 import {
@@ -31,12 +33,8 @@ import {
     parseBookmarkVector
 } from './clustering/vectorParsing';
 
-const logFile = path.resolve(process.cwd(), 'clustering-debug.log');
-
 function log(msg: string) {
-    const timestamp = new Date().toISOString();
-    fs.appendFileSync(logFile, `[${timestamp}] ${msg}\n`);
-    console.log(msg);
+    console.log(`[CLUSTERING] ${msg}`);
 }
 
 export interface ClusteringJobData {
@@ -44,6 +42,22 @@ export interface ClusteringJobData {
     clusteringSettings?: ClusteringSettings;
     pipelineRunId?: string;
     jobGeneration?: number;
+}
+
+// Folder levels deeper than this get heuristic names instead of AI calls; the
+// top levels are what users scan, and this caps total LLM latency per run.
+const AI_NAMING_MAX_DEPTH = 2;
+
+// In-memory representation of a cluster; the whole tree (names, keywords,
+// and bookmark placement included) is built before anything is written to
+// the DB, so a mid-run crash or timeout can't leave a half-organized
+// structure behind.
+interface ClusterNode {
+    name: string;
+    keywords: string[];
+    bookmarkIds: string[];
+    vectors: number[][];
+    children: ClusterNode[];
 }
 
 const parseVectorWithLogging = (joined: unknown): number[] | null =>
@@ -81,204 +95,295 @@ const finalizePipelineRun = async (
     await completePipelineRun(pipelineRunId, totals);
 };
 
-const assignLeafGroup = async (
+/**
+ * Builds (or attaches to) the leaf node for a group of bookmarks. When
+ * `parentNode` already exists, the bookmarks are merged directly into it;
+ * otherwise a brand-new root node is named and returned. Returns [] when the
+ * group was merged into an existing parent, or when cancellation stopped the
+ * node from being created.
+ */
+const buildLeafGroup = async (
     bookmarkIds: string[],
-    parentId: string | null,
+    vectors: number[][],
+    parentNode: ClusterNode | null,
+    userId: string,
+    settings: ClusteringSettings,
+    pipelineRunId: string | undefined,
+    jobGeneration: number | undefined,
+    namingOptions: {
+        sampledIds?: string[];
+        suggestedName?: string;
+        allowAI?: boolean;
+    } = {}
+): Promise<ClusterNode[]> => {
+    if (parentNode) {
+        if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
+            log(
+                `[CLUSTERING] Cancelled before assignment write for user ${userId}`
+            );
+            return [];
+        }
+        parentNode.bookmarkIds.push(...bookmarkIds);
+        parentNode.vectors.push(...vectors);
+        return [];
+    }
+
+    const { name, keywords } = await generateClusterName(
+        bookmarkIds,
+        settings,
+        log,
+        namingOptions
+    );
+    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
+        log(
+            `[CLUSTERING] Cancelled before leaf cluster creation for user ${userId}`
+        );
+        return [];
+    }
+
+    return [
+        {
+            name,
+            keywords,
+            bookmarkIds: [...bookmarkIds],
+            vectors: [...vectors],
+            children: []
+        }
+    ];
+};
+
+/**
+ * Recursively splits bookmarks into named cluster nodes in memory. Returns
+ * newly created root-level nodes (only non-empty when `parentNode` is null);
+ * when a parent node is supplied, children are pushed onto it directly.
+ */
+async function recursiveCluster(
+    bookmarkIds: string[],
+    vectors: number[][],
+    parentNode: ClusterNode | null,
     userId: string,
     settings: ClusteringSettings,
     pipelineRunId?: string,
     jobGeneration?: number,
-    namingOptions: {
-        sampledIds?: string[];
-        suggestedName?: string;
-    } = {}
-) => {
-    let leafClusterId = parentId;
-
-    if (!leafClusterId) {
-        const fallbackName = await generateClusterName(
-            bookmarkIds,
-            settings,
-            log,
-            namingOptions
-        );
-        if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
-            log(
-                `[CLUSTERING] Cancelled before leaf cluster creation for user ${userId}`
-            );
-            return;
-        }
-        leafClusterId = await createCluster(userId, null, fallbackName, log);
-    }
-
-    if (!leafClusterId) {
-        log(
-            `Unable to assign ${bookmarkIds.length} bookmarks for user ${userId}: no target cluster`
-        );
-        return;
-    }
-
-    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
-        log(
-            `[CLUSTERING] Cancelled before assignment write for user ${userId}`
-        );
-        return;
-    }
-
-    const assignmentResult = await assignBookmarksToCluster(
-        bookmarkIds,
-        leafClusterId,
-        log
-    );
-    if (!assignmentResult.success) {
-        log(
-            `[CLUSTERING] Partial assignment failure for cluster ${leafClusterId}: inserted ${assignmentResult.inserted}/${assignmentResult.total}, failed ${assignmentResult.failed}`
-        );
-    }
-};
-
-async function recursiveCluster(
-    bookmarkIds: string[],
-    vectors: number[][],
-    parentId: string | null,
-    userId: string,
-    settings: ClusteringSettings,
-    pipelineRunId?: string,
-    jobGeneration?: number
-) {
+    depth = 0
+): Promise<ClusterNode[]> {
     if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
         log(`[CLUSTERING] Cancelled recursion for user ${userId}`);
-        return;
+        return [];
     }
 
-    if (shouldAssignLeaf(bookmarkIds.length, settings)) {
-        await assignLeafGroup(
+    const profile = getDensityProfile(settings);
+    const allowAI = depth < AI_NAMING_MAX_DEPTH;
+
+    if (
+        shouldAssignLeaf(bookmarkIds.length, settings) ||
+        depth >= profile.maxDepth
+    ) {
+        return buildLeafGroup(
             bookmarkIds,
-            parentId,
+            vectors,
+            parentNode,
             userId,
             settings,
             pipelineRunId,
-            jobGeneration
+            jobGeneration,
+            { allowAI }
         );
-        return;
     }
+
+    // Folders created by this call live at depth + 1; when that is the last
+    // allowed level, fan out flat so children never need to recurse deeper.
+    const isFinalLevel = depth + 1 >= profile.maxDepth;
 
     try {
         const splitGroups = splitClusterGroups({
             bookmarkIds,
             vectors,
             settings,
-            log
+            log,
+            uncapChildren: isFinalLevel
         });
 
         if (!splitGroups) {
-            await assignLeafGroup(
+            return buildLeafGroup(
                 bookmarkIds,
-                parentId,
+                vectors,
+                parentNode,
                 userId,
                 settings,
                 pipelineRunId,
-                jobGeneration
+                jobGeneration,
+                { allowAI }
             );
-            return;
         }
 
-        const groups = await refineSiblingGroupsWithLLM(
-            splitGroups,
-            settings,
-            log
-        );
+        const groups = allowAI
+            ? await refineSiblingGroupsWithLLM(splitGroups, settings, log)
+            : splitGroups;
 
         if (groups.length <= 1) {
             const [group] = groups;
-            await assignLeafGroup(
+            return buildLeafGroup(
                 group.ids,
-                parentId,
+                group.vecs,
+                parentNode,
                 userId,
                 settings,
                 pipelineRunId,
                 jobGeneration,
                 {
                     sampledIds: rankIdsByCentroid(group.ids, group.vecs),
-                    suggestedName: group.suggestedName
+                    suggestedName: group.suggestedName,
+                    allowAI
                 }
             );
-            return;
         }
 
-        const createdClusters = await Promise.all(
+        const namedGroups = await Promise.all(
             groups.map((group) =>
                 limitClusterNaming(async () => {
                     const representativeIds = rankIdsByCentroid(
                         group.ids,
                         group.vecs
                     );
-                    const name = await generateClusterName(
+                    const { name, keywords } = await generateClusterName(
                         group.ids,
                         settings,
                         log,
                         {
                             sampledIds: representativeIds,
-                            suggestedName: group.suggestedName
+                            suggestedName: group.suggestedName,
+                            allowAI
                         }
                     );
-                    if (
-                        await isUserCancelled(
-                            userId,
-                            jobGeneration,
-                            pipelineRunId
-                        )
-                    ) {
-                        return { clusterId: null, group };
-                    }
-
-                    const clusterId = await createCluster(
+                    const cancelled = await isUserCancelled(
                         userId,
-                        parentId,
-                        name,
-                        log
+                        jobGeneration,
+                        pipelineRunId
                     );
-                    return { clusterId, group };
+                    return { name, keywords, group, cancelled };
                 })
             )
         );
 
-        await Promise.all(
-            createdClusters.map(async (item) => {
-                if (!item.clusterId) {
-                    await assignLeafGroup(
-                        item.group.ids,
-                        parentId,
+        const createdRoots = await Promise.all(
+            namedGroups.map(async ({ name, keywords, group, cancelled }) => {
+                if (cancelled) {
+                    return buildLeafGroup(
+                        group.ids,
+                        group.vecs,
+                        parentNode,
                         userId,
                         settings,
                         pipelineRunId,
-                        jobGeneration
+                        jobGeneration,
+                        { allowAI }
                     );
-                    return;
+                }
+
+                const node: ClusterNode = {
+                    name,
+                    keywords,
+                    bookmarkIds: [],
+                    vectors: [],
+                    children: []
+                };
+                if (parentNode) {
+                    parentNode.children.push(node);
                 }
 
                 await recursiveCluster(
-                    item.group.ids,
-                    item.group.vecs,
-                    item.clusterId,
+                    group.ids,
+                    group.vecs,
+                    node,
                     userId,
                     settings,
                     pipelineRunId,
-                    jobGeneration
+                    jobGeneration,
+                    depth + 1
                 );
+
+                return parentNode ? [] : [node];
             })
         );
+
+        return createdRoots.flat();
     } catch (e: any) {
         log(`Clustering error: ${e}`);
-        await assignLeafGroup(
+        return buildLeafGroup(
             bookmarkIds,
-            parentId,
+            vectors,
+            parentNode,
             userId,
             settings,
             pipelineRunId,
-            jobGeneration
+            jobGeneration,
+            { allowAI }
         );
     }
+}
+
+/**
+ * Writes the fully-built in-memory tree to the DB in one pass: each node is
+ * created before its children so `parent_id` is always available, and a
+ * node's own bookmarks are assigned right after it's created.
+ */
+async function persistClusterTree(
+    userId: string,
+    nodes: ClusterNode[]
+): Promise<void> {
+    const persistNode = async (
+        node: ClusterNode,
+        parentId: string | null
+    ): Promise<void> => {
+        const clusterId = await createCluster(
+            userId,
+            parentId,
+            node.name,
+            node.keywords,
+            log
+        );
+        if (!clusterId) {
+            log(
+                `[CLUSTERING] Unable to persist cluster "${node.name}" for user ${userId}: creation failed`
+            );
+            return;
+        }
+
+        if (node.bookmarkIds.length > 0) {
+            const distanceById = new Map<string, number>();
+            if (
+                node.vectors.length === node.bookmarkIds.length &&
+                node.vectors.length > 0
+            ) {
+                const centroid = computeCentroid(node.vectors);
+                node.bookmarkIds.forEach((id, index) => {
+                    distanceById.set(
+                        id,
+                        computeDistance(node.vectors[index], centroid)
+                    );
+                });
+            }
+
+            const assignmentResult = await assignBookmarksToCluster(
+                node.bookmarkIds,
+                clusterId,
+                log,
+                distanceById
+            );
+            if (!assignmentResult.success) {
+                log(
+                    `[CLUSTERING] Partial assignment failure for cluster ${clusterId}: inserted ${assignmentResult.inserted}/${assignmentResult.total}, failed ${assignmentResult.failed}`
+                );
+            }
+        }
+
+        await Promise.all(
+            node.children.map((child) => persistNode(child, clusterId))
+        );
+    };
+
+    await Promise.all(nodes.map((node) => persistNode(node, null)));
 }
 
 export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
@@ -299,6 +404,21 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
             `[CLUSTERING] Skipping clustering for user ${userId}: enqueue was not recorded (orphaned or superseded job)`
         );
         return;
+    }
+
+    // Pinned bookmarks (manually placed by the user, confirmed via Apply) are
+    // never touched by this run: their assignment is excluded from the clear
+    // below and from the vectors fed into the algorithm.
+    const pinnedBookmarkIds = await fetchPinnedBookmarkIds(userId, log);
+
+    const clearedUnpinned = await clearUnpinnedAssignmentsAndPruneClusters(
+        userId,
+        log
+    );
+    if (!clearedUnpinned) {
+        throw new Error(
+            `Failed to clear unpinned cluster assignments for user ${userId}`
+        );
     }
 
     const fetchResult = await fetchUserBookmarkVectorRows(
@@ -336,6 +456,8 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
 
     const parsedRows: Array<{ id: string; vector: number[] }> = [];
     for (const bookmark of userBookmarks) {
+        if (pinnedBookmarkIds.has(bookmark.id)) continue;
+
         const parsedVector = parseVectorWithLogging(bookmark.shared_links);
         if (!parsedVector) continue;
 
@@ -345,6 +467,10 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         });
     }
 
+    // Canonical ordering keeps k-means seeding (and therefore the whole tree)
+    // stable across runs on the same collection.
+    parsedRows.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
     log(`Valid bookmarks with vectors: ${parsedRows.length}`);
 
     if (parsedRows.length === 0) {
@@ -352,7 +478,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         await finalizePipelineRun(userId, jobGeneration, pipelineRunId, {
             totalBookmarks: userBookmarks.length,
             embeddedBookmarks: 0,
-            assignedBookmarks: 0
+            assignedBookmarks: pinnedBookmarkIds.size
         });
         return;
     }
@@ -365,7 +491,7 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         return;
     }
 
-    await recursiveCluster(
+    const clusterTree = await recursiveCluster(
         ids,
         vectors,
         null,
@@ -374,10 +500,20 @@ export const clusteringProcessor = async (job: QueueJob<ClusteringJobData>) => {
         pipelineRunId,
         jobGeneration
     );
+
+    if (await isUserCancelled(userId, jobGeneration, pipelineRunId)) {
+        log(
+            `[CLUSTERING] Cancelled before persisting cluster tree for user ${userId}`
+        );
+        return;
+    }
+
+    await persistClusterTree(userId, clusterTree);
+
     await finalizePipelineRun(userId, jobGeneration, pipelineRunId, {
         totalBookmarks: userBookmarks.length,
         embeddedBookmarks: parsedRows.length,
-        assignedBookmarks: ids.length
+        assignedBookmarks: pinnedBookmarkIds.size + ids.length
     });
     log('Clustering completed');
 };

@@ -50,11 +50,20 @@ describe('bookmarkRootSnapshot', () => {
                 children: [{ id: 'b', title: 'B', url: 'https://b.example' }],
             },
         ])).toEqual([
-            { id: 'a', title: 'A', url: 'https://a.example' },
-            { id: 'b', title: 'B', url: 'https://b.example' },
+            { id: 'a', title: 'A', url: 'https://a.example', parentId: 'root-1', parentTitle: undefined },
+            { id: 'b', title: 'B', url: 'https://b.example', parentId: 'root-2', parentTitle: undefined },
         ]);
         expect(collectScannedBookmarks([
             { id: 'root', children: [{ id: 'c', url: 'https://c.example' }] },
-        ])).toEqual([{ id: 'c', title: '', url: 'https://c.example' }]);
+        ])).toEqual([{ id: 'c', title: '', url: 'https://c.example', parentId: 'root', parentTitle: undefined }]);
+        expect(collectScannedBookmarks([
+            {
+                id: 'root',
+                title: 'Bookmarks Bar',
+                children: [{ id: 'd', title: 'D', url: 'https://d.example', parentId: 'explicit-parent' }],
+            },
+        ])).toEqual([
+            { id: 'd', title: 'D', url: 'https://d.example', parentId: 'explicit-parent', parentTitle: 'Bookmarks Bar' },
+        ]);
     });
 });

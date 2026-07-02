@@ -4,6 +4,8 @@ export type ScannedBookmark = {
     id: string;
     url: string;
     title: string;
+    parentId?: string;
+    parentTitle?: string;
 };
 
 export type BookmarkRootSnapshot = {
@@ -82,13 +84,19 @@ export const collectScannedBookmarks = (tree: any[]) => {
         return bookmarks;
     }
 
-    const traverse = (node: any) => {
+    const traverse = (node: any, parent?: any) => {
         if (!node) return;
         if (node.url) {
-            bookmarks.push({ id: node.id, url: node.url, title: node.title ?? '' });
+            bookmarks.push({
+                id: node.id,
+                url: node.url,
+                title: node.title ?? '',
+                parentId: node.parentId ?? parent?.id,
+                parentTitle: parent?.title
+            });
         }
         if (node.children) {
-            node.children.forEach(traverse);
+            node.children.forEach((child: any) => traverse(child, node));
         }
     };
 

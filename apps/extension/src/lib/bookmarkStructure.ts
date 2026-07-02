@@ -120,6 +120,107 @@ export const countBookmarksInTree = (nodes: BookmarkNode[]): number =>
         return sum + countBookmarksInTree(node.children);
     }, 0);
 
+export type FolderMoveOption = {
+    id: string;
+    label: string;
+};
+
+const isContainerNode = (node: BookmarkNode) =>
+    node.nodeType === 'root' || node.nodeType === 'folder' || Boolean(node.children);
+
+export const collectFolderMoveOptions = (
+    nodes: BookmarkNode[],
+    ancestorTitles: string[] = []
+): FolderMoveOption[] => {
+    const options: FolderMoveOption[] = [];
+
+    nodes.forEach((node) => {
+        if (node.isSeparator || !isContainerNode(node)) return;
+
+        const title = node.title.trim() || 'Untitled Folder';
+        const label = [...ancestorTitles, title].join(' / ');
+        options.push({ id: node.id, label });
+
+        if (node.children?.length) {
+            options.push(...collectFolderMoveOptions(node.children, [...ancestorTitles, title]));
+        }
+    });
+
+    return options;
+};
+
+export const renameNodeTitleInTree = (
+    nodes: BookmarkNode[],
+    nodeId: string,
+    nextTitle: string
+): BookmarkNode[] => {
+    const trimmedTitle = nextTitle.trim();
+
+    return nodes.map((node) => {
+        if (node.id === nodeId && !node.isSeparator) {
+            if (!trimmedTitle || trimmedTitle === node.title) return node;
+            const isBookmark = Boolean(node.url);
+            return {
+                ...node,
+                title: trimmedTitle,
+                // Bookmark titles are journaled against originalTitle on apply, so a
+                // rename must set the new title without clobbering the pre-edit value.
+                ...(isBookmark ? { originalTitle: node.originalTitle ?? node.title } : {}),
+            };
+        }
+
+        if (node.children) {
+            return { ...node, children: renameNodeTitleInTree(node.children, nodeId, nextTitle) };
+        }
+
+        return node;
+    });
+};
+
+export const moveBookmarkInTree = (
+    nodes: BookmarkNode[],
+    bookmarkId: string,
+    targetFolderId: string
+): BookmarkNode[] => {
+    let removedNode: BookmarkNode | undefined;
+
+    const removeNode = (list: BookmarkNode[]): BookmarkNode[] =>
+        list.reduce<BookmarkNode[]>((acc, node) => {
+            if (node.id === bookmarkId && node.url) {
+                removedNode = node;
+                return acc;
+            }
+            if (node.children) {
+                acc.push({ ...node, children: removeNode(node.children) });
+                return acc;
+            }
+            acc.push(node);
+            return acc;
+        }, []);
+
+    const withoutNode = removeNode(nodes);
+    if (!removedNode) return nodes;
+
+    let inserted = false;
+    const insertNode = (list: BookmarkNode[]): BookmarkNode[] =>
+        list.map((node) => {
+            if (inserted) return node;
+            if (node.id === targetFolderId && isContainerNode(node)) {
+                inserted = true;
+                return { ...node, children: [...(node.children || []), removedNode as BookmarkNode] };
+            }
+            if (node.children) {
+                return { ...node, children: insertNode(node.children) };
+            }
+            return node;
+        });
+
+    const withNode = insertNode(withoutNode);
+    // Target folder id didn't match anything in the tree — leave the original
+    // tree untouched rather than silently dropping the bookmark.
+    return inserted ? withNode : nodes;
+};
+
 export const summarizeStructure = (nodes: BookmarkNode[]) => {
     let folders = 0;
     let bookmarks = 0;

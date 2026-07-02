@@ -87,6 +87,53 @@ describe('buildStructurePreview', () => {
         });
     });
 
+    it('surfaces top-3 cluster keywords and flags the farthest bookmarks as low confidence', () => {
+        const assignments = Array.from({ length: 6 }, (_, index) => ({
+            cluster_id: 'child-cluster',
+            bookmark_id: `bookmark-${index}`,
+            distance_to_centroid: index, // 0..5, bookmark-5 is farthest
+            bookmarks: {
+                title: `Doc ${index}`,
+                url: `https://example.com/doc-${index}`,
+                chrome_id: `chrome-${index}`,
+            },
+        }));
+
+        const result = buildStructurePreview({
+            data: {
+                clusters: [
+                    { id: 'root-cluster', name: 'Reading', parent_id: null },
+                    {
+                        id: 'child-cluster',
+                        name: 'Docs',
+                        parent_id: 'root-cluster',
+                        keywords: ['docs', 'reading', 'guides', 'extra', 'more'],
+                    },
+                ],
+                assignments,
+            },
+            availableRoots: ['Bookmarks Bar', 'Other Bookmarks'],
+            bookmarkRootMap: Object.fromEntries(
+                assignments.map((assignment) => [assignment.bookmarks.chrome_id, 'Bookmarks Bar'])
+            ),
+            bookmarkPreferredRootMap: {},
+            overflowBookmarks: [],
+            originalTree: [],
+            defaultRootTitle: 'Other Bookmarks',
+        });
+
+        const docsFolder = result.rootNodes[0].children?.[0].children?.[0];
+        expect(docsFolder?.keywords).toEqual(['docs', 'reading', 'guides']);
+
+        const bookmarkNodes = docsFolder?.children ?? [];
+        const lowConfidenceIds = bookmarkNodes
+            .filter((node) => node.lowConfidence)
+            .map((node) => node.chromeId)
+            .sort();
+        expect(lowConfidenceIds).toEqual(['chrome-3', 'chrome-4', 'chrome-5']);
+        expect(bookmarkNodes.find((node) => node.chromeId === 'chrome-0')?.lowConfidence).toBeUndefined();
+    });
+
     it('keeps overflow bookmarks under Other Bookmarks with a badge', () => {
         const result = buildStructurePreview({
             data: { clusters: [], assignments: [] },

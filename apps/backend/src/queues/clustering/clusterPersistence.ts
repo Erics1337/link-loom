@@ -34,6 +34,7 @@ export const fetchUserBookmarkVectorRows = async (
             `
             )
             .eq('user_id', userId)
+            .order('id', { ascending: true })
             .range(from, from + size - 1);
 
         if (error) {
@@ -65,10 +66,66 @@ export const fetchUserBookmarkVectorRows = async (
     return { status: 'ok', rows: userBookmarks };
 };
 
+/** Bookmark ids whose folder placement was manually confirmed and must be
+ * left out of this run's clustering — the algorithm never sees or moves them. */
+export const fetchPinnedBookmarkIds = async (
+    userId: string,
+    log: (msg: string) => void
+): Promise<Set<string>> => {
+    const pinned = new Set<string>();
+    let from = 0;
+    const size = 1000;
+
+    while (true) {
+        const { data, error } = await supabase
+            .from('cluster_assignments')
+            .select('bookmark_id, bookmarks!inner(user_id)')
+            .eq('is_pinned', true)
+            .eq('bookmarks.user_id', userId)
+            .range(from, from + size - 1);
+
+        if (error) {
+            log(`Error fetching pinned bookmark ids: ${JSON.stringify(error)}`);
+            return pinned;
+        }
+
+        if (!data || data.length === 0) break;
+
+        for (const row of data as Array<{ bookmark_id: string }>) {
+            pinned.add(row.bookmark_id);
+        }
+
+        if (data.length < size) break;
+        from += size;
+    }
+
+    return pinned;
+};
+
+/** Clears assignments for everything except pinned bookmarks, then prunes
+ * clusters left with zero assignments — a scoped version of the old
+ * clear_user_ingest_structure that leaves pinned placements untouched. */
+export const clearUnpinnedAssignmentsAndPruneClusters = async (
+    userId: string,
+    log: (msg: string) => void
+): Promise<boolean> => {
+    const { error } = await supabase.rpc('clear_unpinned_cluster_assignments', {
+        p_user_id: userId
+    });
+
+    if (error) {
+        log(`Error clearing unpinned cluster assignments: ${JSON.stringify(error)}`);
+        return false;
+    }
+
+    return true;
+};
+
 export const createCluster = async (
     userId: string,
     parentId: string | null,
     name: string,
+    keywords: string[],
     log: (msg: string) => void
 ): Promise<string | null> => {
     const { data: newCluster, error } = await supabase
@@ -76,7 +133,8 @@ export const createCluster = async (
         .insert({
             user_id: userId,
             name,
-            parent_id: parentId
+            parent_id: parentId,
+            keywords: keywords.length > 0 ? keywords : null
         })
         .select('id')
         .single();
@@ -107,7 +165,8 @@ export type AssignBookmarksResult = {
 export const assignBookmarksToCluster = async (
     bookmarkIds: string[],
     clusterId: string,
-    log: (msg: string) => void
+    log: (msg: string) => void,
+    distanceById?: Map<string, number>
 ): Promise<AssignBookmarksResult> => {
     const uniqueBookmarkIds = Array.from(new Set(bookmarkIds));
 
@@ -135,7 +194,10 @@ export const assignBookmarksToCluster = async (
         );
         const assignments = batchBookmarkIds.map((bookmarkId) => ({
             cluster_id: clusterId,
-            bookmark_id: bookmarkId
+            bookmark_id: bookmarkId,
+            ...(distanceById?.has(bookmarkId)
+                ? { distance_to_centroid: distanceById.get(bookmarkId) }
+                : {})
         }));
 
         const { error } = await supabase

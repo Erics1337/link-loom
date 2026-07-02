@@ -13,6 +13,7 @@ import {
     buildChromeBookmarkApplyPlan,
     clearChromeApplyJournal,
     ChromeApplyJournal,
+    ChromeApplyResult,
     formatChromeApplyPlanPreview,
     loadActiveChromeApplyJournal,
     resumeChromeBookmarkApplyJournal,
@@ -22,6 +23,7 @@ import {
     clearPersistedOverflowBookmarks,
     ScannedBookmark
 } from '../lib/processingSession';
+import { StructureClient } from '../lib/structureClient';
 import {
     AppStatus,
     BACKEND_UNAVAILABLE_MESSAGE,
@@ -33,11 +35,29 @@ type UseChromeApplyArgs = {
     canSaveCloudSnapshots: boolean;
     userId: string;
     clusters: BookmarkNode[];
+    structureClient: StructureClient;
     overflowBookmarksRef: MutableRefObject<ScannedBookmark[]>;
     clusterRecoveryTriggered: MutableRefObject<boolean>;
     saveCurrentCloudSnapshot: () => Promise<unknown>;
     setStatus: Dispatch<SetStateAction<AppStatus>>;
     setErrorMessage: Dispatch<SetStateAction<string | null>>;
+};
+
+// Best-effort: tells the backend which Chrome folder each cluster became so
+// the next ingest can detect manual moves against a real folder id. Never
+// blocks or fails the apply flow — a missed confirm just delays pin-detection
+// until the next successful Apply.
+const confirmApplyFolderMappings = (
+    structureClient: StructureClient,
+    userId: string,
+    applyResult: ChromeApplyResult
+) => {
+    if (!userId || applyResult.folderChromeIdsByClusterId.length === 0) return;
+    structureClient
+        .confirmApply(userId, applyResult.folderChromeIdsByClusterId)
+        .catch((error) =>
+            console.error('[ApplyChanges] Failed to confirm folder mappings', error)
+        );
 };
 
 export type ChromeApplyRecoveryState = {
@@ -58,6 +78,7 @@ export const useChromeApply = ({
     canSaveCloudSnapshots,
     userId,
     clusters,
+    structureClient,
     overflowBookmarksRef,
     clusterRecoveryTriggered,
     saveCurrentCloudSnapshot,
@@ -109,6 +130,7 @@ export const useChromeApply = ({
         setStatus('weaving');
         try {
             const resumeResult = await resumeChromeBookmarkApplyJournal(journal);
+            confirmApplyFolderMappings(structureClient, userId, resumeResult);
             if (resumeResult.shouldWarnAboutPartialApply) {
                 setActiveJournal(await loadActiveChromeApplyJournal());
                 setRecoveryMessage({
@@ -138,7 +160,7 @@ export const useChromeApply = ({
         } finally {
             setIsResolvingJournal(false);
         }
-    }, [activeJournal, getRecoveredStatus, setStatus]);
+    }, [activeJournal, getRecoveredStatus, setStatus, structureClient, userId]);
 
     const rollbackActiveJournal = useCallback(async () => {
         const journal = activeJournal || (await loadActiveChromeApplyJournal());
@@ -149,7 +171,7 @@ export const useChromeApply = ({
         }
 
         const confirmed = window.confirm(
-            'Roll back the unfinished bookmark apply? Link Loom will undo the recorded changes from this journal. This cannot restore deleted folder contents unless a Cloud Snapshot has them.'
+            'Roll back the unfinished bookmark apply? Link Loom will undo the recorded changes from this journal, including restoring deleted folders from their journal snapshots.'
         );
         if (!confirmed) return;
 
@@ -251,6 +273,7 @@ Continue without a Cloud Snapshot?`
             }
 
             const applyResult = await applyChromeBookmarkPlan(applyPlan);
+            confirmApplyFolderMappings(structureClient, userId, applyResult);
 
             if (applyResult.shouldWarnAboutPartialApply) {
                 setActiveJournal(await loadActiveChromeApplyJournal());
@@ -270,7 +293,7 @@ Continue without a Cloud Snapshot?`
             overflowBookmarksRef.current = [];
 
             console.log(
-                `[ApplyChanges] Complete! Created folders: ${applyResult.createdFolderCount}, Moved: ${applyResult.movedCount}, Renamed: ${applyResult.renamedCount}, Deleted: ${applyResult.deletedCount}, Skipped: ${applyResult.skippedCount}, Folder failures: ${applyResult.folderCreateFailures}`
+                `[ApplyChanges] Complete! Created folders: ${applyResult.createdFolderCount}, Moved: ${applyResult.movedCount}, Renamed: ${applyResult.renamedCount}, Deleted: ${applyResult.deletedCount}, Rescued to Unorganized: ${applyResult.rescuedCount}, Skipped: ${applyResult.skippedCount}, Folder failures: ${applyResult.folderCreateFailures}`
             );
             clusterRecoveryTriggered.current = false;
             setErrorMessage(null);
@@ -314,6 +337,7 @@ Continue without a Cloud Snapshot?`
         saveCurrentCloudSnapshot,
         setErrorMessage,
         setStatus,
+        structureClient,
         userId
     ]);
 

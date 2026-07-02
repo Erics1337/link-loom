@@ -204,8 +204,28 @@ describe('chrome bookmark apply plan', () => {
                 ?.title
         ).toBe('Docs');
         expect(chromeMock.records.has('old-folder')).toBe(false);
-        expect(chromeMock.api.getSubTree).not.toHaveBeenCalled();
         expect(await loadActiveChromeApplyJournal()).toBeNull();
+    });
+
+    it('reports the Chrome folder id created for each cluster-tagged folder node', async () => {
+        stubChromeBookmarks();
+
+        const plan = await buildBookmarksBarPlan([
+            {
+                id: 'cluster-folder',
+                title: 'Docs',
+                nodeType: 'folder' as const,
+                clusterId: 'cluster-abc',
+                children: [bookmarkNode()]
+            }
+        ]);
+        const result = await applyChromeBookmarkPlan(plan);
+
+        expect(result.folderChromeIdsByClusterId).toHaveLength(1);
+        expect(result.folderChromeIdsByClusterId[0]).toMatchObject({
+            clusterId: 'cluster-abc'
+        });
+        expect(result.folderChromeIdsByClusterId[0].chromeFolderId).toMatch(/^created-/);
     });
 
     it('warns, leaves existing folders in place, and keeps the journal when a bookmark cannot be moved', async () => {
@@ -411,7 +431,7 @@ describe('chrome bookmark apply plan', () => {
         expect(await loadActiveChromeApplyJournal()).toBeNull();
     });
 
-    it('rolls back an applied cleanup delete from compact target metadata', async () => {
+    it('rescues un-planned root bookmarks into Unorganized instead of deleting them', async () => {
         const chromeMock = stubChromeBookmarks();
         chromeMock.records.set('stale-bookmark', {
             id: 'stale-bookmark',
@@ -419,27 +439,103 @@ describe('chrome bookmark apply plan', () => {
             title: 'Stale Bookmark',
             url: 'https://stale.example'
         });
+
+        const plan = await buildDocsPlan();
+        const result = await applyChromeBookmarkPlan(plan);
+
+        expect(result.rescuedCount).toBe(1);
+        const rescued = chromeMock.records.get('stale-bookmark');
+        expect(rescued).toBeDefined();
+        const rescueFolder = chromeMock.records.get(rescued!.parentId);
+        expect(rescueFolder).toMatchObject({
+            parentId: '1',
+            title: 'Unorganized'
+        });
+        expect(chromeMock.api.remove).not.toHaveBeenCalledWith(
+            'stale-bookmark'
+        );
+        expect(await loadActiveChromeApplyJournal()).toBeNull();
+    });
+
+    it('rescues bookmarks still inside a deleted folder into Unorganized', async () => {
+        const chromeMock = stubChromeBookmarks();
+        chromeMock.records.set('orphan-1', {
+            id: 'orphan-1',
+            parentId: 'old-folder',
+            title: 'Orphaned Bookmark',
+            url: 'https://orphan.example'
+        });
+
+        const plan = await buildDocsPlan();
+        const result = await applyChromeBookmarkPlan(plan);
+
+        expect(result.rescuedCount).toBe(1);
+        expect(result.deletedCount).toBe(1);
+        expect(chromeMock.records.has('old-folder')).toBe(false);
+        const orphan = chromeMock.records.get('orphan-1');
+        expect(orphan).toBeDefined();
+        expect(chromeMock.records.get(orphan!.parentId)).toMatchObject({
+            parentId: '1',
+            title: 'Unorganized'
+        });
+        expect(await loadActiveChromeApplyJournal()).toBeNull();
+    });
+
+    it('restores deleted folder subtrees and rescued bookmarks on rollback', async () => {
+        const chromeMock = stubChromeBookmarks();
+        chromeMock.records.set('stale-folder', {
+            id: 'stale-folder',
+            parentId: '1',
+            title: 'Stale Folder'
+        });
+        chromeMock.records.set('nested-folder', {
+            id: 'nested-folder',
+            parentId: 'old-folder',
+            title: 'Nested'
+        });
+        chromeMock.records.set('orphan-1', {
+            id: 'orphan-1',
+            parentId: 'nested-folder',
+            title: 'Orphaned Bookmark',
+            url: 'https://orphan.example'
+        });
+        // First cleanup delete (stale-folder) fails so the journal survives.
         chromeMock.api.removeTree.mockRejectedValueOnce(
             new Error('cleanup failed')
         );
 
         const plan = await buildDocsPlan();
+        const result = await applyChromeBookmarkPlan(plan);
 
-        await applyChromeBookmarkPlan(plan);
-        expect(chromeMock.records.has('stale-bookmark')).toBe(false);
+        expect(result.rescuedCount).toBe(1);
+        expect(chromeMock.records.has('old-folder')).toBe(false);
+        expect(chromeMock.records.has('nested-folder')).toBe(false);
+        expect(chromeMock.records.has('orphan-1')).toBe(true);
+
         const journal = await loadActiveChromeApplyJournal();
         expect(journal).not.toBeNull();
-
         await rollbackChromeBookmarkApplyJournal(journal!);
 
-        expect(Array.from(chromeMock.records.values())).toContainEqual(
-            expect.objectContaining({
-                parentId: '1',
-                title: 'Stale Bookmark',
-                url: 'https://stale.example'
-            })
+        const records = Array.from(chromeMock.records.values());
+        const restoredOldFolder = records.find(
+            (record) => record.title === 'Old Folder' && record.parentId === '1'
         );
-        expect(chromeMock.api.getSubTree).not.toHaveBeenCalled();
+        expect(restoredOldFolder).toBeDefined();
+        const restoredNested = records.find(
+            (record) =>
+                record.title === 'Nested' &&
+                record.parentId === restoredOldFolder!.id
+        );
+        expect(restoredNested).toBeDefined();
+        expect(chromeMock.records.get('orphan-1')?.parentId).toBe(
+            restoredNested!.id
+        );
+        expect(chromeMock.records.get('chrome-1')?.parentId).toBe(
+            restoredOldFolder!.id
+        );
+        expect(
+            records.some((record) => record.title === 'Unorganized')
+        ).toBe(false);
         expect(await loadActiveChromeApplyJournal()).toBeNull();
     });
 

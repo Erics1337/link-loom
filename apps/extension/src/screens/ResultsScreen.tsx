@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BookmarkTree, BookmarkNode } from '../components/BookmarkTree';
-import { Check, Settings, Sparkles } from 'lucide-react';
+import { Check, Search, Settings, Sparkles, X } from 'lucide-react';
+import { BookmarkSearchResult } from '../lib/structureClient';
 import { ScreenHeader } from './ScreenHeader';
 
 interface ResultsScreenProps {
@@ -22,6 +23,10 @@ interface ResultsScreenProps {
     isScanningDeadLinks: boolean;
     onApply: () => void;
     onBack: () => void;
+    onSearch: (query: string) => Promise<BookmarkSearchResult[]>;
+    onRenameNode: (nodeId: string, nextTitle: string) => void;
+    onMoveBookmark: (bookmarkId: string, targetFolderId: string) => void;
+    backupEnabled: boolean;
     recoveryCard?: React.ReactNode;
 }
 
@@ -41,9 +46,41 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
     isScanningDeadLinks,
     onApply,
     onBack,
+    onSearch,
+    onRenameNode,
+    onMoveBookmark,
+    backupEnabled,
     recoveryCard
 }) => {
     const [expandAll, setExpandAll] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState<
+        BookmarkSearchResult[] | null
+    >(null);
+    const [isSearching, setIsSearching] = useState(false);
+    const [searchError, setSearchError] = useState<string | null>(null);
+
+    const runSearch = async () => {
+        const query = searchQuery.trim();
+        if (!query || isSearching) return;
+        setIsSearching(true);
+        setSearchError(null);
+        try {
+            setSearchResults(await onSearch(query));
+        } catch (error) {
+            setSearchError(
+                error instanceof Error ? error.message : 'Search failed.'
+            );
+        } finally {
+            setIsSearching(false);
+        }
+    };
+
+    const clearSearch = () => {
+        setSearchQuery('');
+        setSearchResults(null);
+        setSearchError(null);
+    };
     const requirePro = (action: () => void) => {
         if (!isPremium) {
             onUpgrade();
@@ -120,14 +157,96 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                 </button>
             </div>
 
+            <form
+                className="flex items-center gap-2"
+                onSubmit={(event) => {
+                    event.preventDefault();
+                    void runSearch();
+                }}
+            >
+                <input
+                    type="text"
+                    className="field flex-1"
+                    placeholder="Search bookmarks by meaning…"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                />
+                <button
+                    type="submit"
+                    className="btn-icon"
+                    disabled={isSearching || !searchQuery.trim()}
+                    title="Semantic search"
+                >
+                    <Search size={16} />
+                </button>
+                {(searchResults !== null || searchError) && (
+                    <button
+                        type="button"
+                        className="btn-icon"
+                        onClick={clearSearch}
+                        title="Clear search"
+                    >
+                        <X size={16} />
+                    </button>
+                )}
+            </form>
+            {searchError && (
+                <p className="text-xs text-secondary">{searchError}</p>
+            )}
+
             <div className="card flex-1 min-h-0 overflow-hidden flex flex-col p-0">
                 <div className="p-2 border-b border-white-10 flex items-center justify-between">
-                    <span className="eyebrow">Proposed Structure</span>
+                    <span className="eyebrow">
+                        {searchResults !== null
+                            ? 'Search Results'
+                            : 'Proposed Structure'}
+                    </span>
                     <span className="badge-count">
-                        {organized < total ? `${organized}/${total}` : total}
+                        {searchResults !== null
+                            ? searchResults.length
+                            : organized < total
+                              ? `${organized}/${total}`
+                              : total}
                     </span>
                 </div>
-                <BookmarkTree nodes={clusters} defaultExpanded={expandAll} />
+                {searchResults !== null ? (
+                    <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                        {isSearching ? (
+                            <p className="text-sm text-secondary">
+                                Searching…
+                            </p>
+                        ) : searchResults.length === 0 ? (
+                            <p className="text-sm text-secondary">
+                                No matching bookmarks found.
+                            </p>
+                        ) : (
+                            searchResults.map((result) => (
+                                <a
+                                    key={result.id}
+                                    href={result.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="tree-node block"
+                                    title={result.url}
+                                >
+                                    <span className="block text-sm truncate">
+                                        {result.title || result.url}
+                                    </span>
+                                    <span className="block text-xs text-secondary truncate">
+                                        {result.description || result.url}
+                                    </span>
+                                </a>
+                            ))
+                        )}
+                    </div>
+                ) : (
+                    <BookmarkTree
+                        nodes={clusters}
+                        defaultExpanded={expandAll}
+                        onRenameNode={onRenameNode}
+                        onMoveBookmark={onMoveBookmark}
+                    />
+                )}
             </div>
 
             <div className="card space-y-1">
@@ -216,6 +335,11 @@ export const ResultsScreen: React.FC<ResultsScreenProps> = ({
                     <Check size={15} /> Apply Changes
                 </button>
             </div>
+            <p className="text-xs text-secondary">
+                {backupEnabled
+                    ? 'A Cloud Snapshot backup is saved before changes are applied — restore anytime from Backups.'
+                    : 'Sign in so a Cloud Snapshot backup is saved before changes are applied.'}
+            </p>
             {!isPremium && (
                 <p className="text-xs text-secondary">
                     <Sparkles size={12} /> Pro unlocks rename and dead-link

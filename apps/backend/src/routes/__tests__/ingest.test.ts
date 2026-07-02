@@ -121,7 +121,6 @@ describe('ingest routes', () => {
         const bookmarks = [{ url: 'https://example.com', title: 'Example' }];
         (ensureUserExists as any).mockResolvedValue(null);
         (getUserPremiumStatus as any).mockResolvedValue(true);
-        (supabase.rpc as any).mockResolvedValue({ error: null });
 
         await registerIngestRoutes(fastify as any);
         const handler = handlers.get('/ingest');
@@ -143,9 +142,12 @@ describe('ingest routes', () => {
                 namingTone: 'playful',
             })
         );
-        expect(supabase.rpc).toHaveBeenCalledWith('clear_user_ingest_structure', {
-            p_user_id: 'user-1',
-        });
+        // Ingest no longer wipes existing bookmarks/clusters before queueing —
+        // the worker diffs against what's already stored instead.
+        expect(supabase.rpc).not.toHaveBeenCalledWith(
+            'clear_user_ingest_structure',
+            expect.anything()
+        );
         expect(queues.ingest.add).toHaveBeenCalledWith(
             'ingest',
             expect.objectContaining({
@@ -156,6 +158,38 @@ describe('ingest routes', () => {
             }),
             { jobId: 'ingest-user-1-run-run-1' }
         );
+    });
+
+    it('records folder mappings for /confirm-apply/:userId', async () => {
+        const handlers = new Map<string, Function>();
+        const fastify = {
+            post: vi.fn((path: string, _options: unknown, handler: Function) => {
+                handlers.set(path, handler);
+            }),
+        };
+        const updateEq = vi.fn().mockResolvedValue({ error: null });
+        const updateChain = {
+            update: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ eq: updateEq }) }),
+        };
+        (supabase.from as any).mockReturnValue(updateChain);
+
+        await registerIngestRoutes(fastify as any);
+        const handler = handlers.get('/confirm-apply/:userId');
+        const response = await handler?.(
+            {
+                body: {
+                    folderChromeIds: [
+                        { clusterId: 'cluster-1', chromeFolderId: 'chrome-folder-1' },
+                    ],
+                },
+            },
+            {}
+        );
+
+        expect(response).toEqual({ status: 'ok' });
+        expect(updateChain.update).toHaveBeenCalledWith({
+            chrome_folder_id: 'chrome-folder-1',
+        });
     });
 
     it('marks the user cancelled and resets bookmark status for /cancel/:userId', async () => {

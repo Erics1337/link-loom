@@ -11,8 +11,23 @@ import { QueueJob, queues } from '../../lib/queue';
 vi.mock('../../db', () => ({
     supabase: {
         from: vi.fn(),
+        rpc: vi.fn(),
     }
 }));
+
+// Every test's `cluster_assignments` mock needs to answer both the pinned-id
+// lookup (fetchPinnedBookmarkIds) and the assignment insert; this is the
+// no-pinned-bookmarks default used everywhere except the pinning-specific test.
+const createClusterAssignmentsChain = (insert: any) => ({
+    select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+            eq: vi.fn(() => ({
+                range: vi.fn().mockResolvedValue({ data: [], error: null })
+            }))
+        }))
+    })),
+    insert
+});
 
 const { mockCreate, mockKmeans } = vi.hoisted(() => ({
     mockCreate: vi.fn(),
@@ -56,6 +71,7 @@ const createMockChain = (resolvedValue: any, explicitCount?: number) => {
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         in: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
         range: vi.fn().mockReturnThis(),
         insert: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue(resolvedValue),
@@ -75,6 +91,7 @@ describe('Clustering Worker', () => {
         (completePipelineRun as any).mockResolvedValue(undefined);
         (isUserCancelled as any).mockReturnValue(false);
         (shouldExecutePipelineClustering as any).mockResolvedValue(true);
+        (supabase.rpc as any).mockResolvedValue({ error: null });
     });
 
     const createMockJob = (data: any) => ({
@@ -87,11 +104,13 @@ describe('Clustering Worker', () => {
         const mockBookmarksChain = {
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
             range: vi.fn().mockResolvedValue({ data: [], error: null }),
         };
 
         (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'bookmarks') return mockBookmarksChain;
+            if (table === 'cluster_assignments') return createClusterAssignmentsChain(vi.fn());
             return {};
         });
 
@@ -113,6 +132,7 @@ describe('Clustering Worker', () => {
         const mockFetchChain = {
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
             range: vi.fn().mockResolvedValueOnce({
                 data: [
                     { id: 'bm-1', shared_links: { vector: [0.1, 0.2] } },
@@ -142,6 +162,7 @@ describe('Clustering Worker', () => {
                 const chain: any = {
                     select: vi.fn(() => chain),
                     eq: vi.fn(() => chain),
+                    order: vi.fn(() => chain),
                     in: vi.fn().mockResolvedValue({ count: 0, data: [] }),
                     range: mockFetchChain.range,
                     then: (resolve: any) => resolve({ count: 0 }) // For the initial inflight check
@@ -149,7 +170,7 @@ describe('Clustering Worker', () => {
                 return chain;
             }
             if (table === 'clusters') return mockClustersChain;
-            if (table === 'cluster_assignments') return mockClusterAssignChain;
+            if (table === 'cluster_assignments') return createClusterAssignmentsChain(mockClusterAssignChain.insert);
             return {};
         });
 
@@ -178,6 +199,7 @@ describe('Clustering Worker', () => {
                 const chain: any = {
                     select: vi.fn(() => chain),
                     eq: vi.fn(() => chain),
+                    order: vi.fn(() => chain),
                     in: vi.fn().mockResolvedValue({ count: 0, data: [] }),
                     range: vi.fn()
                         .mockResolvedValueOnce({
@@ -202,9 +224,7 @@ describe('Clustering Worker', () => {
             }
 
             if (table === 'cluster_assignments') {
-                return {
-                    insert: mockAssignmentInsert
-                };
+                return createClusterAssignmentsChain(mockAssignmentInsert);
             }
 
             return {};
@@ -213,8 +233,8 @@ describe('Clustering Worker', () => {
         await clusteringProcessor(job);
 
         expect(mockAssignmentInsert).toHaveBeenCalledWith([
-            { cluster_id: 'cluster-array-shape', bookmark_id: 'bm-1' },
-            { cluster_id: 'cluster-array-shape', bookmark_id: 'bm-2' }
+            expect.objectContaining({ cluster_id: 'cluster-array-shape', bookmark_id: 'bm-1' }),
+            expect.objectContaining({ cluster_id: 'cluster-array-shape', bookmark_id: 'bm-2' })
         ]);
         expect(recordPipelineClusteringCompleted).not.toHaveBeenCalled();
         expect(completePipelineRun).not.toHaveBeenCalled();
@@ -267,6 +287,7 @@ describe('Clustering Worker', () => {
                 const chain: any = {
                     select: vi.fn(() => chain),
                     eq: vi.fn(() => chain),
+                    order: vi.fn(() => chain),
                     in: vi.fn().mockResolvedValue({
                         data: bookmarkRows.map(({ id, title, description, url }) => ({
                             id,
@@ -299,9 +320,7 @@ describe('Clustering Worker', () => {
             }
 
             if (table === 'cluster_assignments') {
-                return {
-                    insert: mockAssignmentInsert
-                };
+                return createClusterAssignmentsChain(mockAssignmentInsert);
             }
 
             return {};
@@ -313,15 +332,18 @@ describe('Clustering Worker', () => {
         expect(mockClusterInsert).toHaveBeenCalledWith({
             user_id: 'user-merge',
             name: 'AI Workflows',
-            parent_id: null
+            parent_id: null,
+            keywords: ['workflow', 'automation', 'tools']
         });
         expect(mockAssignmentInsert).toHaveBeenCalledTimes(1);
         expect(mockAssignmentInsert).toHaveBeenCalledWith(
             expect.arrayContaining(
-                bookmarkRows.map((bookmark) => ({
-                    cluster_id: 'root-cluster',
-                    bookmark_id: bookmark.id
-                }))
+                bookmarkRows.map((bookmark) =>
+                    expect.objectContaining({
+                        cluster_id: 'root-cluster',
+                        bookmark_id: bookmark.id
+                    })
+                )
             )
         );
         expect(completePipelineRun).toHaveBeenCalledWith('run-merge', {
@@ -329,6 +351,67 @@ describe('Clustering Worker', () => {
             embeddedBookmarks: 24,
             assignedBookmarks: 24
         });
+    });
+
+    it('should not write any clusters or assignments when cancelled after the tree is built but before persistence', async () => {
+        const job = createMockJob({ userId: 'user-8', pipelineRunId: 'run-18', jobGeneration: 18 });
+
+        // Let every check up through the in-memory tree build report "not
+        // cancelled", then report cancellation right before persistence
+        // starts. If clusters/assignments were still written incrementally
+        // during the build (the pre-fix behavior), this would already have
+        // inserted a cluster row by now.
+        let cancelCheckCount = 0;
+        (isUserCancelled as any).mockImplementation(async () => {
+            cancelCheckCount += 1;
+            return cancelCheckCount > 4;
+        });
+
+        const mockFetchChain = {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            range: vi.fn()
+                .mockResolvedValueOnce({
+                    data: [
+                        { id: 'bm-1', shared_links: { vector: [0.1, 0.2] } },
+                        { id: 'bm-2', shared_links: { vector: [0.3, 0.4] } }
+                    ],
+                    error: null
+                })
+                .mockResolvedValueOnce({ data: [], error: null })
+        };
+
+        const mockClustersChain = {
+            insert: vi.fn().mockReturnThis(),
+            select: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: { id: 'cluster-should-not-be-created' }, error: null })
+        };
+        const mockClusterAssignChain = { insert: vi.fn().mockResolvedValue({ error: null }) };
+
+        (supabase.from as any).mockImplementation((table: string) => {
+            if (table === 'bookmarks') {
+                const chain: any = {
+                    select: vi.fn(() => chain),
+                    eq: vi.fn(() => chain),
+                    order: vi.fn(() => chain),
+                    in: vi.fn().mockResolvedValue({ count: 0, data: [] }),
+                    range: mockFetchChain.range,
+                    then: (resolve: any) => resolve({ count: 0 })
+                };
+                return chain;
+            }
+            if (table === 'clusters') return mockClustersChain;
+            if (table === 'cluster_assignments') return createClusterAssignmentsChain(mockClusterAssignChain.insert);
+            return {};
+        });
+
+        await clusteringProcessor(job);
+
+        expect(mockClustersChain.insert).not.toHaveBeenCalled();
+        expect(mockClusterAssignChain.insert).not.toHaveBeenCalled();
+        expect(recordPipelineClusteringCompleted).not.toHaveBeenCalled();
+        expect(completePipelineRun).not.toHaveBeenCalled();
     });
 
     it('should stop without completing the pipeline when fetch is cancelled mid-pagination', async () => {
@@ -341,6 +424,7 @@ describe('Clustering Worker', () => {
         const mockFetchChain = {
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
             range: vi.fn().mockResolvedValueOnce({
                 data: Array.from({ length: 1000 }, (_, i) => ({
                     id: `bm-${i}`,
@@ -352,6 +436,7 @@ describe('Clustering Worker', () => {
 
         (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'bookmarks') return mockFetchChain;
+            if (table === 'cluster_assignments') return createClusterAssignmentsChain(vi.fn());
             return {};
         });
 
@@ -367,6 +452,7 @@ describe('Clustering Worker', () => {
         const mockFetchChain = {
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
             range: vi.fn().mockResolvedValue({
                 data: null,
                 error: { message: 'connection refused' }
@@ -375,6 +461,7 @@ describe('Clustering Worker', () => {
 
         (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'bookmarks') return mockFetchChain;
+            if (table === 'cluster_assignments') return createClusterAssignmentsChain(vi.fn());
             return {};
         });
 
@@ -391,11 +478,13 @@ describe('Clustering Worker', () => {
         const mockFetchChain = {
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
             range: vi.fn().mockResolvedValue({ data: [], error: null }),
         };
 
         (supabase.from as any).mockImplementation((table: string) => {
             if (table === 'bookmarks') return mockFetchChain;
+            if (table === 'cluster_assignments') return createClusterAssignmentsChain(vi.fn());
             return {};
         });
 
@@ -403,6 +492,78 @@ describe('Clustering Worker', () => {
 
         expect(recordPipelineClusteringCompleted).toHaveBeenCalledWith('user-6', 16, undefined);
         expect(completePipelineRun).not.toHaveBeenCalled();
+    });
+
+    it('should exclude pinned bookmarks from clustering and count them as assigned', async () => {
+        const job = createMockJob({ userId: 'user-pin', pipelineRunId: 'run-pin', jobGeneration: 20 });
+        mockKmeans.mockReturnValue({ clusters: [0] });
+
+        const mockClustersChain = {
+            insert: vi.fn().mockReturnThis(),
+            select: vi.fn().mockReturnThis(),
+            single: vi.fn().mockResolvedValue({ data: { id: 'cluster-unpinned' }, error: null })
+        };
+        const mockAssignmentInsert = vi.fn().mockResolvedValue({ error: null });
+        const rpcCalls: any[] = [];
+        (supabase.rpc as any).mockImplementation((name: string, args: any) => {
+            rpcCalls.push([name, args]);
+            return Promise.resolve({ error: null });
+        });
+
+        (supabase.from as any).mockImplementation((table: string) => {
+            if (table === 'bookmarks') {
+                const chain: any = {
+                    select: vi.fn(() => chain),
+                    eq: vi.fn(() => chain),
+                    order: vi.fn(() => chain),
+                    range: vi.fn()
+                        .mockResolvedValueOnce({
+                            data: [
+                                { id: 'bm-pinned', shared_links: { vector: [0.9, 0.9] } },
+                                { id: 'bm-unpinned', shared_links: { vector: [0.1, 0.1] } }
+                            ],
+                            error: null
+                        })
+                        .mockResolvedValueOnce({ data: [], error: null }),
+                    in: vi.fn().mockResolvedValue({
+                        data: [{ title: 'Unpinned', description: '', url: 'https://example.com' }],
+                        error: null
+                    })
+                };
+                return chain;
+            }
+            if (table === 'cluster_assignments') {
+                return {
+                    select: vi.fn(() => ({
+                        eq: vi.fn(() => ({
+                            eq: vi.fn(() => ({
+                                range: vi.fn().mockResolvedValue({
+                                    data: [{ bookmark_id: 'bm-pinned' }],
+                                    error: null
+                                })
+                            }))
+                        }))
+                    })),
+                    insert: mockAssignmentInsert
+                };
+            }
+            if (table === 'clusters') return mockClustersChain;
+            return {};
+        });
+
+        await clusteringProcessor(job);
+
+        // clear_unpinned_cluster_assignments ran before clustering, leaving the pin alone.
+        expect(rpcCalls.some(([name]) => name === 'clear_unpinned_cluster_assignments')).toBe(true);
+
+        // Only the unpinned bookmark's vector reaches k-means.
+        expect(mockKmeans).not.toHaveBeenCalled(); // single item resolves to a leaf without splitting
+        expect(mockAssignmentInsert).toHaveBeenCalledWith([
+            expect.objectContaining({ cluster_id: 'cluster-unpinned', bookmark_id: 'bm-unpinned' })
+        ]);
+        expect(completePipelineRun).toHaveBeenCalledWith('run-pin', expect.objectContaining({
+            assignedBookmarks: 2 // 1 pinned (left untouched) + 1 newly assigned
+        }));
     });
 
     it('should skip orphaned clustering jobs when enqueue was not recorded', async () => {

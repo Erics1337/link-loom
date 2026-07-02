@@ -69,6 +69,9 @@ const App = () => {
         isScanningDeadLinks,
         applyChanges,
         applyRecovery,
+        searchBookmarks,
+        renameClusterNode,
+        moveClusterBookmark,
         setStatus,
         errorMessage
     } = useBookmarkWeaver(
@@ -193,6 +196,11 @@ const App = () => {
     };
 
     const handleStartOrganizing = async () => {
+        if (!isPermanentUser) {
+            setView('login');
+            return;
+        }
+
         await startWeaving();
     };
 
@@ -508,6 +516,10 @@ const App = () => {
                         isScanningDeadLinks={isScanningDeadLinks}
                         onApply={applyChanges}
                         onBack={() => setStatus('idle')}
+                        onSearch={searchBookmarks}
+                        onRenameNode={renameClusterNode}
+                        onMoveBookmark={moveClusterBookmark}
+                        backupEnabled={Boolean(authUser)}
                         recoveryCard={applyRecoveryCard}
                     />
                 );
@@ -518,7 +530,17 @@ const App = () => {
                             <p className="eyebrow">Complete</p>
                             <h1 className="screen-title mt-2">All Done</h1>
                             <p className="screen-copy mt-3">Your bookmarks have been organized.</p>
+                            {authUser && (
+                                <p className="screen-copy mt-2 text-xs text-secondary">
+                                    A backup was saved before applying — you can restore it anytime from Backups.
+                                </p>
+                            )}
                         </div>
+                        {authUser && (
+                            <button onClick={() => void handleOpenCloudSnapshots()} className="btn btn-secondary">
+                                View Backups
+                            </button>
+                        )}
                         <button onClick={() => setStatus('idle')} className="btn btn-primary">
                             Back to Home
                         </button>

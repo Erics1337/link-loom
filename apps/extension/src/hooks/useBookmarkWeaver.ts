@@ -4,7 +4,12 @@ import {
     ClusteringSettings,
     normalizeClusteringSettings
 } from '../lib/clusteringSettings';
-import { BookmarkStats, StructureAssignment } from '../lib/bookmarkStructure';
+import {
+    BookmarkStats,
+    StructureAssignment,
+    moveBookmarkInTree,
+    renameNodeTitleInTree
+} from '../lib/bookmarkStructure';
 import { CloudSnapshotClient } from '../lib/backupClient';
 import { StructureClient, WeavingProgress } from '../lib/structureClient';
 import { createEmptyProgress } from '../lib/processingSession';
@@ -220,11 +225,31 @@ export const useBookmarkWeaver = (
         deadLinkChromeIdsRef: scanSession.deadLinkChromeIdsRef
     });
 
+    const searchBookmarks = useCallback(
+        (query: string) => structureClient.search(query),
+        [structureClient]
+    );
+
+    const renameClusterNode = useCallback(
+        (nodeId: string, nextTitle: string) => {
+            setClusters((prev) => renameNodeTitleInTree(prev, nodeId, nextTitle));
+        },
+        [setClusters]
+    );
+
+    const moveClusterBookmark = useCallback(
+        (bookmarkId: string, targetFolderId: string) => {
+            setClusters((prev) => moveBookmarkInTree(prev, bookmarkId, targetFolderId));
+        },
+        [setClusters]
+    );
+
     const { applyChanges, applyRecovery } = useChromeApply({
         accountUserId,
         canSaveCloudSnapshots,
         userId,
         clusters,
+        structureClient,
         overflowBookmarksRef: scanSession.overflowBookmarksRef,
         clusterRecoveryTriggered: scanSession.clusterRecoveryTriggered,
         saveCurrentCloudSnapshot,
@@ -262,6 +287,9 @@ export const useBookmarkWeaver = (
         isScanningDeadLinks,
         applyChanges,
         applyRecovery,
+        searchBookmarks,
+        renameClusterNode,
+        moveClusterBookmark,
         setStatus,
         isPremium,
         errorMessage

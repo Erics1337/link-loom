@@ -131,6 +131,39 @@ const finalizeClusterName = (
     return emojiPrefixLabel(name, contextText, 'folder');
 };
 
+const CLUSTER_KEYWORD_LIMIT = 5;
+
+/**
+ * Top tokens across a group's bookmark titles/descriptions, ranked by
+ * frequency. Persisted as `clusters.keywords` for explainability (tooltip
+ * showing "why is this here?") and reused by the heuristic namer below.
+ */
+export const computeClusterKeywords = (
+    bookmarks: Array<{
+        title?: string | null;
+        description?: string | null;
+    }>,
+    limit = CLUSTER_KEYWORD_LIMIT
+): string[] => {
+    const tokenCounts = new Map<string, number>();
+
+    for (const bookmark of bookmarks) {
+        const combinedText =
+            `${bookmark.title ?? ''} ${bookmark.description ?? ''}`.toLowerCase();
+        const tokens = combinedText.match(/[a-z0-9]{3,}/g) ?? [];
+        for (const token of tokens) {
+            if (TITLE_TOKEN_STOP_WORDS.has(token)) continue;
+            tokenCounts.set(token, (tokenCounts.get(token) ?? 0) + 1);
+        }
+    }
+
+    return Array.from(tokenCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .filter(([, count]) => count >= 2)
+        .slice(0, limit)
+        .map(([token]) => token);
+};
+
 const generateHeuristicClusterName = (
     bookmarks: Array<{
         title?: string | null;
@@ -139,20 +172,10 @@ const generateHeuristicClusterName = (
     }>
 ) => {
     const domainCounts = new Map<string, number>();
-    const tokenCounts = new Map<string, number>();
-
     for (const bookmark of bookmarks) {
         const domain = extractPrimaryDomainLabel(bookmark.url);
         if (domain) {
             domainCounts.set(domain, (domainCounts.get(domain) ?? 0) + 1);
-        }
-
-        const combinedText =
-            `${bookmark.title ?? ''} ${bookmark.description ?? ''}`.toLowerCase();
-        const tokens = combinedText.match(/[a-z0-9]{3,}/g) ?? [];
-        for (const token of tokens) {
-            if (TITLE_TOKEN_STOP_WORDS.has(token)) continue;
-            tokenCounts.set(token, (tokenCounts.get(token) ?? 0) + 1);
         }
     }
 
@@ -166,12 +189,7 @@ const generateHeuristicClusterName = (
         return toTitleCase(dominantDomain[0]);
     }
 
-    const topTokens = Array.from(tokenCounts.entries())
-        .sort((a, b) => b[1] - a[1])
-        .filter(([, count]) => count >= 2)
-        .slice(0, 2)
-        .map(([token]) => token);
-
+    const topTokens = computeClusterKeywords(bookmarks, 2);
     if (topTokens.length > 0) {
         return toTitleCase(topTokens.join(' '));
     }
@@ -193,6 +211,11 @@ const getRetryAfterMs = (err: any): number | null => {
     return parsed * 1000;
 };
 
+export interface ClusterNamingResult {
+    name: string;
+    keywords: string[];
+}
+
 export async function generateClusterName(
     bookmarkIds: string[],
     settings: ClusteringSettings,
@@ -200,8 +223,10 @@ export async function generateClusterName(
     options: {
         sampledIds?: string[];
         suggestedName?: string;
+        /** When false, skip the OpenAI call and use heuristic naming only. */
+        allowAI?: boolean;
     } = {}
-): Promise<string> {
+): Promise<ClusterNamingResult> {
     const sampledIds =
         options.sampledIds && options.sampledIds.length > 0
             ? options.sampledIds.slice(0, CLUSTER_NAME_CONTEXT_SAMPLE_SIZE)
@@ -216,10 +241,10 @@ export async function generateClusterName(
         log(
             `Failed to load bookmarks for cluster naming (sampledIds=${sampledIds.length}): ${error.message}${error.code ? ` [${error.code}]` : ''}`
         );
-        return 'General';
+        return { name: 'General', keywords: [] };
     }
 
-    if (!bks || bks.length === 0) return 'General';
+    if (!bks || bks.length === 0) return { name: 'General', keywords: [] };
 
     const meaningfulBookmarks = bks.filter((bookmark) => {
         const title = (bookmark.title || '').toLowerCase().trim();
@@ -228,6 +253,7 @@ export async function generateClusterName(
 
     const bookmarkInfoList =
         meaningfulBookmarks.length > 0 ? meaningfulBookmarks : bks;
+    const keywords = computeClusterKeywords(bookmarkInfoList);
 
     const contextLines = bookmarkInfoList
         .map((bookmark) => {
@@ -263,7 +289,10 @@ export async function generateClusterName(
         ? cleanClusterName(options.suggestedName)
         : '';
     if (suggestedName && !GENERIC_RESPONSES.has(suggestedName.toLowerCase())) {
-        return finalizeClusterName(suggestedName, settings, contextText);
+        return {
+            name: finalizeClusterName(suggestedName, settings, contextText),
+            keywords
+        };
     }
 
     if (contextLines.length === 0) {
@@ -274,14 +303,18 @@ export async function generateClusterName(
                 url?: string | null;
             }>
         );
-        return finalizeClusterName(heuristicName, settings, '');
+        return {
+            name: finalizeClusterName(heuristicName, settings, ''),
+            keywords
+        };
     }
 
     const cacheKey = `${settings.namingTone}|${settings.useEmojiNames ? 'emoji' : 'plain'}|${contextLines.join('\n').toLowerCase()}`;
     const cachedName = clusterNameCache.get(cacheKey);
-    if (cachedName) return cachedName;
+    if (cachedName) return { name: cachedName, keywords };
 
     if (
+        options.allowAI === false ||
         bookmarkIds.length < CLUSTER_NAME_MIN_BOOKMARKS_FOR_AI ||
         !process.env.OPENAI_API_KEY
     ) {
@@ -298,7 +331,7 @@ export async function generateClusterName(
             contextText
         );
         clusterNameCache.set(cacheKey, finalized);
-        return finalized;
+        return { name: finalized, keywords };
     }
 
     const prompt = [
@@ -353,12 +386,12 @@ export async function generateClusterName(
                     contextText
                 );
                 clusterNameCache.set(cacheKey, finalizedFallback);
-                return finalizedFallback;
+                return { name: finalizedFallback, keywords };
             }
 
             const finalized = finalizeClusterName(name, settings, contextText);
             clusterNameCache.set(cacheKey, finalized);
-            return finalized;
+            return { name: finalized, keywords };
         } catch (e: any) {
             if (e.status === 429) {
                 retries++;
@@ -396,7 +429,10 @@ export async function generateClusterName(
                     url?: string | null;
                 }>
             );
-            return finalizeClusterName(heuristicName, settings, contextText);
+            return {
+                name: finalizeClusterName(heuristicName, settings, contextText),
+                keywords
+            };
         }
     }
 
@@ -407,5 +443,8 @@ export async function generateClusterName(
             url?: string | null;
         }>
     );
-    return finalizeClusterName(heuristicName, settings, contextText);
+    return {
+        name: finalizeClusterName(heuristicName, settings, contextText),
+        keywords
+    };
 }

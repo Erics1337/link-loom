@@ -101,6 +101,27 @@ export const recordPipelineRunStarted = async (
     }
 };
 
+export const recordPipelineIngestTotal = async (
+    userId: string,
+    jobGeneration: number | undefined,
+    pipelineRunId: string | undefined,
+    totalBookmarks: number
+) => {
+    const generation = await getPipelineRunGeneration(userId, pipelineRunId, jobGeneration);
+    if (typeof generation !== 'number') return;
+
+    const { error } = await supabase.rpc('record_user_pipeline_ingest_total', {
+        p_user_id: userId,
+        p_job_generation: generation,
+        p_total_bookmarks: totalBookmarks,
+    });
+
+    if (error) {
+        console.error(`[PIPELINE] Failed to record ingest total for user ${userId}`, error);
+        throw error;
+    }
+};
+
 export const recordPipelineIngestCompleted = async (
     userId: string,
     jobGeneration: number | undefined,

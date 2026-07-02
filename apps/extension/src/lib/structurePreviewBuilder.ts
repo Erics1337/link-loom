@@ -26,6 +26,23 @@ type BuildStructurePreviewInput = {
 const isBookmarkRootTitle = (value: string): value is BookmarkRootTitle =>
     ROOT_TITLES.includes(value as BookmarkRootTitle);
 
+// Folders below this size aren't flagged: with few bookmarks, the "farthest"
+// ones aren't meaningfully different from the rest of the folder.
+const LOW_CONFIDENCE_MIN_FOLDER_SIZE = 5;
+const LOW_CONFIDENCE_FLAG_COUNT = 3;
+
+const flagLowConfidenceBookmarks = (bookmarks: BookmarkNode[]) => {
+    if (bookmarks.length < LOW_CONFIDENCE_MIN_FOLDER_SIZE) return;
+
+    bookmarks
+        .filter((bookmark) => typeof bookmark.distanceToCentroid === 'number')
+        .sort((a, b) => (b.distanceToCentroid ?? 0) - (a.distanceToCentroid ?? 0))
+        .slice(0, LOW_CONFIDENCE_FLAG_COUNT)
+        .forEach((bookmark) => {
+            bookmark.lowConfidence = true;
+        });
+};
+
 const resolvePreviewRoot = (
     chromeId: string,
     availableRoots: BookmarkRootTitle[],
@@ -52,7 +69,7 @@ export const buildStructurePreview = ({
     originalTree,
     defaultRootTitle,
 }: BuildStructurePreviewInput) => {
-    const clusterDefinitions = new Map<string, { id: string; name: string; parentId: string | null }>();
+    const clusterDefinitions = new Map<string, { id: string; name: string; parentId: string | null; keywords: string[] }>();
     const childClusterIds = new Map<string | null, string[]>();
     const assignmentSummaries: StructureAssignment[] = [];
     const bookmarksByRootAndCluster = new Map<BookmarkRootTitle, Map<string, BookmarkNode[]>>();
@@ -62,6 +79,7 @@ export const buildStructurePreview = ({
             id: cluster.id,
             name: cluster.name,
             parentId: cluster.parent_id ?? null,
+            keywords: Array.isArray(cluster.keywords) ? cluster.keywords : [],
         });
         const parentKey = cluster.parent_id ?? null;
         const siblings = childClusterIds.get(parentKey);
@@ -103,9 +121,20 @@ export const buildStructurePreview = ({
             chromeId,
             nodeType: 'bookmark',
             rootTitle,
+            distanceToCentroid:
+                typeof assignment.distance_to_centroid === 'number'
+                    ? assignment.distance_to_centroid
+                    : undefined,
+            pinned: assignment.is_pinned === true,
         });
         rootAssignments.set(assignment.cluster_id, clusterBookmarks);
         bookmarksByRootAndCluster.set(rootTitle, rootAssignments);
+    });
+
+    bookmarksByRootAndCluster.forEach((clusterMap) => {
+        clusterMap.forEach((clusterBookmarks) => {
+            flagLowConfidenceBookmarks(clusterBookmarks);
+        });
     });
 
     const buildClusterNodeForRoot = (clusterId: string, rootTitle: BookmarkRootTitle): BookmarkNode | null => {
@@ -128,6 +157,8 @@ export const buildStructurePreview = ({
             parentId: cluster.parentId,
             nodeType: 'folder',
             rootTitle,
+            keywords: cluster.keywords.slice(0, 3),
+            clusterId,
         };
     };
 

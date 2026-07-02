@@ -51,6 +51,8 @@ export const registerStructureRoutes = async (fastify: FastifyInstance) => {
                             `
                         cluster_id,
                         bookmark_id,
+                        distance_to_centroid,
+                        is_pinned,
                         clusters!inner (user_id),
                         bookmarks (title, ai_title, description, url, chrome_id)
                     `

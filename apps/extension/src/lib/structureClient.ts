@@ -26,6 +26,14 @@ export type StatusResponse = WeavingProgress & {
     pipelineStatus?: 'running' | 'cancelled' | 'completed' | 'failed' | string | null;
 };
 
+export type BookmarkSearchResult = {
+    id: string;
+    url: string;
+    title: string;
+    description: string | null;
+    similarity: number;
+};
+
 type ClientOptions = {
     backendUrl: string;
     buildAuthHeaders: (tokenOverride?: string) => Record<string, string>;
@@ -57,7 +65,13 @@ export class StructureClient {
     }
 
     async ingest(input: {
-        bookmarks: Array<{ id: string; url: string; title: string }>;
+        bookmarks: Array<{
+            id: string;
+            url: string;
+            title: string;
+            parentId?: string;
+            parentTitle?: string;
+        }>;
         clusteringSettings: ClusteringSettings;
         accessToken?: string;
     }) {
@@ -68,6 +82,17 @@ export class StructureClient {
                 bookmarks: input.bookmarks,
                 clusteringSettings: input.clusteringSettings,
             }),
+        });
+    }
+
+    async confirmApply(
+        userId: string,
+        folderChromeIds: Array<{ clusterId: string; chromeFolderId: string }>
+    ) {
+        return fetch(`${this.options.backendUrl}/confirm-apply/${userId}`, {
+            method: 'POST',
+            headers: this.postHeaders(),
+            body: JSON.stringify({ folderChromeIds }),
         });
     }
 
@@ -107,6 +132,20 @@ export class StructureClient {
             signal,
             body: JSON.stringify({ clusteringSettings }),
         });
+    }
+
+    async search(query: string): Promise<BookmarkSearchResult[]> {
+        const response = await fetch(`${this.options.backendUrl}/search`, {
+            method: 'POST',
+            headers: this.postHeaders(),
+            body: JSON.stringify({ query }),
+        });
+        if (!response.ok) {
+            const body = await response.json().catch(() => null) as { error?: string } | null;
+            throw new Error(body?.error || `Search failed (${response.status})`);
+        }
+        const data = await response.json() as { results?: BookmarkSearchResult[] };
+        return data.results ?? [];
     }
 
     async cancel(userId: string) {

@@ -157,6 +157,10 @@ const applySafeRefinement = (
         groups[groupIndex].suggestedName = name;
     }
 
+    // Fully ordered (source desc, then target asc) and deduped by source so
+    // the same LLM response always produces the same merge sequence,
+    // regardless of the order the model listed the merges in.
+    const seenSources = new Set<number>();
     const mergeCandidates = [...(response.merges ?? [])]
         .map((merge) => ({
             source:
@@ -169,7 +173,12 @@ const applySafeRefinement = (
                     : -1
         }))
         .filter(({ source, target }) => source >= 0 && target >= 0 && source !== target)
-        .sort((a, b) => b.source - a.source);
+        .sort((a, b) => b.source - a.source || a.target - b.target)
+        .filter(({ source }) => {
+            if (seenSources.has(source)) return false;
+            seenSources.add(source);
+            return true;
+        });
 
     let appliedMerges = 0;
     for (const { source, target } of mergeCandidates) {
