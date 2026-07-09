@@ -18,7 +18,10 @@ const pruneExpiredBuckets = () => {
   });
 };
 
-const parsePositiveInt = (value: string | undefined, fallback: number): number => {
+const parsePositiveInt = (
+  value: string | undefined,
+  fallback: number,
+): number => {
   if (!value) return fallback;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -27,7 +30,7 @@ const parsePositiveInt = (value: string | undefined, fallback: number): number =
 const WINDOW_MS = parsePositiveInt(process.env.RATE_LIMIT_WINDOW_MS, 60000);
 const CLEANUP_INTERVAL_MS = Math.max(
   parsePositiveInt(process.env.RATE_LIMIT_CLEANUP_INTERVAL_MS, WINDOW_MS),
-  WINDOW_MS
+  WINDOW_MS,
 );
 
 let cleanupTimer: ReturnType<typeof setInterval> | null = null;

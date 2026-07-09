@@ -4,18 +4,21 @@ import { supabase } from "../db";
 
 export const DEFAULT_FREE_TIER_LIMIT = 500;
 
-const parsedFreeTierLimit = Number.parseInt(
-  process.env.FREE_TIER_LIMIT ?? `${DEFAULT_FREE_TIER_LIMIT}`,
-  10,
-);
+const rawFreeTierLimit = process.env.FREE_TIER_LIMIT;
+const parsedFreeTierLimit =
+  rawFreeTierLimit !== undefined && /^\d+$/.test(rawFreeTierLimit)
+    ? Number.parseInt(rawFreeTierLimit, 10)
+    : DEFAULT_FREE_TIER_LIMIT;
 
-export const FREE_TIER_LIMIT = Number.isNaN(parsedFreeTierLimit)
-  ? DEFAULT_FREE_TIER_LIMIT
-  : parsedFreeTierLimit;
+export const FREE_TIER_LIMIT =
+  parsedFreeTierLimit > 0 ? parsedFreeTierLimit : DEFAULT_FREE_TIER_LIMIT;
 
-const ALLOW_UNAUTHENTICATED_USER_ID =
-  process.env.ALLOW_UNAUTHENTICATED_USER_ID === "true" ||
-  Boolean(process.env.VITEST);
+export let ALLOW_UNAUTHENTICATED_USER_ID =
+  process.env.ALLOW_UNAUTHENTICATED_USER_ID === "true";
+
+export const setAllowUnauthenticatedForTesting = (value: boolean) => {
+  ALLOW_UNAUTHENTICATED_USER_ID = value;
+};
 
 const getBearerToken = (req: FastifyRequest) => {
   const header = req.headers?.authorization;
@@ -82,8 +85,9 @@ export const getUserPremiumStatus = async (userId: string) => {
     .maybeSingle();
 
   if (error) {
+    const redactedUserId = userId ? `${userId.slice(0, 8)}...` : "unknown";
     console.error(
-      `[BILLING] Failed to load premium status for user ${userId}`,
+      `[BILLING] Failed to load premium status for user ${redactedUserId}`,
       error,
     );
   }
