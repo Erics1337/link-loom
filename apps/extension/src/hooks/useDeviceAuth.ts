@@ -1,86 +1,95 @@
+import { useState, useEffect } from "react";
 
-import { useState, useEffect } from 'react';
-
-const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+const BACKEND_URL =
+  (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(
+    /\/$/,
+    "",
+  ) ?? "";
 const BACKEND_UNAVAILABLE_MESSAGE = BACKEND_URL
-    ? `Cannot reach Link Loom backend at ${BACKEND_URL}.`
-    : 'Link Loom backend is not configured. Please reinstall the extension.';
+  ? `Cannot reach Link Loom backend at ${BACKEND_URL}.`
+  : "Link Loom backend is not configured. Please reinstall the extension.";
 
-export type DeviceAuthStatus = 'checking' | 'authorized' | 'limit_reached' | 'error';
+export type DeviceAuthStatus =
+  | "checking"
+  | "authorized"
+  | "limit_reached"
+  | "error";
 
 const isFailedFetchError = (error: unknown) =>
-    error instanceof TypeError && error.message.toLowerCase().includes('failed to fetch');
+  error instanceof TypeError &&
+  error.message.toLowerCase().includes("failed to fetch");
 
 export const useDeviceAuth = (userId: string, accessToken?: string | null) => {
-    const [authStatus, setAuthStatus] = useState<DeviceAuthStatus>('checking');
-    const [isPremium] = useState(false);
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<DeviceAuthStatus>("checking");
+  const [isPremium] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-    useEffect(() => {
-        if (!userId) {
-            setAuthStatus('authorized');
-            setErrorMsg(null);
-            return;
+  useEffect(() => {
+    if (!userId) {
+      setAuthStatus("authorized");
+      setErrorMsg(null);
+      return;
+    }
+
+    const registerDevice = async () => {
+      try {
+        // 1. Get or Generate Device ID
+        const result = await chrome.storage.local.get(["deviceId"]);
+        let deviceId = result.deviceId;
+
+        if (!deviceId) {
+          deviceId = crypto.randomUUID();
+          await chrome.storage.local.set({ deviceId });
         }
 
-        const registerDevice = async () => {
-            try {
-                // 1. Get or Generate Device ID
-                const result = await chrome.storage.local.get(['deviceId']);
-                let deviceId = result.deviceId;
+        // 2. Register with Backend
+        const res = await fetch(`${BACKEND_URL}/register-device`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          },
+          body: JSON.stringify({
+            userId,
+            deviceId,
+            name: navigator.userAgent, // Simple name for now, simpler than parsing
+          }),
+        });
 
-                if (!deviceId) {
-                    deviceId = crypto.randomUUID();
-                    await chrome.storage.local.set({ deviceId });
-                }
+        if (res.status === 403) {
+          const data = await res.json();
+          setAuthStatus("limit_reached");
+          setErrorMsg(data.error);
+          return;
+        }
 
-                // 2. Register with Backend
-                const res = await fetch(`${BACKEND_URL}/register-device`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
-                    },
-                    body: JSON.stringify({
-                        userId,
-                        deviceId,
-                        name: navigator.userAgent // Simple name for now, simpler than parsing
-                    })
-                });
+        if (!res.ok) {
+          throw new Error("Registration failed");
+        }
 
-                if (res.status === 403) {
-                    const data = await res.json();
-                    setAuthStatus('limit_reached');
-                    setErrorMsg(data.error);
-                    return;
-                }
+        // 3. Check Premium Status (via status endpoint for efficiency or use the reg response)
+        // We'll check via status endpoint as it is already being polled/fetched in main app,
+        // but let's do a quick check here or expose a way to set it.
+        // Actually, useBookmarkWeaver calls /status.
+        // Let's just set authorized here.
+        setAuthStatus("authorized");
+      } catch (err: any) {
+        if (isFailedFetchError(err)) {
+          console.warn(
+            "[DeviceAuth] Backend not reachable; skipping device registration for now.",
+          );
+          setAuthStatus("error");
+          setErrorMsg(BACKEND_UNAVAILABLE_MESSAGE);
+          return;
+        }
+        console.error("[DeviceAuth] Error:", err);
+        setAuthStatus("error");
+        setErrorMsg(err.message);
+      }
+    };
 
-                if (!res.ok) {
-                    throw new Error('Registration failed');
-                }
+    registerDevice();
+  }, [accessToken, userId]);
 
-                // 3. Check Premium Status (via status endpoint for efficiency or use the reg response)
-                // We'll check via status endpoint as it is already being polled/fetched in main app, 
-                // but let's do a quick check here or expose a way to set it.
-                // Actually, useBookmarkWeaver calls /status. 
-                // Let's just set authorized here.
-                setAuthStatus('authorized');
-
-            } catch (err: any) {
-                if (isFailedFetchError(err)) {
-                    console.warn('[DeviceAuth] Backend not reachable; skipping device registration for now.');
-                    setAuthStatus('error');
-                    setErrorMsg(BACKEND_UNAVAILABLE_MESSAGE);
-                    return;
-                }
-                console.error('[DeviceAuth] Error:', err);
-                setAuthStatus('error');
-                setErrorMsg(err.message);
-            }
-        };
-
-        registerDevice();
-    }, [accessToken, userId]);
-
-    return { authStatus, isPremium, errorMsg, setAuthStatus };
+  return { authStatus, isPremium, errorMsg, setAuthStatus };
 };

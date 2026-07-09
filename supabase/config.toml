@@ -2,26 +2,27 @@ project_id = "link-loom"
 
 [api]
 enabled = true
-port = 54421
+port = 56421
 schemas = ["public", "storage", "graphql_public"]
 extra_search_path = ["public", "extensions"]
 max_rows = 1000
 
 [db]
-port = 54422
-shadow_port = 54420
+port = 56422
+shadow_port = 56420
+# Match hosted Supabase major version; avoid skipping versions on local reset.
 major_version = 15
 
 [studio]
 enabled = true
-port = 54423
-api_url = "http://127.0.0.1:54421"
+port = 56423
+api_url = "http://127.0.0.1:56421"
 
 [inbucket]
 enabled = true
-port = 54424
-smtp_port = 54425
-pop3_port = 54426
+port = 56424
+smtp_port = 56425
+pop3_port = 56426
 
 [storage]
 enabled = true
@@ -33,7 +34,17 @@ site_url = "http://localhost:3000"
 additional_redirect_urls = ["http://localhost:3000/auth/callback", "http://127.0.0.1:3000/auth/callback"]
 jwt_expiry = 3600
 enable_signup = true
+# Anonymous sign-in powers the no-account free bookmark organizing flow.
 enable_anonymous_sign_ins = true
+# Password rules apply to email/password sign-up only (not OAuth providers).
+minimum_password_length = 8
+password_requirements = "lower_upper_letters_digits"
+
+[auth.rate_limit]
+sign_in_sign_ups = 20
+token_refresh = 120
+token_verifications = 20
+anonymous_users = 30
 
 [auth.email]
 enable_signup = true
@@ -43,17 +54,17 @@ enable_confirmations = false
 enabled = true
 client_id = "env(SUPABASE_AUTH_GOOGLE_CLIENT_ID)"
 secret = "env(SUPABASE_AUTH_GOOGLE_CLIENT_SECRET)"
-redirect_uri = "http://127.0.0.1:54421/auth/v1/callback"
+redirect_uri = "http://127.0.0.1:56421/auth/v1/callback"
 
 [edge_runtime]
 enabled = true
 policy = "per_worker"
-inspector_port = 8083
+inspector_port = 56429
 
 [analytics]
 enabled = false
-port = 54427
-vector_port = 54428
+port = 56427
+vector_port = 56428
 
 # Redis Service Configuration
 # Note: Supabase CLI doesn't natively support adding arbitrary containers via this config.

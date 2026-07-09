@@ -1,16 +1,32 @@
-import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import dotenv from "dotenv";
 
-dotenv.config({ path: '.env.local' });
+dotenv.config({ path: ".env.local" });
 dotenv.config();
 
-const supabaseUrl = process.env.SUPABASE_URL!;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const isTestEnv =
+  process.env.NODE_ENV === "test" || Boolean(process.env.VITEST);
 
-// Use service role key for backend operations (bypasses RLS)
-if (!supabaseServiceRoleKey) {
-    console.error('WARNING: SUPABASE_SERVICE_ROLE_KEY is missing! RLS may block queries.');
-} else {
-    console.log('Supabase client initialized with service role key');
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !supabaseServiceRoleKey) {
+  if (isTestEnv) {
+    console.warn(
+      "[db] SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing; using test placeholders.",
+    );
+  } else {
+    throw new Error(
+      "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set before starting the backend.",
+    );
+  }
 }
-export const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+
+if (!isTestEnv) {
+  console.log("Supabase client initialized with service role key");
+}
+
+export const supabase: SupabaseClient = createClient(
+  supabaseUrl ?? "http://127.0.0.1:54321",
+  supabaseServiceRoleKey ?? "test-service-role-key",
+);

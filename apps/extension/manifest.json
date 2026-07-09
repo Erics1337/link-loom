@@ -19,8 +19,15 @@
     },
     "permissions": [
         "bookmarks",
-        "storage"
+        "storage",
+        "tabs"
     ],
+    "externally_connectable": {
+        "matches": [
+            "https://linkloom.org/*",
+            "https://*.linkloom.org/*"
+        ]
+    },
     "host_permissions": [
         "https://otmhunugbmpcllxmmtby.supabase.co/*",
         "https://linkloom.org/*",

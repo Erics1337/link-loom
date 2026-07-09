@@ -9,7 +9,7 @@ import {
   Monitor,
   History,
 } from "lucide-react";
-import Image from "next/image";
+import { BrandLogo } from "@/components/BrandLogo";
 import { unstable_noStore as noStore } from "next/cache";
 
 export default async function DashboardLayout({
@@ -48,15 +48,7 @@ export default async function DashboardLayout({
       {/* Sidebar */}
       <aside className="fixed z-10 flex h-full w-64 flex-col border-r border-ll-border bg-ll-deep/80 backdrop-blur-xl">
         <div className="flex items-center gap-2 border-b border-ll-border p-6 text-xl font-bold tracking-tight">
-          <div className="relative h-8 w-8">
-            <Image
-              src="/logo.png"
-              alt="Link Loom Logo"
-              fill
-              sizes="32px"
-              className="object-contain"
-            />
-          </div>
+          <BrandLogo size={32} priority />
           Link Loom
         </div>
 
@@ -80,7 +72,7 @@ export default async function DashboardLayout({
             className="flex items-center gap-3 rounded-ll-md px-4 py-3 text-ll-muted transition-colors hover:bg-ll-accent-soft hover:text-ll-text"
           >
             <History className="w-5 h-5" />
-            Structure Backups
+            Cloud Snapshots
           </a>
           <a
             href="/dashboard/devices"

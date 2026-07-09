@@ -3,6 +3,7 @@ CREATE OR REPLACE FUNCTION enforce_bookmark_limit()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
   v_is_premium BOOLEAN;

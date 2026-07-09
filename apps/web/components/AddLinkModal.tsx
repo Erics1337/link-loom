@@ -38,7 +38,9 @@ export function AddLinkModal() {
 
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload.error || payload.message || "Failed to add link.");
+        throw new Error(
+          payload.error || payload.message || "Failed to add link.",
+        );
       }
 
       setSuccess(true);
@@ -94,9 +96,7 @@ export function AddLinkModal() {
           {error && <Alert tone="danger">{error}</Alert>}
 
           {success && (
-            <Alert tone="success">
-              Link added successfully! Processing...
-            </Alert>
+            <Alert tone="success">Link added successfully! Processing...</Alert>
           )}
 
           <div className="flex justify-end gap-3 mt-8">
@@ -137,7 +137,9 @@ export function AddLinkModal() {
         Add Link
       </button>
 
-      {isMounted && modalContent ? createPortal(modalContent, document.body) : null}
+      {isMounted && modalContent
+        ? createPortal(modalContent, document.body)
+        : null}
     </>
   );
 }

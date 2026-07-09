@@ -1,0 +1,153 @@
+"use client";
+
+import { createClient } from "@/utils/supabase/client";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+
+const WAITLIST_MESSAGE =
+  "Sign up is currently waitlist-only. Please join the waitlist for early access.";
+
+const ALLOWED_EXTENSION_IDS = new Set(
+  (process.env.NEXT_PUBLIC_LINK_LOOM_EXTENSION_IDS ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean),
+);
+
+const isAllowedExtensionId = (extensionId: string) =>
+  ALLOWED_EXTENSION_IDS.has(extensionId);
+
+const getChromeRuntime = () => {
+  const chromeGlobal = globalThis as typeof globalThis & {
+    chrome?: {
+      runtime?: {
+        sendMessage: (...args: unknown[]) => void;
+        lastError?: { message?: string };
+      };
+    };
+  };
+
+  return chromeGlobal.chrome?.runtime ?? null;
+};
+
+export function ExtensionCompleteClient() {
+  const searchParams = useSearchParams();
+  const extId = searchParams.get("ext_id");
+  const nonce = searchParams.get("nonce");
+  const errorCode = searchParams.get("error");
+  const [message, setMessage] = useState("Finishing sign in…");
+
+  useEffect(() => {
+    if (!extId || !nonce) {
+      setMessage(
+        "Missing extension sign-in details. Close this tab and try again from the extension.",
+      );
+      return;
+    }
+
+    if (!isAllowedExtensionId(extId)) {
+      setMessage(
+        "Invalid extension ID. Close this tab and try again from the official Link Loom extension.",
+      );
+      return;
+    }
+
+    const runtime = getChromeRuntime();
+    if (!runtime) {
+      setMessage(
+        "Could not reach the Link Loom extension. Make sure it is installed, then try again.",
+      );
+      return;
+    }
+
+    if (errorCode === "waitlist_only") {
+      runtime.sendMessage(extId, {
+        type: "LINK_LOOM_EXTENSION_AUTH_ERROR",
+        nonce,
+        error: "waitlist_only",
+        message: WAITLIST_MESSAGE,
+      });
+      setMessage(WAITLIST_MESSAGE);
+      return;
+    }
+
+    let cancelled = false;
+
+    const finish = async () => {
+      try {
+        const supabase = createClient();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (cancelled) return;
+
+        if (!session) {
+          setMessage(
+            "No active session found. Close this tab and try again from the extension.",
+          );
+          runtime.sendMessage(extId, {
+            type: "LINK_LOOM_EXTENSION_AUTH_ERROR",
+            nonce,
+            error: "no_session",
+            message: "No active session found.",
+          });
+          return;
+        }
+
+        runtime.sendMessage(
+          extId,
+          {
+            type: "LINK_LOOM_EXTENSION_AUTH",
+            nonce,
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+            user: {
+              id: session.user.id,
+              email: session.user.email ?? null,
+            },
+          },
+          () => {
+            if (cancelled) return;
+
+            if (runtime.lastError) {
+              setMessage(
+                "Could not send your session to the extension. Make sure Link Loom is installed.",
+              );
+              return;
+            }
+
+            setMessage(
+              "Signed in. You can close this tab and return to the extension.",
+            );
+            window.setTimeout(() => window.close(), 1500);
+          },
+        );
+      } catch {
+        if (cancelled) return;
+
+        setMessage(
+          "Could not finish extension sign in. Close this tab and try again.",
+        );
+        runtime.sendMessage(extId, {
+          type: "LINK_LOOM_EXTENSION_AUTH_ERROR",
+          nonce,
+          error: "session_error",
+          message: "Could not finish extension sign in.",
+        });
+      }
+    };
+
+    void finish();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [errorCode, extId, nonce]);
+
+  return (
+    <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6 text-center">
+      <p className="text-sm text-ll-text-secondary">{message}</p>
+    </main>
+  );
+}

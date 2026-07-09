@@ -2,4 +2,5 @@
 ALTER TABLE bookmarks 
 ADD CONSTRAINT fk_bookmarks_content_hash 
 FOREIGN KEY (content_hash) 
-REFERENCES shared_links(id);
+REFERENCES shared_links(id)
+ON DELETE SET NULL;

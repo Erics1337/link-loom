@@ -6,7 +6,7 @@
     "test:e2e": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
-    "backend": "workspace:*"
+    "@supabase/supabase-js": "^2.38.4"
   },
   "devDependencies": {
     "@link-loom/tsconfig": "workspace:*",

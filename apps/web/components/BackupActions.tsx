@@ -5,7 +5,7 @@ import { Undo2, Trash2, Loader2 } from "lucide-react";
 import { createClient } from "@/utils/supabase/client";
 import { useRouter } from "next/navigation";
 
-export function BackupActions({
+export function CloudSnapshotActions({
   snapshotId,
   snapshotName,
 }: {
@@ -19,7 +19,7 @@ export function BackupActions({
   const handleRestore = async () => {
     if (
       !window.confirm(
-        `Are you sure you want to restore the structure snapshot "${snapshotName}"? Your current folder structure will be permanently deleted and replaced.`,
+        `Are you sure you want to restore the Cloud Snapshot "${snapshotName}"? Your current backend structure will be permanently deleted and replaced.`,
       )
     ) {
       return;
@@ -39,11 +39,11 @@ export function BackupActions({
 
       if (error) throw error;
 
-      alert("Snapshot restored successfully!");
+      alert("Cloud Snapshot restored successfully!");
       router.refresh();
     } catch (err: any) {
       console.error(err);
-      alert(`Failed to restore snapshot. ${err.message}`);
+      alert(`Failed to restore Cloud Snapshot. ${err.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -52,7 +52,7 @@ export function BackupActions({
   const handleDelete = async () => {
     if (
       !window.confirm(
-        `Are you sure you want to permanently delete the backup "${snapshotName}"?`,
+        `Are you sure you want to permanently delete the Cloud Snapshot "${snapshotName}"?`,
       )
     ) {
       return;
@@ -70,19 +70,19 @@ export function BackupActions({
       router.refresh();
     } catch (err: any) {
       console.error(err);
-      alert(`Failed to delete snapshot. ${err.message}`);
+      alert(`Failed to delete Cloud Snapshot. ${err.message}`);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2" aria-busy={isLoading}>
       <button
         onClick={handleRestore}
         disabled={isLoading}
         className="flex items-center gap-1.5 rounded-ll-md border border-ll-warning/30 bg-ll-warning/10 px-3 py-1.5 text-sm font-medium text-ll-warning transition-colors hover:bg-ll-warning/20 disabled:opacity-50"
-        title="Restore this structure"
+        title="Restore this Cloud Snapshot"
       >
         {isLoading ? (
           <Loader2 className="w-4 h-4 animate-spin" />
@@ -95,7 +95,7 @@ export function BackupActions({
         onClick={handleDelete}
         disabled={isLoading}
         className="flex h-8 w-8 items-center justify-center rounded-ll-md text-ll-danger transition-colors hover:bg-ll-danger/10 disabled:opacity-50"
-        title="Delete backup"
+        title="Delete Cloud Snapshot"
       >
         <Trash2 className="w-4 h-4" />
       </button>

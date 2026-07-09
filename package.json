@@ -6,9 +6,15 @@
     "dev": "./node_modules/.bin/turbo run dev",
     "lint": "./node_modules/.bin/turbo run lint",
     "test:e2e": "./node_modules/.bin/turbo run test:e2e",
+    "supabase:start": "supabase start",
+    "supabase:reset": "supabase db reset --local",
+    "test:supabase": "supabase test db",
+    "test:e2e:local-supabase": "cross-env BACKEND_E2E_USE_LOCAL_SUPABASE=true BACKEND_E2E_ENABLE_TEST_ENDPOINTS=true QUEUE_DRIVER=test pnpm --filter @link-loom/backend-e2e test:e2e",
+    "smoke:backend": "pnpm --filter backend smoke",
     "format": "prettier --write \"**/*.{ts,tsx,md}\""
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "turbo": "latest",
     "prettier": "^3.0.0"
   },

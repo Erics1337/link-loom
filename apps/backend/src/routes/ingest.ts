@@ -1,177 +1,369 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from "fastify";
 
-import { supabase } from '../db';
-import { clearUserCancelled, markUserCancelled } from '../lib/cancellation';
-import { normalizeClusteringSettings } from '../lib/clusteringSettings';
-import { queues } from '../lib/queue';
+import { supabase } from "../db";
 import {
-    ensureUserExists,
-    FREE_TIER_LIMIT,
-    getUserPremiumStatus,
-    requireRequestUserId,
-} from '../lib/userContext';
-import { errorResponseSchema, looseObjectBodySchema, userIdParamsSchema } from './schemas';
+  beginUserPipelineRun,
+  failPipelineRun,
+  markUserCancelled,
+} from "../lib/cancellation";
+import { normalizeClusteringSettings } from "../lib/clusteringSettings";
+import { recordPipelineRunStarted } from "../lib/pipelineCoordinator";
+import { queues } from "../lib/queue";
+import {
+  ensureUserExists,
+  FREE_TIER_LIMIT,
+  getUserPremiumStatus,
+  requireRequestUserId,
+} from "../lib/userContext";
+import {
+  authenticatedStatusResponseSchema,
+  errorResponseSchema,
+  statusOkResponseSchema,
+  userIdParamsSchema,
+} from "./schemas";
 
 type IngestBody = {
-    bookmarks?: any[];
-    clusteringSettings?: unknown;
+  bookmarks?: any[];
+  clusteringSettings?: unknown;
 };
 
-type CancelBody = {
-    clearAllQueues?: unknown;
+type ConfirmApplyBody = {
+  folderChromeIds?: Array<{ clusterId?: unknown; chromeFolderId?: unknown }>;
+};
+
+type PipelineRun = Awaited<ReturnType<typeof beginUserPipelineRun>>;
+
+const clusteringSettingsPropertySchema = {
+  type: "object",
+  additionalProperties: true,
+};
+
+const ingestBodySchema = {
+  type: "object",
+  required: ["bookmarks"],
+  additionalProperties: false,
+  properties: {
+    bookmarks: {
+      type: "array",
+      items: { type: "object", additionalProperties: true },
+    },
+    clusteringSettings: clusteringSettingsPropertySchema,
+  },
+};
+
+const triggerClusteringBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    clusteringSettings: clusteringSettingsPropertySchema,
+  },
+};
+
+const confirmApplyBodySchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    folderChromeIds: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["clusterId", "chromeFolderId"],
+        additionalProperties: false,
+        properties: {
+          clusterId: { type: "string", minLength: 1 },
+          chromeFolderId: { type: "string", minLength: 1 },
+        },
+      },
+    },
+  },
+};
+
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
+const failStartedPipelineRun = async (
+  logPrefix: string,
+  pipelineRun: PipelineRun,
+  enqueueError: unknown,
+) => {
+  console.error(
+    `${logPrefix} Failed to enqueue pipeline run ${pipelineRun.id} (generation=${pipelineRun.generation})`,
+    enqueueError,
+  );
+
+  try {
+    await failPipelineRun(pipelineRun.id, {
+      reason: "enqueue_failed",
+      generation: pipelineRun.generation,
+      error: getErrorMessage(enqueueError),
+    });
+  } catch (failError) {
+    console.error(
+      `${logPrefix} Failed to mark pipeline run ${pipelineRun.id} failed after enqueue error`,
+      failError,
+    );
+  }
 };
 
 export const registerIngestRoutes = async (fastify: FastifyInstance) => {
-    fastify.post('/ingest', {
-        schema: {
-            body: looseObjectBodySchema,
-            response: {
-                200: {
-                    type: 'object',
-                    required: ['status'],
-                    properties: {
-                        status: { type: 'string' },
-                    },
-                },
-                401: errorResponseSchema,
-                402: errorResponseSchema,
-                500: errorResponseSchema,
-            },
+  fastify.post(
+    "/ingest",
+    {
+      schema: {
+        body: ingestBodySchema,
+        response: {
+          ...statusOkResponseSchema,
+          401: errorResponseSchema,
+          400: errorResponseSchema,
+          402: errorResponseSchema,
+          500: errorResponseSchema,
         },
-    }, async (req, reply) => {
-        const userId = await requireRequestUserId(req, reply);
-        if (!userId) return reply;
-        const body = req.body as IngestBody;
-        const { bookmarks, clusteringSettings: rawClusteringSettings } = body;
-        const clusteringSettings = normalizeClusteringSettings(rawClusteringSettings);
-        console.log(
-            `[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId} (density=${clusteringSettings.folderDensity}, tone=${clusteringSettings.namingTone}, mode=${clusteringSettings.organizationMode}, emoji=${clusteringSettings.useEmojiNames})`
+      },
+    },
+    async (req, reply) => {
+      const userId = await requireRequestUserId(req, reply);
+      if (!userId) return reply;
+      const body = (req.body ?? {}) as IngestBody;
+      const { bookmarks, clusteringSettings: rawClusteringSettings } = body;
+      if (!Array.isArray(bookmarks)) {
+        return reply.code(400).send({ error: "Bookmarks must be an array" });
+      }
+      const clusteringSettings = normalizeClusteringSettings(
+        rawClusteringSettings,
+      );
+      console.log(
+        `[INGEST] Received ${bookmarks?.length ?? 0} bookmarks for user ${userId} (density=${clusteringSettings.folderDensity}, tone=${clusteringSettings.namingTone}, emoji=${clusteringSettings.useEmojiNames})`,
+      );
+      const userError = await ensureUserExists(userId);
+      if (userError) {
+        console.error("[INGEST] Failed to ensure user exists:", userError);
+        return reply.code(500).send({ error: "Failed to initialize user" });
+      }
+      const isPremium = await getUserPremiumStatus(userId);
+
+      if (!isPremium) {
+        const incomingCount = bookmarks?.length ?? 0;
+
+        if (incomingCount > FREE_TIER_LIMIT) {
+          console.log(
+            `[INGEST] User ${userId} exceeded free tier limit: incoming ${incomingCount} > ${FREE_TIER_LIMIT}`,
+          );
+          return reply.code(402).send({
+            error: "Bookmark limit exceeded",
+            message: `Free tier allows up to ${FREE_TIER_LIMIT} bookmarks stored in Link Loom. Import clears your existing bookmarks first, leaving 0 before import; this Chrome import contains ${incomingCount}.`,
+            limit: FREE_TIER_LIMIT,
+            current: 0,
+            attempted: incomingCount,
+            upgradeUrl: "/dashboard/billing",
+          });
+        }
+      }
+
+      let pipelineRun;
+      try {
+        pipelineRun = await beginUserPipelineRun(userId);
+        await recordPipelineRunStarted(
+          userId,
+          pipelineRun.generation,
+          bookmarks?.length ?? 0,
+          clusteringSettings,
         );
-        await clearUserCancelled(userId);
+      } catch (error) {
+        console.error(
+          `[INGEST] Failed to initialize pipeline run for user ${userId}`,
+          error,
+        );
+        return reply
+          .code(500)
+          .send({ error: "Failed to initialize ingest run" });
+      }
 
-        const userError = await ensureUserExists(userId);
-        if (userError) {
-            console.error('[INGEST] Failed to ensure user exists:', userError);
-            return reply.code(500).send({ error: 'Failed to initialize user' });
-        }
+      try {
+        await queues.ingest.add(
+          "ingest",
+          {
+            userId,
+            bookmarks,
+            clusteringSettings,
+            pipelineRunId: pipelineRun.id,
+          },
+          {
+            jobId: `ingest-${userId}-run-${pipelineRun.id || pipelineRun.generation}`,
+          },
+        );
+      } catch (error) {
+        await failStartedPipelineRun("[INGEST]", pipelineRun, error);
+        return reply.code(500).send({ error: "Failed to queue ingest run" });
+      }
+      console.log(`[INGEST] Queued ingest job for user ${userId}`);
+      return { status: "queued" };
+    },
+  );
 
-        const isPremium = await getUserPremiumStatus(userId);
-
-        if (!isPremium) {
-            const incomingCount = bookmarks?.length ?? 0;
-
-            if (incomingCount > FREE_TIER_LIMIT) {
-                const { count: existingCount } = await supabase
-                    .from('bookmarks')
-                    .select('*', { count: 'exact', head: true })
-                    .eq('user_id', userId);
-
-                const currentCount = existingCount ?? 0;
-                console.log(`[INGEST] User ${userId} exceeded free tier limit: incoming ${incomingCount} > ${FREE_TIER_LIMIT}`);
-                return reply.code(402).send({
-                    error: 'Bookmark limit exceeded',
-                    message: `Free tier allows up to ${FREE_TIER_LIMIT} bookmarks stored in Link Loom. You currently have ${currentCount} stored, and this Chrome import contains ${incomingCount}.`,
-                    limit: FREE_TIER_LIMIT,
-                    current: currentCount,
-                    attempted: incomingCount,
-                    upgradeUrl: '/dashboard/billing'
-                });
-            }
-        }
-
-        const { error: deleteBookmarksError } = await supabase
-            .from('bookmarks')
-            .delete()
-            .eq('user_id', userId);
-
-        if (deleteBookmarksError) {
-            console.warn(`[INGEST] Warning: Failed to clear old bookmarks for user ${userId}`, deleteBookmarksError);
-        }
-
-        const { error: deleteError } = await supabase
-            .from('clusters')
-            .delete()
-            .eq('user_id', userId);
-
-        if (deleteError) {
-            console.warn(`[INGEST] Warning: Failed to clear old clusters for user ${userId}`, deleteError);
-        } else {
-            console.log(`[INGEST] Cleared old clusters for user ${userId}`);
-        }
-
-        await queues.ingest.add('ingest', { userId, bookmarks, clusteringSettings });
-        console.log(`[INGEST] Queued ingest job for user ${userId}`);
-        return { status: 'queued' };
-    });
-
-    fastify.post('/trigger-clustering/:userId', {
-        schema: {
-            params: userIdParamsSchema,
-            body: looseObjectBodySchema,
-            response: {
-                200: {
-                    type: 'object',
-                    required: ['status'],
-                    properties: {
-                        status: { type: 'string' },
-                    },
-                },
-                401: errorResponseSchema,
-                403: errorResponseSchema,
-            },
+  fastify.post(
+    "/trigger-clustering/:userId",
+    {
+      schema: {
+        params: userIdParamsSchema,
+        body: triggerClusteringBodySchema,
+        response: {
+          ...authenticatedStatusResponseSchema,
+          400: errorResponseSchema,
         },
-    }, async (req, reply) => {
-        const userId = await requireRequestUserId(req, reply);
-        if (!userId) return reply;
-        const body = req.body as { clusteringSettings?: unknown };
-        const clusteringSettings = normalizeClusteringSettings(body?.clusteringSettings);
-        await clearUserCancelled(userId);
-        console.log(`[MANUAL] Triggering clustering for user ${userId}`);
-        await queues.clustering.add('cluster', { userId, clusteringSettings }, {
-            jobId: `cluster-${userId}-manual-${Date.now()}`
-        });
-        return { status: 'clustering_queued' };
-    });
+      },
+    },
+    async (req, reply) => {
+      const userId = await requireRequestUserId(req, reply);
+      if (!userId) return reply;
+      const body = (req.body ?? {}) as { clusteringSettings?: unknown };
+      const clusteringSettings = normalizeClusteringSettings(
+        body?.clusteringSettings,
+      );
+      const { count: bookmarkCount, error: bookmarkCountError } = await supabase
+        .from("bookmarks")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId);
 
-    fastify.post('/cancel/:userId', {
-        schema: {
-            params: userIdParamsSchema,
-            body: looseObjectBodySchema,
-            response: {
-                200: {
-                    type: 'object',
-                    required: ['status', 'jobsRemoved', 'failedToRemove', 'clearAllQueues'],
-                    properties: {
-                        status: { type: 'string' },
-                        jobsRemoved: { type: 'number' },
-                        failedToRemove: { type: 'number' },
-                        clearAllQueues: { type: 'boolean' },
-                    },
-                },
-                401: errorResponseSchema,
-                403: errorResponseSchema,
-                500: errorResponseSchema,
-            },
+      if (bookmarkCountError) {
+        console.error(
+          `[MANUAL] Failed to count bookmarks for user ${userId}`,
+          bookmarkCountError,
+        );
+        return reply
+          .code(500)
+          .send({ error: "Failed to initialize clustering run" });
+      }
+
+      let pipelineRun;
+      try {
+        pipelineRun = await beginUserPipelineRun(userId);
+        await recordPipelineRunStarted(
+          userId,
+          pipelineRun.generation,
+          bookmarkCount ?? 0,
+          clusteringSettings,
+        );
+      } catch (error) {
+        console.error(
+          `[MANUAL] Failed to initialize pipeline run for user ${userId}`,
+          error,
+        );
+        return reply
+          .code(500)
+          .send({ error: "Failed to initialize clustering run" });
+      }
+
+      console.log(`[MANUAL] Triggering clustering for user ${userId}`);
+      try {
+        await queues.clustering.add(
+          "cluster",
+          {
+            userId,
+            clusteringSettings,
+            pipelineRunId: pipelineRun.id,
+          },
+          {
+            jobId: `cluster-${userId}-manual-run-${pipelineRun.id || pipelineRun.generation}`,
+          },
+        );
+      } catch (error) {
+        await failStartedPipelineRun("[MANUAL]", pipelineRun, error);
+        return reply
+          .code(500)
+          .send({ error: "Failed to queue clustering run" });
+      }
+      return { status: "clustering_queued" };
+    },
+  );
+
+  fastify.post(
+    "/confirm-apply/:userId",
+    {
+      schema: {
+        params: userIdParamsSchema,
+        body: confirmApplyBodySchema,
+        response: {
+          ...authenticatedStatusResponseSchema,
+          400: errorResponseSchema,
         },
-    }, async (req, reply) => {
-        const userId = await requireRequestUserId(req, reply);
-        if (!userId) return reply;
-        const body = req.body as CancelBody;
-        const clearAllQueues = Boolean(body?.clearAllQueues);
-        console.log(`[CANCEL] Request received for user ${userId} (clearAllQueues=${clearAllQueues})`);
-        await markUserCancelled(userId);
+      },
+    },
+    async (req, reply) => {
+      const userId = await requireRequestUserId(req, reply);
+      if (!userId) return reply;
+      const body = (req.body ?? {}) as ConfirmApplyBody;
+      if (
+        body.folderChromeIds !== undefined &&
+        !Array.isArray(body.folderChromeIds)
+      ) {
+        return reply
+          .code(400)
+          .send({ error: "Folder mappings must be an array" });
+      }
+      const pairs = (body.folderChromeIds ?? []).filter(
+        (pair): pair is { clusterId: string; chromeFolderId: string } =>
+          typeof pair?.clusterId === "string" &&
+          typeof pair?.chromeFolderId === "string",
+      );
 
-        const { error: updateError } = await supabase
-            .from('bookmarks')
-            .update({ status: 'idle' })
-            .eq('user_id', userId)
-            .in('status', ['pending', 'enriched']);
+      if (pairs.length === 0) {
+        return { status: "ok" };
+      }
 
-        if (updateError) {
-            console.error('[CANCEL] Failed to reset bookmark status', updateError);
-            return reply.code(500).send({ error: 'Failed to reset status' });
-        }
+      const results = await Promise.all(
+        pairs.map(({ clusterId, chromeFolderId }) =>
+          supabase
+            .from("clusters")
+            .update({ chrome_folder_id: chromeFolderId })
+            .eq("id", clusterId)
+            .eq("user_id", userId),
+        ),
+      );
 
-        return { status: 'cancelled', jobsRemoved: 0, failedToRemove: 0, clearAllQueues };
-    });
+      const failed = results.filter((result) => result.error);
+      if (failed.length > 0) {
+        console.error(
+          `[CONFIRM-APPLY] Failed to record ${failed.length}/${pairs.length} folder mappings for user ${userId}`,
+          failed[0].error,
+        );
+        return reply
+          .code(500)
+          .send({ error: "Failed to record folder mappings" });
+      }
+
+      console.log(
+        `[CONFIRM-APPLY] Recorded ${pairs.length} folder mapping(s) for user ${userId}`,
+      );
+      return { status: "ok" };
+    },
+  );
+
+  fastify.post(
+    "/cancel/:userId",
+    {
+      schema: {
+        params: userIdParamsSchema,
+        response: authenticatedStatusResponseSchema,
+      },
+    },
+    async (req, reply) => {
+      const userId = await requireRequestUserId(req, reply);
+      if (!userId) return reply;
+      console.log(`[CANCEL] Request received for user ${userId}`);
+      await markUserCancelled(userId);
+
+      const { error: updateError } = await supabase
+        .from("bookmarks")
+        .update({ status: "idle" })
+        .eq("user_id", userId)
+        .in("status", ["pending", "enriched"]);
+
+      if (updateError) {
+        console.error("[CANCEL] Failed to reset bookmark status", updateError);
+        return reply.code(500).send({ error: "Failed to reset status" });
+      }
+
+      return { status: "cancelled" };
+    },
+  );
 };

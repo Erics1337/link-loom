@@ -12,6 +12,10 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_stripe_customer_id
+  ON users (stripe_customer_id)
+  WHERE stripe_customer_id IS NOT NULL;
+
 -- Shared links cache (URL -> embedding cache, shared across all users)
 CREATE TABLE IF NOT EXISTS shared_links (
   id TEXT PRIMARY KEY, -- SHA-256 hash of URL
@@ -25,21 +29,21 @@ CREATE TABLE IF NOT EXISTS shared_links (
 -- Bookmarks (per-user bookmarks)
 CREATE TABLE IF NOT EXISTS bookmarks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   chrome_id TEXT NOT NULL,
   url TEXT NOT NULL,
   title TEXT,
   ai_title TEXT,
   description TEXT,
   content_hash TEXT, -- References shared_links.id for embedding lookup
-  status TEXT DEFAULT 'pending', -- pending, enriched, embedded, error
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'enriched', 'embedded', 'error')),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Clusters (generated folder structure)
 CREATE TABLE IF NOT EXISTS clusters (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name TEXT,
   parent_id UUID REFERENCES clusters(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -54,9 +58,11 @@ CREATE TABLE IF NOT EXISTS cluster_assignments (
 
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_id ON bookmarks(user_id);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_user_status ON bookmarks(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_content_hash ON bookmarks(content_hash);
 CREATE INDEX IF NOT EXISTS idx_clusters_user_id ON clusters(user_id);
 CREATE INDEX IF NOT EXISTS idx_clusters_parent_id ON clusters(parent_id);
+CREATE INDEX IF NOT EXISTS idx_cluster_assignments_bookmark_id ON cluster_assignments(bookmark_id);
 
 -- Vector similarity search index  
 CREATE INDEX IF NOT EXISTS idx_shared_links_vector ON shared_links USING ivfflat (vector vector_cosine_ops) WITH (lists = 100);

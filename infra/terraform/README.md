@@ -67,6 +67,9 @@ Use `api_base_url` as:
 If you deploy the web app separately, also set:
 
 - `VITE_WEB_APP_URL`
+- `cors_allowed_origins` in Terraform to include the web origin and Chrome extension origin, for example `https://linkloom.org,chrome-extension://<extension-id>`.
+
+Production rate limiting uses the Supabase-backed shared limiter by default. Use `rate_limit_store = "memory"` only for local fallback/testing; in-memory counters are per Lambda/container instance.
 
 ## Notes
 

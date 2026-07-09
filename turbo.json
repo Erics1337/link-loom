@@ -1,29 +1,35 @@
 {
-    "$schema": "https://turbo.build/schema.json",
-    "globalDependencies": [
-        "**/.env.*local"
-    ],
-    "tasks": {
-        "build": {
-            "dependsOn": [
-                "^build"
-            ],
-            "outputs": [
-                "dist/**",
-                ".next/**",
-                "!.next/cache/**"
-            ]
-        },
-        "lint": {},
-        "test:e2e": {
-            "dependsOn": [
-                "^build"
-            ],
-            "cache": false
-        },
-        "dev": {
-            "cache": false,
-            "persistent": true
-        }
+  "$schema": "https://turbo.build/schema.json",
+  "globalDependencies": ["**/.env.*local"],
+  "globalEnv": [
+    "BACKEND_E2E_BASE_URL",
+    "BACKEND_E2E_ENABLE_TEST_ENDPOINTS",
+    "BACKEND_E2E_PORT",
+    "BACKEND_E2E_USE_LOCAL_SUPABASE",
+    "E2E_SECRET",
+    "FREE_TIER_LIMIT",
+    "HOST",
+    "NODE_ENV",
+    "OPENAI_API_KEY",
+    "PORT",
+    "QUEUE_DRIVER",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_URL"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+    },
+    "lint": {},
+    "test:e2e": {
+      "dependsOn": ["^build"],
+      "cache": false
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
     }
+  }
 }

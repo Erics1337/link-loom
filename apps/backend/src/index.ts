@@ -1,92 +1,202 @@
-import Fastify from 'fastify';
-import cors from '@fastify/cors';
-import * as dotenv from 'dotenv';
+import { timingSafeEqual } from "node:crypto";
+import Fastify from "fastify";
+import cors from "@fastify/cors";
+import * as dotenv from "dotenv";
 
-import { createWorker } from './lib/queue';
-import { ingestProcessor } from './queues/ingest';
-import { enrichmentProcessor } from './queues/enrichment';
-import { embeddingProcessor } from './queues/embedding';
-import { clusteringProcessor } from './queues/clustering';
-import { FREE_TIER_LIMIT } from './lib/userContext';
-import { registerAuthRoutes } from './routes/auth';
-import { registerBackupRoutes } from './routes/backups';
-import { registerBookmarkRoutes } from './routes/bookmarks';
-import { registerHealthRoutes } from './routes/health';
-import { registerIngestRoutes } from './routes/ingest';
-import { registerSearchRoutes } from './routes/search';
-import { registerStatusRoutes } from './routes/status';
-import { registerStructureRoutes } from './routes/structure';
-import { registerToolRoutes } from './routes/tools';
+import {
+  clearTestQueuedJobs,
+  createWorker,
+  drainTestQueuedJobs,
+  getTestQueuedJobs,
+} from "./lib/queue";
+import { ingestProcessor } from "./queues/ingest";
+import { enrichmentProcessor } from "./queues/enrichment";
+import { embeddingProcessor } from "./queues/embedding";
+import { clusteringProcessor } from "./queues/clustering";
+import { FREE_TIER_LIMIT } from "./lib/userContext";
+import { registerAuthRoutes } from "./routes/auth";
+import { registerCloudSnapshotRoutes } from "./routes/backups";
+import { registerBookmarkRoutes } from "./routes/bookmarks";
+import { registerHealthRoutes } from "./routes/health";
+import { registerIngestRoutes } from "./routes/ingest";
+import { registerSearchRoutes } from "./routes/search";
+import { registerStatusRoutes } from "./routes/status";
+import { registerStructureRoutes } from "./routes/structure";
+import { registerToolRoutes } from "./routes/tools";
+import { supabase } from "./db";
+import { registerRateLimit } from "./lib/rateLimit";
 
-dotenv.config({ path: '.env.local' });
+dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 const fastify = Fastify({
-    logger: {
-        transport: {
-            target: 'pino-pretty',
-            options: {
-                translateTime: 'HH:MM:ss Z',
-                ignore: 'pid,hostname',
-            },
-        },
-    }
+  logger: {
+    transport: {
+      target: "pino-pretty",
+      options: {
+        translateTime: "HH:MM:ss Z",
+        ignore: "pid,hostname",
+      },
+    },
+  },
+  trustProxy: true,
 });
 
 let appReady = false;
 
 const startWorkers = () => {
-    createWorker('ingest', ingestProcessor);
-    createWorker('enrichment', enrichmentProcessor, { concurrency: 50 });
-    createWorker('embedding', embeddingProcessor, { concurrency: 20 });
-    createWorker('clustering', clusteringProcessor);
-    console.log('Inline queue workers registered');
+  createWorker("ingest", ingestProcessor);
+  createWorker("enrichment", enrichmentProcessor, { concurrency: 50 });
+  createWorker("embedding", embeddingProcessor, { concurrency: 20 });
+  createWorker("clustering", clusteringProcessor);
+  console.log("Inline queue workers registered");
 };
 
+const getAllowedOrigins = () =>
+  (process.env.CORS_ALLOWED_ORIGINS || process.env.FRONTEND_URL || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
 export const buildApp = async () => {
-    if (appReady) return fastify;
-    appReady = true;
+  if (appReady) return fastify;
+  appReady = true;
 
-    try {
-        await fastify.register(cors, {
-            origin: true
-        });
+  try {
+    const allowedOrigins = getAllowedOrigins();
 
-        if ((process.env.QUEUE_DRIVER ?? 'inline') !== 'sqs') {
-            startWorkers();
+    await fastify.register(cors, {
+      origin: (origin, callback) => {
+        if (!origin) {
+          callback(null, true);
+          return;
         }
-        console.log(`[CONFIG] FREE_TIER_LIMIT=${FREE_TIER_LIMIT}`);
 
-        await registerHealthRoutes(fastify);
-        await registerAuthRoutes(fastify);
-        await registerBookmarkRoutes(fastify);
-        await registerIngestRoutes(fastify);
-        await registerStatusRoutes(fastify);
-        await registerStructureRoutes(fastify);
-        await registerToolRoutes(fastify);
-        await registerBackupRoutes(fastify);
-        await registerSearchRoutes(fastify);
+        if (allowedOrigins.includes(origin)) {
+          callback(null, true);
+          return;
+        }
 
-        return fastify;
-    } catch (err) {
-        fastify.log.error(err);
-        appReady = false;
-        throw err;
+        if (
+          origin.startsWith("chrome-extension://") &&
+          process.env.NODE_ENV !== "production"
+        ) {
+          callback(null, true);
+          return;
+        }
+
+        callback(null, process.env.NODE_ENV !== "production");
+      },
+    });
+    await registerRateLimit(fastify);
+
+    if ((process.env.QUEUE_DRIVER ?? "inline") !== "sqs") {
+      startWorkers();
     }
+    console.log(`[CONFIG] FREE_TIER_LIMIT=${FREE_TIER_LIMIT}`);
+
+    await registerHealthRoutes(fastify);
+    await registerAuthRoutes(fastify);
+    await registerBookmarkRoutes(fastify);
+    await registerIngestRoutes(fastify);
+    await registerStatusRoutes(fastify);
+    await registerStructureRoutes(fastify);
+    await registerToolRoutes(fastify);
+    await registerCloudSnapshotRoutes(fastify);
+    await registerSearchRoutes(fastify);
+
+    const enableE2ETestEndpoints =
+      process.env.NODE_ENV === "test" &&
+      process.env.QUEUE_DRIVER === "test" &&
+      process.env.BACKEND_E2E_ENABLE_TEST_ENDPOINTS === "true";
+
+    if (enableE2ETestEndpoints) {
+      const verifyE2ESecret = (
+        req: { headers: Record<string, unknown> },
+        reply: {
+          code: (statusCode: number) => { send: (payload: unknown) => unknown };
+        },
+      ) => {
+        const expectedSecret = process.env.E2E_SECRET;
+        if (!expectedSecret) {
+          return reply
+            .code(401)
+            .send({ error: "E2E_SECRET is not configured" });
+        }
+
+        const providedSecret = req.headers["x-e2e-secret"];
+        const provided =
+          typeof providedSecret === "string" ? providedSecret : "";
+        const expectedBuf = Buffer.from(expectedSecret);
+        const providedBuf = Buffer.from(provided);
+        if (
+          providedBuf.length !== expectedBuf.length ||
+          !timingSafeEqual(providedBuf, expectedBuf)
+        ) {
+          return reply.code(401).send({ error: "Invalid e2e secret" });
+        }
+
+        return null;
+      };
+
+      fastify.get(
+        "/__e2e/queues",
+        async (req, reply) =>
+          verifyE2ESecret(req, reply) ?? { jobs: getTestQueuedJobs() },
+      );
+      fastify.post("/__e2e/queues/drain", async (req, reply) => {
+        const authError = verifyE2ESecret(req, reply);
+        if (authError) return authError;
+        const body = req.body as { maxJobs?: unknown } | undefined;
+        const maxJobs =
+          typeof body?.maxJobs === "number"
+            ? Math.max(0, Math.min(Math.floor(body.maxJobs), 100))
+            : 50;
+        return drainTestQueuedJobs(maxJobs);
+      });
+      fastify.get("/__e2e/bookmarks/:userId", async (req, reply) => {
+        const authError = verifyE2ESecret(req, reply);
+        if (authError) return authError;
+        const { userId } = req.params as { userId: string };
+        const { data, error } = await supabase
+          .from("bookmarks")
+          .select("*")
+          .eq("user_id", userId);
+        if (error) {
+          return reply.code(500).send({
+            error: error.message || "Failed to fetch bookmarks",
+          });
+        }
+        return { bookmarks: data ?? [] };
+      });
+      fastify.delete("/__e2e/queues", async (req, reply) => {
+        const authError = verifyE2ESecret(req, reply);
+        if (authError) return authError;
+        clearTestQueuedJobs();
+        return { status: "cleared" };
+      });
+    }
+
+    return fastify;
+  } catch (err) {
+    fastify.log.error(err);
+    appReady = false;
+    throw err;
+  }
 };
 
 const start = async () => {
-    try {
-        await buildApp();
-        const port = Number.parseInt(process.env.PORT ?? '3333', 10);
-        const host = process.env.HOST ?? '0.0.0.0';
-        await fastify.listen({ port: Number.isNaN(port) ? 3333 : port, host });
-    } catch (err) {
-        fastify.log.error(err);
-        process.exit(1);
-    }
+  try {
+    await buildApp();
+    const port = Number.parseInt(process.env.PORT ?? "3333", 10);
+    const host = process.env.HOST ?? "0.0.0.0";
+    await fastify.listen({ port: Number.isNaN(port) ? 3333 : port, host });
+  } catch (err) {
+    fastify.log.error(err);
+    process.exit(1);
+  }
 };
 
 if (require.main === module) {
-    start();
+  start();
 }

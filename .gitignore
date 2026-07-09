@@ -7,6 +7,7 @@ backend/.env
 dist/
 /dist
 backend/dist
+*.tsbuildinfo
 .vscode
 .turbo
 .next
@@ -34,3 +35,12 @@ test-results/
 # Supabase
 supabase/.temp/
 supabase/.branches
+
+# Local agent skills
+.agents/
+
+# CodeRabbit (local review config)
+.coderabbit.yaml
+skills-lock.json
+
+clustering-debug.log
