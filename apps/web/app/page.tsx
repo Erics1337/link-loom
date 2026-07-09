@@ -35,13 +35,7 @@ const WaitlistForm = dynamic(() =>
   })),
 );
 
-const WaitlistPopup = dynamic(
-  () =>
-    import("@/components/WaitlistPopup").then((mod) => ({
-      default: mod.WaitlistPopup,
-    })),
-  { ssr: false },
-);
+import { WaitlistPopupClient } from "@/components/WaitlistPopupClient";
 
 const workflow = [
   "Import browser bookmarks from the extension.",
@@ -114,12 +108,28 @@ export default function Home() {
                 rel="noopener noreferrer"
                 className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#4285f4]/10 px-3 py-1.5 text-xs font-medium text-[#4285f4] transition hover:bg-[#4285f4]/20"
               >
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <svg
+                  className="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
                   <path d="M12 0C8.21 0 5.04 2.16 3.37 5.35L.63 10.5a.6.6 0 0 0 .09.68l11.38 11.38a.6.6 0 0 0 .68.09l5.15-2.74C21.84 18.96 24 15.79 24 12c0-6.63-5.37-12-12-12zM4.8 6.24A9.96 9.96 0 0 1 12 2.4c4.64 0 8.57 3.18 9.69 7.47H12c-2.39 0-4.45 1.46-5.31 3.53L4.8 6.24zm13.08 12.18l-4.34 2.31-8.08-8.08a3.6 3.6 0 0 1 2.77-1.3h9.65c.03.24.04.48.04.73 0 2.41-1.06 4.58-2.72 6.07l-1.32 1.07z" />
                 </svg>
                 Get the Chrome Extension
-                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                <svg
+                  className="h-3 w-3"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                  />
                 </svg>
               </a>
 
@@ -135,7 +145,8 @@ export default function Home() {
                   href="#waitlist"
                   className="inline-flex items-center justify-center gap-2 bg-[var(--ll-primary)] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[var(--ll-primary-hover)]"
                 >
-                  Join waitlist for early access <ChevronRight className="h-4 w-4" />
+                  Join waitlist for early access{" "}
+                  <ChevronRight className="h-4 w-4" />
                 </Link>
                 <Link
                   href="#workflow"
@@ -210,7 +221,12 @@ export default function Home() {
               >
                 <div className="flex items-center gap-4">
                   <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-[#4285f4]/10 text-[#4285f4]">
-                    <svg className="h-6 w-6" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <svg
+                      className="h-6 w-6"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
                       <path d="M12 0C8.21 0 5.04 2.16 3.37 5.35L.63 10.5a.6.6 0 0 0 .09.68l11.38 11.38a.6.6 0 0 0 .68.09l5.15-2.74C21.84 18.96 24 15.79 24 12c0-6.63-5.37-12-12-12zM4.8 6.24A9.96 9.96 0 0 1 12 2.4c4.64 0 8.57 3.18 9.69 7.47H12c-2.39 0-4.45 1.46-5.31 3.53L4.8 6.24zm13.08 12.18l-4.34 2.31-8.08-8.08a3.6 3.6 0 0 1 2.77-1.3h9.65c.03.24.04.48.04.73 0 2.41-1.06 4.58-2.72 6.07l-1.32 1.07z" />
                     </svg>
                   </div>
@@ -219,14 +235,26 @@ export default function Home() {
                       Chrome Extension Available
                     </h3>
                     <p className="text-sm text-[var(--ll-muted)]">
-                      One-click bookmark capture from any tab. Already live on the Web Store.
+                      One-click bookmark capture from any tab. Already live on
+                      the Web Store.
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 text-sm font-semibold text-[#4285f4]">
                   Install Extension
-                  <svg className="h-4 w-4 transition group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                  <svg
+                    className="h-4 w-4 transition group-hover:translate-x-0.5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M17 8l4 4m0 0l-4 4m4-4H3"
+                    />
                   </svg>
                 </div>
               </a>
@@ -399,7 +427,7 @@ export default function Home() {
             <div className="inline-flex items-center gap-2 bg-[var(--ll-bg)] px-4 py-2 text-sm text-[var(--ll-muted)]">
               <span>Made with</span>
               <span className="text-[var(--ll-primary)]" aria-hidden="true">
-                heart
+                ❤️
               </span>
               <span>by</span>
               <CrestLogo size={20} className="h-5 w-5" />
@@ -416,7 +444,7 @@ export default function Home() {
         </div>
       </footer>
 
-      <WaitlistPopup delay={15000} exitIntent={true} />
+      <WaitlistPopupClient delay={15000} exitIntent={true} />
     </div>
   );
 }

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { enforceSameOrigin, rateLimit, sanitizeApiError } from "@/utils/api/security";
+import {
+  enforceSameOrigin,
+  rateLimit,
+  sanitizeApiError,
+} from "@/utils/api/security";
 
 const KIT_API_KEY = process.env.KIT_API_KEY || process.env.KIT_API_SECRET;
 const KIT_FORM_ID = process.env.KIT_FORM_ID;
@@ -19,19 +23,17 @@ export async function POST(request: NextRequest) {
   if (!KIT_API_KEY || !KIT_FORM_ID) {
     return NextResponse.json(
       { error: "Waitlist is temporarily unavailable" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 
   try {
     const { email } = await request.json();
-    const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+    const normalizedEmail =
+      typeof email === "string" ? email.trim().toLowerCase() : "";
 
     if (!normalizedEmail) {
-      return NextResponse.json(
-        { error: "Email is required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Email is required" }, { status: 400 });
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -41,7 +43,7 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Please enter a valid email address" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -56,35 +58,42 @@ export async function POST(request: NextRequest) {
           api_key: KIT_API_KEY,
           email: normalizedEmail,
         }),
-      }
+      },
     );
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       console.error("Kit API error:", errorData);
-      
+
       if (response.status === 404) {
-        return NextResponse.json({ error: "Waitlist is temporarily unavailable" }, { status: 500 });
+        return NextResponse.json(
+          { error: "Waitlist is temporarily unavailable" },
+          { status: 500 },
+        );
       }
-      
+
       if (response.status === 422) {
         return NextResponse.json(
           { success: true, message: "You're already on the waitlist!" },
-          { status: 200 }
+          { status: 200 },
         );
       }
 
       return NextResponse.json(
         { error: "Failed to join waitlist. Please try again later." },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
     return NextResponse.json(
       { success: true, message: "You're on the waitlist!" },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (error) {
-    return sanitizeApiError("Waitlist API error:", error, "Something went wrong. Please try again later.");
+    return sanitizeApiError(
+      "Waitlist API error:",
+      error,
+      "Something went wrong. Please try again later.",
+    );
   }
 }

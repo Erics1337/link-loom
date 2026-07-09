@@ -4,13 +4,17 @@ import { useState, useEffect, useCallback } from "react";
 import { X } from "lucide-react";
 import { WaitlistForm } from "./WaitlistForm";
 
-interface WaitlistPopupProps {
+export interface WaitlistPopupProps {
   delay?: number; // Delay in ms before showing (default: 15000 = 15s)
   exitIntent?: boolean; // Show on exit intent (default: true)
   scrollThreshold?: number; // Pixels to scroll before showing (default: 200)
 }
 
-export function WaitlistPopup({ delay = 15000, exitIntent = true, scrollThreshold = 200 }: WaitlistPopupProps) {
+export function WaitlistPopup({
+  delay = 15000,
+  exitIntent = true,
+  scrollThreshold = 200,
+}: WaitlistPopupProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [hasShown, setHasShown] = useState(false);
   const [hasScrolled, setHasScrolled] = useState(false);

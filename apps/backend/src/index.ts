@@ -77,7 +77,10 @@ export const buildApp = async () => {
           return;
         }
 
-        if (origin.startsWith("chrome-extension://") && process.env.NODE_ENV !== "production") {
+        if (
+          origin.startsWith("chrome-extension://") &&
+          process.env.NODE_ENV !== "production"
+        ) {
           callback(null, true);
           return;
         }

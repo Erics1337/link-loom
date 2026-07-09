@@ -1,9 +1,5 @@
 import { createClient } from "@/utils/supabase/server";
-import {
-  Link as LinkIcon,
-  FolderTree,
-  ExternalLink,
-} from "lucide-react";
+import { Link as LinkIcon, FolderTree, ExternalLink } from "lucide-react";
 import { AddLinkModal } from "@/components/AddLinkModal";
 import { LinksPagination } from "@/components/dashboard/LinksPagination";
 import { LinksSearchBar } from "@/components/dashboard/LinksSearchBar";
@@ -15,7 +11,7 @@ import {
 
 const sanitizeSearchTerm = (value: string) =>
   value
-    .replace(/[,%()]/g, " ")
+    .replace(/[,%().:*"\\]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 100);

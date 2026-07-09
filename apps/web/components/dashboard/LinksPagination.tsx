@@ -49,15 +49,19 @@ export function LinksPagination({
     >
       <div className="flex items-center gap-2 text-sm text-ll-muted">
         {isPending ? (
-          <Loader2 className="h-4 w-4 animate-spin text-ll-accent" aria-hidden="true" />
+          <Loader2
+            className="h-4 w-4 animate-spin text-ll-accent"
+            aria-hidden="true"
+          />
         ) : null}
         <span>
-          Showing{" "}
-          <span className="font-medium text-ll-text">{offset + 1}</span> to{" "}
+          Showing <span className="font-medium text-ll-text">{offset + 1}</span>{" "}
+          to{" "}
           <span className="font-medium text-ll-text">
             {Math.min(offset + itemsPerPage, totalCount)}
           </span>{" "}
-          of <span className="font-medium text-ll-text">{totalCount}</span> results
+          of <span className="font-medium text-ll-text">{totalCount}</span>{" "}
+          results
         </span>
       </div>
 
@@ -78,7 +82,10 @@ export function LinksPagination({
 
         {pageNumbers.map((page, index) =>
           page === "ellipsis" ? (
-            <span key={`ellipsis-${index}`} className="px-1 text-sm text-ll-muted">
+            <span
+              key={`ellipsis-${index}`}
+              className="px-1 text-sm text-ll-muted"
+            >
               …
             </span>
           ) : (
@@ -120,6 +127,8 @@ function PaginationLink({
   label,
   onNavigate,
   className,
+  onClick,
+  target,
   ...rest
 }: {
   href: string;
@@ -133,9 +142,26 @@ function PaginationLink({
       href={href}
       aria-label={label}
       className={className}
+      target={target}
       onClick={(event) => {
-        event.preventDefault();
-        onNavigate(href);
+        if (onClick) {
+          onClick(event);
+        }
+        if (event.defaultPrevented) return;
+
+        const isModifiedClick = !!(
+          event.metaKey ||
+          event.altKey ||
+          event.ctrlKey ||
+          event.shiftKey
+        );
+        const isNormalClick = event.button === 0 || event.button === undefined;
+        const isTargetSelf = !target || target === "_self";
+
+        if (isNormalClick && !isModifiedClick && isTargetSelf) {
+          event.preventDefault();
+          onNavigate(href);
+        }
       }}
       {...rest}
     >
@@ -144,7 +170,10 @@ function PaginationLink({
   );
 }
 
-function getPageNumbers(current: number, total: number): Array<number | "ellipsis"> {
+function getPageNumbers(
+  current: number,
+  total: number,
+): Array<number | "ellipsis"> {
   if (total <= 7) {
     return Array.from({ length: total }, (_, index) => index + 1);
   }

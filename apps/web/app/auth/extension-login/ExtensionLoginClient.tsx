@@ -8,7 +8,7 @@ const ALLOWED_EXTENSION_IDS = new Set(
   (process.env.NEXT_PUBLIC_LINK_LOOM_EXTENSION_IDS ?? "")
     .split(",")
     .map((item) => item.trim())
-    .filter(Boolean)
+    .filter(Boolean),
 );
 
 const isAllowedExtensionId = (extensionId: string) =>
@@ -17,16 +17,21 @@ const isAllowedExtensionId = (extensionId: string) =>
 export function ExtensionLoginClient() {
   const searchParams = useSearchParams();
   const extId = searchParams.get("ext_id");
+  const nonce = searchParams.get("nonce");
   const [message, setMessage] = useState("Connecting your extension…");
 
   useEffect(() => {
-    if (!extId) {
-      setMessage("Missing extension ID. Close this tab and try again from the extension.");
+    if (!extId || !nonce) {
+      setMessage(
+        "Missing extension sign-in details. Close this tab and try again from the extension.",
+      );
       return;
     }
 
     if (!isAllowedExtensionId(extId)) {
-      setMessage("Invalid extension ID. Close this tab and try again from the official Link Loom extension.");
+      setMessage(
+        "Invalid extension ID. Close this tab and try again from the official Link Loom extension.",
+      );
       return;
     }
 
@@ -42,13 +47,13 @@ export function ExtensionLoginClient() {
         if (cancelled) return;
 
         if (session) {
-          window.location.href = `/auth/extension-complete?ext_id=${encodeURIComponent(extId)}`;
+          window.location.href = `/auth/extension-complete?ext_id=${encodeURIComponent(extId)}&nonce=${encodeURIComponent(nonce)}`;
           return;
         }
 
         setMessage("Redirecting to Google…");
 
-        const redirectTo = `${window.location.origin}/auth/callback?extension=1&ext_id=${encodeURIComponent(extId)}`;
+        const redirectTo = `${window.location.origin}/auth/callback?extension=1&ext_id=${encodeURIComponent(extId)}&nonce=${encodeURIComponent(nonce)}`;
         const { error } = await supabase.auth.signInWithOAuth({
           provider: "google",
           options: { redirectTo },
@@ -59,7 +64,9 @@ export function ExtensionLoginClient() {
         }
       } catch {
         if (!cancelled) {
-          setMessage("Could not start extension sign in. Close this tab and try again.");
+          setMessage(
+            "Could not start extension sign in. Close this tab and try again.",
+          );
         }
       }
     };
@@ -69,7 +76,7 @@ export function ExtensionLoginClient() {
     return () => {
       cancelled = true;
     };
-  }, [extId]);
+  }, [extId, nonce]);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6 text-center">

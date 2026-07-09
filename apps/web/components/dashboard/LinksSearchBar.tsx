@@ -4,7 +4,11 @@ import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Search } from "lucide-react";
 
-export function LinksSearchBar({ defaultQuery = "" }: { defaultQuery?: string }) {
+export function LinksSearchBar({
+  defaultQuery = "",
+}: {
+  defaultQuery?: string;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 

@@ -87,6 +87,7 @@ h3 {
 }
 
 .app-scroll {
+  flex: 1;
   overflow-y: auto;
   min-height: 0;
   padding-right: 2px;
@@ -449,8 +450,16 @@ body.light-mode .select-menu {
   cursor: default;
 }
 
-.tree-node:hover {
+.tree-node:hover,
+.tree-node:focus,
+.tree-node:focus-within {
   background: color-mix(in oklab, var(--bg-tertiary) 55%, transparent);
+  outline: none;
+}
+
+.tree-node:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: -2px;
 }
 
 .tree-chevron,
@@ -538,7 +547,9 @@ body.light-mode .select-menu {
   flex: 0 0 auto;
 }
 
-.tree-node:hover .tree-actions {
+.tree-node:hover .tree-actions,
+.tree-node:focus .tree-actions,
+.tree-node:focus-within .tree-actions {
   display: flex;
 }
 
@@ -559,6 +570,17 @@ body.light-mode .select-menu {
 .tree-action-btn:hover {
   background: color-mix(in oklab, var(--bg-tertiary) 80%, transparent);
   color: var(--text-primary);
+}
+
+.tree-action-btn:focus {
+  outline: none;
+}
+
+.tree-action-btn:focus-visible {
+  background: color-mix(in oklab, var(--bg-tertiary) 80%, transparent);
+  color: var(--text-primary);
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
 }
 
 .tree-title-input {
@@ -598,6 +620,9 @@ body.light-mode .select-menu {
 }
 .text-danger {
   color: var(--danger);
+}
+.text-success {
+  color: var(--success);
 }
 .text-gradient {
   color: var(--text-primary);
