@@ -1,110 +1,133 @@
-import type { FastifyInstance } from 'fastify';
-import OpenAI from 'openai';
+import type { FastifyInstance } from "fastify";
+import OpenAI from "openai";
 
-import { supabase } from '../db';
-import { requireRequestUserId } from '../lib/userContext';
-import { errorResponseSchema, looseObjectBodySchema } from './schemas';
+import { supabase } from "../db";
+import { requireRequestUserId } from "../lib/userContext";
+import { errorResponseSchema, looseObjectBodySchema } from "./schemas";
 
 let openai: OpenAI | undefined;
 
 const getOpenAIClient = (): OpenAI | null => {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return null;
-    openai ??= new OpenAI({ apiKey });
-    return openai;
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  openai ??= new OpenAI({ apiKey });
+  return openai;
 };
 
 type SearchBody = {
-    query?: unknown;
+  query?: unknown;
 };
 
 export const registerSearchRoutes = async (fastify: FastifyInstance) => {
-    fastify.post('/search', {
-        schema: {
-            body: looseObjectBodySchema,
-            response: {
-                200: {
-                    type: 'object',
-                    required: ['results'],
-                    properties: {
-                        results: { type: 'array', items: { type: 'object', additionalProperties: true } },
-                    },
-                },
-                400: errorResponseSchema,
-                401: errorResponseSchema,
-                429: errorResponseSchema,
-                500: errorResponseSchema,
+  fastify.post(
+    "/search",
+    {
+      schema: {
+        body: looseObjectBodySchema,
+        response: {
+          200: {
+            type: "object",
+            required: ["results"],
+            properties: {
+              results: {
+                type: "array",
+                items: { type: "object", additionalProperties: true },
+              },
             },
+          },
+          400: errorResponseSchema,
+          401: errorResponseSchema,
+          429: errorResponseSchema,
+          500: errorResponseSchema,
         },
-    }, async (req, reply) => {
-        const userId = await requireRequestUserId(req, reply);
-        if (!userId) return reply;
-        const body = req.body as SearchBody;
-        const trimmed = typeof body?.query === 'string' ? body.query.trim() : '';
-        if (!trimmed) {
-            return reply.code(400).send({ error: 'Query is required' });
+      },
+    },
+    async (req, reply) => {
+      const userId = await requireRequestUserId(req, reply);
+      if (!userId) return reply;
+      const body = req.body as SearchBody;
+      const trimmed = typeof body?.query === "string" ? body.query.trim() : "";
+      if (!trimmed) {
+        return reply.code(400).send({ error: "Query is required" });
+      }
+      const input = trimmed.substring(0, 8000);
+
+      const openaiClient = getOpenAIClient();
+      if (!openaiClient) {
+        fastify.log.error("[SEARCH] OPENAI_API_KEY is not configured");
+        return reply.code(500).send({ error: "Search is not configured" });
+      }
+
+      let queryVector: number[];
+      try {
+        const response = await openaiClient.embeddings.create({
+          model: "text-embedding-3-small",
+          input,
+        });
+        const embedding = response.data?.[0]?.embedding;
+        if (!embedding) {
+          fastify.log.error(
+            { queryLength: input.length },
+            "[SEARCH] OpenAI returned no embedding",
+          );
+          return reply
+            .code(500)
+            .send({ error: "Failed to generate search embedding" });
         }
-        const input = trimmed.substring(0, 8000);
+        queryVector = embedding;
+      } catch (err: unknown) {
+        const status =
+          err && typeof err === "object" && "status" in err
+            ? (err as { status?: number }).status
+            : undefined;
+        fastify.log.error(
+          { err, queryLength: input.length, status },
+          "[SEARCH] Embedding request failed",
+        );
+        if (status === 429) {
+          return reply.code(429).send({
+            error:
+              "Search is temporarily rate-limited. Please try again shortly.",
+          });
+        }
+        return reply
+          .code(500)
+          .send({ error: "Failed to generate search embedding" });
+      }
 
-        const openaiClient = getOpenAIClient();
-        if (!openaiClient) {
-            fastify.log.error('[SEARCH] OPENAI_API_KEY is not configured');
-            return reply.code(500).send({ error: 'Search is not configured' });
+      try {
+        const { data, error } = await supabase.rpc("search_bookmarks", {
+          query_vector: queryVector,
+          user_id: userId,
+          match_count: 20,
+        });
+
+        if (error) {
+          fastify.log.error(
+            {
+              err: error,
+              userId,
+              queryLength: input.length,
+              queryVectorLength: queryVector.length,
+            },
+            "search_bookmarks RPC failed",
+          );
+          return reply.code(500).send({ error: "Search failed" });
         }
 
-        let queryVector: number[];
-        try {
-            const response = await openaiClient.embeddings.create({
-                model: 'text-embedding-3-small',
-                input,
-            });
-            const embedding = response.data?.[0]?.embedding;
-            if (!embedding) {
-                fastify.log.error(
-                    { queryLength: input.length },
-                    '[SEARCH] OpenAI returned no embedding',
-                );
-                return reply.code(500).send({ error: 'Failed to generate search embedding' });
-            }
-            queryVector = embedding;
-        } catch (err: unknown) {
-            const status = err && typeof err === 'object' && 'status' in err
-                ? (err as { status?: number }).status
-                : undefined;
-            fastify.log.error(
-                { err, queryLength: input.length, status },
-                '[SEARCH] Embedding request failed',
-            );
-            if (status === 429) {
-                return reply.code(429).send({
-                    error: 'Search is temporarily rate-limited. Please try again shortly.',
-                });
-            }
-            return reply.code(500).send({ error: 'Failed to generate search embedding' });
-        }
-
-        try {
-            const { data, error } = await supabase.rpc('search_bookmarks', {
-                query_vector: queryVector,
-                user_id: userId,
-                match_count: 20,
-            });
-
-            if (error) {
-                fastify.log.error(
-                    { err: error, userId, queryLength: input.length, queryVectorLength: queryVector.length },
-                    'search_bookmarks RPC failed',
-                );
-                return reply.code(500).send({ error: 'Search failed' });
-            }
-
-            return { results: data ?? [] };
-        } catch (err) {
-            fastify.log.error(
-                { err, userId, queryLength: input.length, queryVectorLength: queryVector.length },
-                'search_bookmarks RPC threw',
-            );
-            return reply.code(500).send({ error: 'Search failed' });
-        }
-    });
+        return { results: data ?? [] };
+      } catch (err) {
+        fastify.log.error(
+          {
+            err,
+            userId,
+            queryLength: input.length,
+            queryVectorLength: queryVector.length,
+          },
+          "search_bookmarks RPC threw",
+        );
+        return reply.code(500).send({ error: "Search failed" });
+      }
+    },
+  );
 };
