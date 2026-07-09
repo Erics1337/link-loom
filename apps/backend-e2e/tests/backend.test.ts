@@ -118,10 +118,7 @@ const parseSupabaseStatusEnv = () => {
 };
 
 const resolveSupabaseEnv = (): SupabaseEnv => {
-  const statusEnv =
-    process.env.SUPABASE_URL
-      ? {}
-      : parseSupabaseStatusEnv();
+  const statusEnv = process.env.SUPABASE_URL ? {} : parseSupabaseStatusEnv();
 
   const url =
     process.env.SUPABASE_URL ??
