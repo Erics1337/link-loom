@@ -1,73 +1,91 @@
-import { NextResponse } from 'next/server'
-import { requireApiUser } from '@/utils/api/auth'
-import { enforceSameOrigin, rateLimit } from '@/utils/api/security'
+import { NextResponse } from "next/server";
+import { requireApiUser } from "@/utils/api/auth";
+import { enforceSameOrigin, rateLimit } from "@/utils/api/security";
 
 const getBackendUrl = () =>
-  (process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || '').replace(/\/$/, '')
+  (
+    process.env.BACKEND_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    ""
+  ).replace(/\/$/, "");
 
-const BACKEND_FETCH_TIMEOUT_MS = 15_000
+const BACKEND_FETCH_TIMEOUT_MS = 15_000;
 
 export async function POST(request: Request) {
-  const originError = enforceSameOrigin(request)
-  if (originError) return originError
+  const originError = enforceSameOrigin(request);
+  if (originError) return originError;
 
-  const rateLimitError = await rateLimit({ key: 'bookmarks:add', limit: 30, windowMs: 60_000 })
-  if (rateLimitError) return rateLimitError
+  const rateLimitError = await rateLimit({
+    key: "bookmarks:add",
+    limit: 30,
+    windowMs: 60_000,
+  });
+  if (rateLimitError) return rateLimitError;
 
-  const { supabase, response: unauthorizedResponse } = await requireApiUser()
-  if (unauthorizedResponse) return unauthorizedResponse
+  const { supabase, response: unauthorizedResponse } = await requireApiUser();
+  if (unauthorizedResponse) return unauthorizedResponse;
 
   const {
     data: { session },
-  } = await supabase.auth.getSession()
+  } = await supabase.auth.getSession();
 
   if (!session?.access_token) {
-    return NextResponse.json({ error: 'Session expired' }, { status: 401 })
+    return NextResponse.json({ error: "Session expired" }, { status: 401 });
   }
 
-  const backendUrl = getBackendUrl()
+  const backendUrl = getBackendUrl();
   if (!backendUrl) {
-    return NextResponse.json({ error: 'Backend service is not configured' }, { status: 500 })
+    return NextResponse.json(
+      { error: "Backend service is not configured" },
+      { status: 500 },
+    );
   }
 
-  const body = await request.json().catch(() => ({}))
+  const body = await request.json().catch(() => ({}));
 
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), BACKEND_FETCH_TIMEOUT_MS)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    BACKEND_FETCH_TIMEOUT_MS,
+  );
 
-  let response: Response
+  let response: Response;
   try {
     response = await fetch(`${backendUrl}/bookmarks/add`, {
       signal: controller.signal,
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify(body),
-    })
+    });
   } catch {
-    clearTimeout(timeoutId)
-    const timedOut = controller.signal.aborted
+    clearTimeout(timeoutId);
+    const timedOut = controller.signal.aborted;
     return NextResponse.json(
       {
         error: timedOut
-          ? 'Backend request timed out. Please try again.'
-          : 'Could not reach the backend service.',
+          ? "Backend request timed out. Please try again."
+          : "Could not reach the backend service.",
       },
-      { status: timedOut ? 504 : 502 }
-    )
+      { status: timedOut ? 504 : 502 },
+    );
   }
 
-  clearTimeout(timeoutId)
-
-  let payload: unknown
-  const text = await response.text().catch(() => '')
+  let payload: unknown;
+  let text = "";
   try {
-    payload = text ? JSON.parse(text) : {}
+    text = await response.text().catch(() => "");
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  try {
+    payload = text ? JSON.parse(text) : {};
   } catch {
-    payload = { error: text || 'Invalid JSON response' }
+    console.error("[Bookmarks Add] Invalid backend JSON response:", text);
+    payload = { error: "Invalid response from backend service" };
   }
 
-  return NextResponse.json(payload, { status: response.status || 502 })
+  return NextResponse.json(payload, { status: response.status || 502 });
 }

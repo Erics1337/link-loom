@@ -19,11 +19,28 @@ export function LoginForm() {
   const router = useRouter();
   const supabase = createClient();
 
+  const persistInviteCode = () => {
+    if (!inviteCode) {
+      return;
+    }
+
+    const secure = location.protocol === "https:" ? "; Secure" : "";
+    document.cookie = `invite_code=${encodeURIComponent(inviteCode)}; Path=/; Max-Age=3600; SameSite=Lax${secure}`;
+  };
+
+  const getAuthCallbackUrl = () => {
+    const callbackUrl = new URL("/auth/callback", location.origin);
+    if (inviteCode) {
+      callbackUrl.searchParams.set("invite_code", inviteCode);
+    }
+    return callbackUrl.toString();
+  };
+
   useEffect(() => {
     const error = searchParams.get("error");
     const msg = searchParams.get("message");
     if (error === "waitlist_only" && msg) {
-      setMessage(decodeURIComponent(msg.replace(/\+/g, " ")));
+      setMessage(msg.replace(/\+/g, " "));
     }
   }, [searchParams]);
 
@@ -31,12 +48,14 @@ export function LoginForm() {
     e.preventDefault();
     setLoading(true);
     setMessage(null);
+    persistInviteCode();
 
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        emailRedirectTo: `${location.origin}/auth/callback`,
+        emailRedirectTo: getAuthCallbackUrl(),
+        data: inviteCode ? { invite_code: inviteCode } : undefined,
       },
     });
 
@@ -113,16 +132,12 @@ export function LoginForm() {
               setLoading(true);
               setMessage(null);
 
-              if (inviteCode) {
-                const secure =
-                  location.protocol === "https:" ? "; Secure" : "";
-                document.cookie = `invite_code=${encodeURIComponent(inviteCode)}; Path=/; Max-Age=3600; SameSite=Lax${secure}`;
-              }
+              persistInviteCode();
 
               const { error } = await supabase.auth.signInWithOAuth({
                 provider: "google",
                 options: {
-                  redirectTo: `${location.origin}/auth/callback`,
+                  redirectTo: getAuthCallbackUrl(),
                 },
               });
               if (error) {
@@ -202,16 +217,6 @@ export function LoginForm() {
               >
                 Password
               </label>
-              {view === "sign-in" && (
-                <div className="text-sm">
-                  <a
-                    href="#"
-                    className="font-semibold text-ll-accent hover:text-ll-accent-text"
-                  >
-                    Forgot password?
-                  </a>
-                </div>
-              )}
             </div>
             <div className="mt-2">
               <Input
@@ -253,8 +258,12 @@ export function LoginForm() {
           <Alert tone="warning" className="mt-6">
             <p className="font-medium">Sign up is currently waitlist-only</p>
             <p className="text-sm mt-1">
-              We&apos;re onboarding in small batches to ensure a great experience.{" "}
-              <Link href="/#waitlist" className="underline font-semibold text-ll-accent">
+              We&apos;re onboarding in small batches to ensure a great
+              experience.{" "}
+              <Link
+                href="/#waitlist"
+                className="underline font-semibold text-ll-accent"
+              >
                 Join the waitlist
               </Link>{" "}
               and we&apos;ll send you an invite soon.
@@ -283,7 +292,10 @@ export function LoginForm() {
               </button>
               <span className="block mt-2 text-xs">
                 (New signups are waitlist-only —{" "}
-                <Link href="/#waitlist" className="underline">join here</Link>)
+                <Link href="/#waitlist" className="underline">
+                  join here
+                </Link>
+                )
               </span>
             </>
           ) : (

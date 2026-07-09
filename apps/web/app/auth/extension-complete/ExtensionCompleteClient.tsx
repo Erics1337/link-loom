@@ -11,7 +11,7 @@ const ALLOWED_EXTENSION_IDS = new Set(
   (process.env.NEXT_PUBLIC_LINK_LOOM_EXTENSION_IDS ?? "")
     .split(",")
     .map((item) => item.trim())
-    .filter(Boolean)
+    .filter(Boolean),
 );
 
 const isAllowedExtensionId = (extensionId: string) =>
@@ -19,7 +19,12 @@ const isAllowedExtensionId = (extensionId: string) =>
 
 const getChromeRuntime = () => {
   const chromeGlobal = globalThis as typeof globalThis & {
-    chrome?: { runtime?: { sendMessage: (...args: unknown[]) => void; lastError?: { message?: string } } };
+    chrome?: {
+      runtime?: {
+        sendMessage: (...args: unknown[]) => void;
+        lastError?: { message?: string };
+      };
+    };
   };
 
   return chromeGlobal.chrome?.runtime ?? null;
@@ -28,24 +33,29 @@ const getChromeRuntime = () => {
 export function ExtensionCompleteClient() {
   const searchParams = useSearchParams();
   const extId = searchParams.get("ext_id");
+  const nonce = searchParams.get("nonce");
   const errorCode = searchParams.get("error");
   const [message, setMessage] = useState("Finishing sign in…");
 
   useEffect(() => {
-    if (!extId) {
-      setMessage("Missing extension ID. Close this tab and try again from the extension.");
+    if (!extId || !nonce) {
+      setMessage(
+        "Missing extension sign-in details. Close this tab and try again from the extension.",
+      );
       return;
     }
 
     if (!isAllowedExtensionId(extId)) {
-      setMessage("Invalid extension ID. Close this tab and try again from the official Link Loom extension.");
+      setMessage(
+        "Invalid extension ID. Close this tab and try again from the official Link Loom extension.",
+      );
       return;
     }
 
     const runtime = getChromeRuntime();
     if (!runtime) {
       setMessage(
-        "Could not reach the Link Loom extension. Make sure it is installed, then try again."
+        "Could not reach the Link Loom extension. Make sure it is installed, then try again.",
       );
       return;
     }
@@ -53,6 +63,7 @@ export function ExtensionCompleteClient() {
     if (errorCode === "waitlist_only") {
       runtime.sendMessage(extId, {
         type: "LINK_LOOM_EXTENSION_AUTH_ERROR",
+        nonce,
         error: "waitlist_only",
         message: WAITLIST_MESSAGE,
       });
@@ -72,9 +83,12 @@ export function ExtensionCompleteClient() {
         if (cancelled) return;
 
         if (!session) {
-          setMessage("No active session found. Close this tab and try again from the extension.");
+          setMessage(
+            "No active session found. Close this tab and try again from the extension.",
+          );
           runtime.sendMessage(extId, {
             type: "LINK_LOOM_EXTENSION_AUTH_ERROR",
+            nonce,
             error: "no_session",
             message: "No active session found.",
           });
@@ -85,6 +99,7 @@ export function ExtensionCompleteClient() {
           extId,
           {
             type: "LINK_LOOM_EXTENSION_AUTH",
+            nonce,
             access_token: session.access_token,
             refresh_token: session.refresh_token,
             user: {
@@ -97,21 +112,26 @@ export function ExtensionCompleteClient() {
 
             if (runtime.lastError) {
               setMessage(
-                "Could not send your session to the extension. Make sure Link Loom is installed."
+                "Could not send your session to the extension. Make sure Link Loom is installed.",
               );
               return;
             }
 
-            setMessage("Signed in. You can close this tab and return to the extension.");
+            setMessage(
+              "Signed in. You can close this tab and return to the extension.",
+            );
             window.setTimeout(() => window.close(), 1500);
-          }
+          },
         );
       } catch {
         if (cancelled) return;
 
-        setMessage("Could not finish extension sign in. Close this tab and try again.");
+        setMessage(
+          "Could not finish extension sign in. Close this tab and try again.",
+        );
         runtime.sendMessage(extId, {
           type: "LINK_LOOM_EXTENSION_AUTH_ERROR",
+          nonce,
           error: "session_error",
           message: "Could not finish extension sign in.",
         });
@@ -123,7 +143,7 @@ export function ExtensionCompleteClient() {
     return () => {
       cancelled = true;
     };
-  }, [errorCode, extId]);
+  }, [errorCode, extId, nonce]);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-6 text-center">

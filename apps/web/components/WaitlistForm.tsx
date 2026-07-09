@@ -9,12 +9,14 @@ interface WaitlistFormProps {
 
 export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [status, setStatus] = useState<
+    "idle" | "loading" | "success" | "error"
+  >("idle");
   const [message, setMessage] = useState("");
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    
+
     if (!email.trim()) {
       setStatus("error");
       setMessage("Please enter your email address");
@@ -93,7 +95,7 @@ export function WaitlistForm({ onSuccess }: WaitlistFormProps) {
           )}
         </button>
       </div>
-      
+
       {status === "error" && message && (
         <p className="mt-3 text-sm text-red-500">{message}</p>
       )}

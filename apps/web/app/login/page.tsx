@@ -5,7 +5,10 @@ import { LoginForm } from "./LoginForm";
 function LoginFallback() {
   return (
     <div className="flex min-h-[24rem] items-center justify-center">
-      <Loader2 className="h-8 w-8 animate-spin text-ll-accent" aria-label="Loading login form" />
+      <Loader2
+        className="h-8 w-8 animate-spin text-ll-accent"
+        aria-label="Loading login form"
+      />
     </div>
   );
 }

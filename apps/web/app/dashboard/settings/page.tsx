@@ -59,8 +59,8 @@ export default function SettingsPage() {
           <p className="mt-2 max-w-2xl text-sm leading-6 text-ll-muted">
             Manage your Link Loom account and cloud data. Deleting your account
             removes your saved Link Loom data, including synced bookmarks,
-            generated folders, cloud snapshots, devices, and account profile.
-            It does not delete bookmarks stored locally in Chrome.
+            generated folders, cloud snapshots, devices, and account profile. It
+            does not delete bookmarks stored locally in Chrome.
           </p>
         </section>
 

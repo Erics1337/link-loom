@@ -25,8 +25,8 @@ export default function PrivacyPage() {
         <p>
           To provide Link Loom, we process bookmark-related information that
           users choose to organize or save with the service. This may include
-          bookmark titles, URLs, folder structure, generated folder names,
-          short page descriptions, and limited page text used to improve search,
+          bookmark titles, URLs, folder structure, generated folder names, short
+          page descriptions, and limited page text used to improve search,
           clustering, and bookmark organization.
         </p>
         <p>

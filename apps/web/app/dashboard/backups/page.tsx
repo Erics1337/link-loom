@@ -62,8 +62,8 @@ export default async function CloudSnapshotsPage() {
               <Save className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p>You haven&apos;t saved any Cloud Snapshots yet.</p>
               <p className="text-sm mt-2">
-                Open the Link Loom browser extension to create your first
-                Cloud Snapshot.
+                Open the Link Loom browser extension to create your first Cloud
+                Snapshot.
               </p>
             </div>
           ) : (
