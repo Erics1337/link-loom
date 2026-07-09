@@ -34,8 +34,8 @@ site_url = "http://localhost:3000"
 additional_redirect_urls = ["http://localhost:3000/auth/callback", "http://127.0.0.1:3000/auth/callback"]
 jwt_expiry = 3600
 enable_signup = true
-# Anonymous sign-in is disabled; Google OAuth and email/password remain available.
-enable_anonymous_sign_ins = false
+# Anonymous sign-in powers the no-account free bookmark organizing flow.
+enable_anonymous_sign_ins = true
 # Password rules apply to email/password sign-up only (not OAuth providers).
 minimum_password_length = 8
 password_requirements = "lower_upper_letters_digits"
@@ -44,7 +44,7 @@ password_requirements = "lower_upper_letters_digits"
 sign_in_sign_ups = 20
 token_refresh = 120
 token_verifications = 20
-anonymous_users = 0
+anonymous_users = 30
 
 [auth.email]
 enable_signup = true

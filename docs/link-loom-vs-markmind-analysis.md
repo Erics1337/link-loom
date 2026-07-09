@@ -20,17 +20,17 @@ MarkMind is a self-contained Chrome extension: React popup, MV3 service worker, 
 
 ## High-Level Architecture
 
-| Area | Link Loom | MarkMind |
-| --- | --- | --- |
-| Repo structure | Turborepo monorepo with `apps/extension`, `apps/backend`, `apps/web`, shared packages, infra, Supabase migrations | Single Vite/React extension repo under `src/` |
-| Runtime shape | Distributed SaaS-style system | Local-first browser extension |
-| AI boundary | Backend calls OpenAI for embeddings and cluster names | Extension calls Gemini/OpenAI/Anthropic/OpenRouter/custom providers directly |
-| Data storage | Supabase Postgres with users, bookmarks, shared link embedding cache, clusters, assignments, snapshots, devices | `chrome.storage.local` for API keys, selected provider/model, sessions, onboarding/theme state |
-| Apply phase | Extension applies generated backend structure to Chrome bookmarks with journaling/recovery | Extension applies approved LLM assignments directly with Chrome bookmark APIs |
-| Auth | Supabase auth, anonymous/permanent extension sessions, web login, external extension auth handoff | No app account required; user stores provider API keys locally |
-| Monetization | Stripe checkout/webhooks and premium flags in `users` | None in repo |
-| Scaling strategy | Queue pipeline with inline/test/SQS drivers; production uses SQS/Lambda | Single user/browser runtime; bounded by popup/service-worker/provider limits |
-| Privacy posture | Bookmark data and derived embeddings live in Link Loom backend; server-side billing/device controls | Bookmark data stays in browser except prompt payloads sent to chosen AI provider |
+| Area             | Link Loom                                                                                                         | MarkMind                                                                                       |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Repo structure   | Turborepo monorepo with `apps/extension`, `apps/backend`, `apps/web`, shared packages, infra, Supabase migrations | Single Vite/React extension repo under `src/`                                                  |
+| Runtime shape    | Distributed SaaS-style system                                                                                     | Local-first browser extension                                                                  |
+| AI boundary      | Backend calls OpenAI for embeddings and cluster names                                                             | Extension calls Gemini/OpenAI/Anthropic/OpenRouter/custom providers directly                   |
+| Data storage     | Supabase Postgres with users, bookmarks, shared link embedding cache, clusters, assignments, snapshots, devices   | `chrome.storage.local` for API keys, selected provider/model, sessions, onboarding/theme state |
+| Apply phase      | Extension applies generated backend structure to Chrome bookmarks with journaling/recovery                        | Extension applies approved LLM assignments directly with Chrome bookmark APIs                  |
+| Auth             | Supabase auth, anonymous/permanent extension sessions, web login, external extension auth handoff                 | No app account required; user stores provider API keys locally                                 |
+| Monetization     | Stripe checkout/webhooks and premium flags in `users`                                                             | None in repo                                                                                   |
+| Scaling strategy | Queue pipeline with inline/test/SQS drivers; production uses SQS/Lambda                                           | Single user/browser runtime; bounded by popup/service-worker/provider limits                   |
+| Privacy posture  | Bookmark data and derived embeddings live in Link Loom backend; server-side billing/device controls               | Bookmark data stays in browser except prompt payloads sent to chosen AI provider               |
 
 ## Link Loom Flow
 
