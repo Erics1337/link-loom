@@ -123,7 +123,7 @@ resource "aws_sqs_queue" "embedding_dlq" {
 
 resource "aws_sqs_queue" "clustering" {
   name                       = "${local.name_prefix}-clustering"
-  visibility_timeout_seconds = var.worker_timeout_seconds + 30
+  visibility_timeout_seconds = var.clustering_timeout_seconds + 30
   message_retention_seconds  = 1209600
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.clustering_dlq.arn

@@ -29,16 +29,22 @@ import { registerRateLimit } from "./lib/rateLimit";
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 
+const usePrettyLogger =
+  process.env.NODE_ENV !== "production" &&
+  !process.env.AWS_LAMBDA_FUNCTION_NAME;
+
 const fastify = Fastify({
-  logger: {
-    transport: {
-      target: "pino-pretty",
-      options: {
-        translateTime: "HH:MM:ss Z",
-        ignore: "pid,hostname",
-      },
-    },
-  },
+  logger: usePrettyLogger
+    ? {
+        transport: {
+          target: "pino-pretty",
+          options: {
+            translateTime: "HH:MM:ss Z",
+            ignore: "pid,hostname",
+          },
+        },
+      }
+    : true,
   trustProxy: true,
 });
 
