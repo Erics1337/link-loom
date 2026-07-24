@@ -7,6 +7,7 @@ import {
   ChevronRight,
   FileSearch,
   FolderTree,
+  Heart,
   Layers3,
   Search,
   Sparkles,
@@ -424,18 +425,19 @@ export default function Home() {
                 Refunds
               </Link>
             </div>
-            <div className="inline-flex items-center gap-2 bg-[var(--ll-bg)] px-4 py-2 text-sm text-[var(--ll-muted)]">
+            <div className="inline-flex items-center gap-1.5 text-xs text-[var(--ll-deep-muted)]">
               <span>Made with</span>
-              <span className="text-[var(--ll-primary)]" aria-hidden="true">
-                ❤️
-              </span>
+              <Heart
+                className="h-3.5 w-3.5 fill-[var(--ll-primary)] text-[var(--ll-primary)]"
+                aria-hidden="true"
+              />
               <span>by</span>
-              <CrestLogo size={20} className="h-5 w-5" />
+              <CrestLogo size={16} className="h-4 w-4" />
               <a
                 href="https://crestcodecreative.com"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="font-semibold text-[var(--ll-soft)] underline hover:text-[var(--ll-text)]"
+                className="font-medium text-[var(--ll-deep-soft)] underline-offset-2 hover:text-white hover:underline"
               >
                 Crest Code
               </a>
