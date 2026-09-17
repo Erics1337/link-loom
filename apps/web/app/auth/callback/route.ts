@@ -1,4 +1,4 @@
-import { createClient } from "@/utils/supabase/server";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 import { headers, cookies } from "next/headers";
 
@@ -33,8 +33,14 @@ export async function GET(request: Request) {
     ...(authNonce ? { nonce: authNonce } : {}),
   });
 
-  const redirectWithInvite = (url: string) => {
+  const cookiesToSet: { name: string; value: string; options: CookieOptions }[] = [];
+  const cookieStore = cookies();
+
+  const redirectWithCookies = (url: string) => {
     const response = NextResponse.redirect(url);
+    for (const { name, value, options } of cookiesToSet) {
+      response.cookies.set(name, value, options);
+    }
     if (inviteCodeToRestore) {
       response.cookies.set("invite_code", inviteCodeToRestore, {
         path: "/",
@@ -46,9 +52,32 @@ export async function GET(request: Request) {
     return response;
   };
 
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: CookieOptions) {
+          cookiesToSet.push({ name, value, options });
+          try {
+            cookieStore.set({ name, value, ...options });
+          } catch {}
+        },
+        remove(name: string, options: CookieOptions) {
+          cookiesToSet.push({ name, value: "", options: { ...options, maxAge: 0 } });
+          try {
+            cookieStore.set({ name, value: "", ...options, maxAge: 0 });
+          } catch {}
+        },
+      },
+    },
+  );
+
   let exchangeFailed = false;
   if (code) {
-    const supabase = createClient();
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     exchangeFailed = Boolean(error);
 
@@ -64,7 +93,6 @@ export async function GET(request: Request) {
       }
 
       // Check for invite code in cookies or data forwarded from auth initiation.
-      const cookieStore = cookies();
       const hasInviteCode =
         Boolean(inviteCodeToRestore) ||
         cookieStore.has("invite_code") ||
@@ -79,7 +107,7 @@ export async function GET(request: Request) {
         await supabase.auth.signOut();
 
         if (isExtensionAuth && extensionId) {
-          return redirectWithInvite(
+          return redirectWithCookies(
             extensionCompleteUrl(
               extensionCompleteParams({
                 ext_id: extensionId,
@@ -90,7 +118,7 @@ export async function GET(request: Request) {
         }
 
         // Redirect to login with waitlist message
-        return redirectWithInvite(
+        return redirectWithCookies(
           origin +
             "/login?error=waitlist_only&message=Sign+up+is+currently+waitlist-only.+Please+join+the+waitlist+for+early+access.",
         );
@@ -99,7 +127,7 @@ export async function GET(request: Request) {
   }
 
   if (isExtensionAuth && extensionId && (exchangeFailed || !code)) {
-    return redirectWithInvite(
+    return redirectWithCookies(
       extensionCompleteUrl(
         extensionCompleteParams({ ext_id: extensionId, error: "oauth_failed" }),
       ),
@@ -107,11 +135,11 @@ export async function GET(request: Request) {
   }
 
   if (isExtensionAuth && extensionId) {
-    return redirectWithInvite(
+    return redirectWithCookies(
       extensionCompleteUrl(extensionCompleteParams({ ext_id: extensionId })),
     );
   }
 
   // URL to redirect to after sign in process completes
-  return redirectWithInvite(origin + "/dashboard");
+  return redirectWithCookies(origin + "/dashboard");
 }

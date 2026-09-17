@@ -89,9 +89,16 @@ export function ExtensionCompleteClient() {
     const finish = async () => {
       try {
         const supabase = createClient();
-        const {
+        let {
           data: { session },
         } = await supabase.auth.getSession();
+
+        if (!session && !cancelled) {
+          // Allow a brief moment in case browser cookies are still settling
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          const retry = await supabase.auth.getSession();
+          session = retry.data.session;
+        }
 
         if (cancelled) return;
 
