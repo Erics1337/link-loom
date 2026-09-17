@@ -10,6 +10,7 @@ applications:
             - NODE_ENV=development pnpm -C ../.. install --frozen-lockfile
         build:
           commands:
+            - 'test -n "$NEXT_PUBLIC_LINK_LOOM_EXTENSION_IDS" || (echo "NEXT_PUBLIC_LINK_LOOM_EXTENSION_IDS must be set for extension sign-in" && exit 1)'
             - pnpm run build
       artifacts:
         baseDirectory: .next
