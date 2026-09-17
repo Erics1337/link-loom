@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   AUTH_COMPLETE_MESSAGE,
   AUTH_ERROR_MESSAGE,
+  AUTH_ERROR_STORAGE_KEY,
   PENDING_AUTH_NONCE_STORAGE_KEY,
   SESSION_STORAGE_KEY,
   StoredSession,
@@ -106,6 +107,13 @@ const readStoredSession = async () => {
   return raw as StoredSession;
 };
 
+const readStoredAuthError = async () => {
+  if (typeof chrome === "undefined" || !chrome.storage?.local) return null;
+  const result = await chrome.storage.local.get([AUTH_ERROR_STORAGE_KEY]);
+  const error = result[AUTH_ERROR_STORAGE_KEY];
+  return typeof error === "string" && error ? error : null;
+};
+
 const getAuthenticatedUser = async (accessToken: string) => {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     throw new Error(getConfigurationError());
@@ -176,6 +184,9 @@ export const useExtensionAuth = () => {
   const applyAuthenticatedSession = useCallback(
     async (nextSession: StoredSession) => {
       await saveStoredSession(nextSession);
+      if (typeof chrome !== "undefined" && chrome.storage?.local) {
+        await chrome.storage.local.remove([AUTH_ERROR_STORAGE_KEY]);
+      }
       setUser(nextSession.user);
       setAccessToken(nextSession.accessToken);
       setRefreshToken(nextSession.refreshToken || null);
@@ -198,11 +209,13 @@ export const useExtensionAuth = () => {
       }
 
       try {
+        const storedError = await readStoredAuthError();
         const session = await readStoredSession();
         if (!session?.accessToken) {
           if (!cancelled) {
             setStatus("unauthenticated");
             setUser(null);
+            setErrorMessage(storedError);
           }
           return;
         }
@@ -341,6 +354,9 @@ export const useExtensionAuth = () => {
 
   const signOut = useCallback(async () => {
     await clearStoredSession();
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      await chrome.storage.local.remove([AUTH_ERROR_STORAGE_KEY]);
+    }
     setUser(null);
     setAccessToken(null);
     setRefreshToken(null);
@@ -362,6 +378,10 @@ export const useExtensionAuth = () => {
 
     const extensionId = chrome.runtime.id;
     const nonce = createAuthNonce();
+    if (chrome.storage?.local) {
+      await chrome.storage.local.remove([AUTH_ERROR_STORAGE_KEY]);
+    }
+    setErrorMessage(null);
     await savePendingAuthNonce(nonce);
 
     const authUrl = `${WEB_APP_URL}/auth/extension-login?ext_id=${encodeURIComponent(extensionId)}&nonce=${encodeURIComponent(nonce)}`;

@@ -46,9 +46,11 @@ export async function GET(request: Request) {
     return response;
   };
 
+  let exchangeFailed = false;
   if (code) {
     const supabase = createClient();
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    exchangeFailed = Boolean(error);
 
     if (!error && data.session) {
       // Check if this is a new user (created within last 5 minutes = likely new signup)
@@ -68,8 +70,11 @@ export async function GET(request: Request) {
         cookieStore.has("invite_code") ||
         cookieStore.has("invite-code");
 
-      // Block new signups without invite
-      if (isNewUser && !hasInviteCode) {
+      const requireInvite =
+        process.env.REQUIRE_INVITE_CODE === "true" && !isExtensionAuth;
+
+      // Block new signups without invite if invite code is required
+      if (requireInvite && isNewUser && !hasInviteCode) {
         // Sign them out immediately
         await supabase.auth.signOut();
 
@@ -91,6 +96,14 @@ export async function GET(request: Request) {
         );
       }
     }
+  }
+
+  if (isExtensionAuth && extensionId && (exchangeFailed || !code)) {
+    return redirectWithInvite(
+      extensionCompleteUrl(
+        extensionCompleteParams({ ext_id: extensionId, error: "oauth_failed" }),
+      ),
+    );
   }
 
   if (isExtensionAuth && extensionId) {

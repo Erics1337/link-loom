@@ -1,6 +1,7 @@
 import {
   AUTH_COMPLETE_MESSAGE,
   AUTH_ERROR_MESSAGE,
+  AUTH_ERROR_STORAGE_KEY,
   buildStoredSessionFromAuthMessage,
   ExtensionAuthMessage,
   PENDING_AUTH_NONCE_STORAGE_KEY,
@@ -65,7 +66,11 @@ chrome.runtime.onMessageExternal.addListener(
 
         const session = buildStoredSessionFromAuthMessage(authMessage);
 
-        chrome.storage.local.set({ [SESSION_STORAGE_KEY]: session }, () => {
+        chrome.storage.local.set({ [SESSION_STORAGE_KEY]: session, [AUTH_ERROR_STORAGE_KEY]: "" }, () => {
+          if (chrome.runtime.lastError) {
+            sendResponse({ success: false, error: "session_storage_failed" });
+            return;
+          }
           chrome.storage.local.remove([PENDING_AUTH_NONCE_STORAGE_KEY], () => {
             notifyExtensionPages({
               type: AUTH_COMPLETE_MESSAGE,
@@ -93,19 +98,23 @@ chrome.runtime.onMessageExternal.addListener(
           return;
         }
 
-        chrome.storage.local.remove([PENDING_AUTH_NONCE_STORAGE_KEY], () => {
-          notifyExtensionPages({
-            type: AUTH_ERROR_MESSAGE,
-            error: authMessage.error,
-            message: authMessage.message,
-          });
-
-          if (sender.tab?.id !== undefined) {
-            chrome.tabs.remove(sender.tab.id).catch(() => {});
-          }
-
-          sendResponse({ success: true });
-        });
+        chrome.storage.local.set(
+          { [AUTH_ERROR_STORAGE_KEY]: authMessage.message || "Google sign in failed." },
+          () => {
+            if (chrome.runtime.lastError) {
+              sendResponse({ success: false, error: "error_storage_failed" });
+              return;
+            }
+            chrome.storage.local.remove([PENDING_AUTH_NONCE_STORAGE_KEY], () => {
+              notifyExtensionPages({
+                type: AUTH_ERROR_MESSAGE,
+                error: authMessage.error,
+                message: authMessage.message,
+              });
+              sendResponse({ success: true });
+            });
+          },
+        );
       })();
       return true;
     }

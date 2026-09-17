@@ -501,6 +501,7 @@ const App = () => {
             isLoggedIn={isPermanentUser}
             isPremium={Boolean(isPermanentUser && isPremium)}
             accountEmail={authUser?.email}
+            authError={authErrorMessage}
             hasCachedResults={hasCachedResults}
             isImportingStructure={isImportingStructure}
             importStructureMessage={importStructureMessage}

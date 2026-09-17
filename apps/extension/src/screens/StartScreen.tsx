@@ -17,6 +17,7 @@ interface StartScreenProps {
   isLoggedIn: boolean;
   isPremium: boolean;
   accountEmail?: string | null;
+  authError?: string | null;
   hasCachedResults: boolean;
   isImportingStructure: boolean;
   importStructureMessage?: {
@@ -38,6 +39,7 @@ export const StartScreen: React.FC<StartScreenProps> = ({
   isLoggedIn,
   isPremium,
   accountEmail,
+  authError,
   hasCachedResults,
   isImportingStructure,
   importStructureMessage,
@@ -193,6 +195,7 @@ export const StartScreen: React.FC<StartScreenProps> = ({
             <button onClick={onOpenLogin} className="btn btn-primary w-full">
               Sign In / Sign Up
             </button>
+            {authError && <div className="message message-error">{authError}</div>}
           </div>
         )}
       </section>

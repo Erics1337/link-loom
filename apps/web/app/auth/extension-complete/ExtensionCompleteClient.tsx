@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 
 const WAITLIST_MESSAGE =
   "Sign up is currently waitlist-only. Please join the waitlist for early access.";
+const OAUTH_ERROR_MESSAGE =
+  "Google sign in could not finish. Close this tab and try again from the extension.";
 
 const ALLOWED_EXTENSION_IDS = new Set(
   (process.env.NEXT_PUBLIC_LINK_LOOM_EXTENSION_IDS ?? "")
@@ -71,6 +73,17 @@ export function ExtensionCompleteClient() {
       return;
     }
 
+    if (errorCode === "oauth_failed") {
+      runtime.sendMessage(extId, {
+        type: "LINK_LOOM_EXTENSION_AUTH_ERROR",
+        nonce,
+        error: "oauth_failed",
+        message: OAUTH_ERROR_MESSAGE,
+      });
+      setMessage(OAUTH_ERROR_MESSAGE);
+      return;
+    }
+
     let cancelled = false;
 
     const finish = async () => {
@@ -107,12 +120,30 @@ export function ExtensionCompleteClient() {
               email: session.user.email ?? null,
             },
           },
-          () => {
+          (response: unknown) => {
             if (cancelled) return;
 
             if (runtime.lastError) {
               setMessage(
                 "Could not send your session to the extension. Make sure Link Loom is installed.",
+              );
+              return;
+            }
+
+            if (
+              !response ||
+              typeof response !== "object" ||
+              !("success" in response) ||
+              response.success !== true
+            ) {
+              const reason =
+                response && typeof response === "object" && "error" in response
+                  ? String(response.error)
+                  : "no_acknowledgement";
+              setMessage(
+                reason === "invalid_auth_nonce"
+                  ? "This sign-in attempt expired. Close this tab and try again from the extension."
+                  : `The extension did not accept this sign-in (${reason}). Close this tab and try again.`,
               );
               return;
             }

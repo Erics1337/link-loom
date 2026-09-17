@@ -1,5 +1,6 @@
 export const SESSION_STORAGE_KEY = "extensionAuthSession";
 export const PENDING_AUTH_NONCE_STORAGE_KEY = "pendingExtensionAuthNonce";
+export const AUTH_ERROR_STORAGE_KEY = "extensionAuthError";
 
 export type StoredSession = {
   accessToken: string;
